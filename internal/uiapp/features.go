@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -396,28 +397,39 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 	defer cancel()
 	a.mu.Lock()
+	if generation != a.generation || seriesID != a.detail.ID {
+		a.mu.Unlock()
+		return
+	}
 	source := a.detail.Source
 	seasonIDs := make([]string, 0, len(a.detail.Seasons.Items))
 	for _, item := range a.detail.Seasons.Items {
 		seasonIDs = append(seasonIDs, item.ID)
 	}
 	key := supplementKey(seriesID, source, seasonIDs)
-	if adaptationSupplementKey(key) == a.detailAdaptationKeys[seriesID] && a.detail.Adaptations.Loading {
+	// Loading is presentation state; only an active request may suppress a load.
+	loadKey := fmt.Sprintf("%d:%s:%t:%s", generation, seriesID, adaptations, adaptationSupplementKey(key))
+	if a.detailSupplementLoads[loadKey] {
 		a.mu.Unlock()
 		return
 	}
-	if !adaptations {
-		if a.detail.Seasons.Loading && a.detailAdaptationKeys[seriesID] != "" {
-			a.mu.Unlock()
-			return
-		}
+	if a.detailSupplementLoads == nil {
+		a.detailSupplementLoads = make(map[string]bool)
+	}
+	a.detailSupplementLoads[loadKey] = true
+	if adaptations {
 		if a.detailAdaptationKeys == nil {
-			a.detailAdaptationKeys = map[string]string{}
+			a.detailAdaptationKeys = make(map[string]string)
 		}
 		a.detailAdaptationKeys[seriesID] = adaptationSupplementKey(key)
+		a.detail.Adaptations.Loading, a.detail.Adaptations.Error = true, ""
+	} else {
+		a.detail.Seasons.Loading, a.detail.Seasons.Error = true, ""
 	}
+	a.invalidate()
 	provider := a.featureProvider()
 	a.mu.Unlock()
+	defer func() { a.mu.Lock(); delete(a.detailSupplementLoads, loadKey); a.mu.Unlock() }()
 	var result *ipc.SeriesCollectionDTO
 	var err error
 	if adaptations {
@@ -431,7 +443,7 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if generation != a.generation {
+	if generation != a.generation || seriesID != a.detail.ID {
 		return
 	}
 	if adaptations && adaptationSupplementKey(key) != a.detailAdaptationKeys[seriesID] {

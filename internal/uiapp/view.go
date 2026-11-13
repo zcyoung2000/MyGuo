@@ -1288,7 +1288,7 @@ func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
 		buttonWidth, buttonHeight = float32(52), float32(36)
 	}
 	host := ui.Column(c.Key("detail-episodes-host")).Height(1000).MinWidth(0).MinHeight(0).FillWidth()
-	gap := c.Theme().Space(2)
+	gap := c.Theme().Space(3)
 	buttonStride := buttonWidth + gap
 	width, pageHeight := c.Size()
 	width -= defaultSidebarWidth + 100
@@ -1314,7 +1314,7 @@ func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
 	host.Children(func() {
 		ui.Column(c).MinWidth(0).FillWidth().Children(func() {
 			ui.List(c, listState, rowCount, func(row int) {
-				ui.Row(c.Key(fmt.Sprintf("episode-row:%d", row))).Height(buttonHeight).MinWidth(0).Clip().Gap(gap).Children(func() {
+				ui.Row(c.Key(fmt.Sprintf("episode-row:%d", row))).Height(buttonHeight + gap).MinWidth(0).Clip().Gap(gap).Children(func() {
 					for index := row * columns; index < min(len(episodes), (row+1)*columns); index++ {
 						episode := episodes[index]
 						isActive := a.resume.ResumeEpisode == episode.EpisodeCount

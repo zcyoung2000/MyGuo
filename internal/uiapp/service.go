@@ -190,6 +190,7 @@ type App struct {
 	settingsMutations           map[string]bool
 	detailRevisions             map[string]uint64
 	detailAdaptationKeys        map[string]string
+	detailSupplementLoads       map[string]bool
 	resumeSequence              uint64
 	rank                        RankingState
 	releases                    ReleaseState
