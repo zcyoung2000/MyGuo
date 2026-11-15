@@ -37,6 +37,9 @@ func TestNativePlayerLayoutAndPanelMatrix(t *testing.T) {
 						t.Fatalf("control %q clipped: %+v", label, rect)
 					}
 				}
+				if _, ok := tt.AccessByRole(ui.RoleButton, "刷新"); ok {
+					t.Fatal("player refresh button remains")
+				}
 				if panel != "" {
 					close, ok := tt.Find("收起")
 					if !ok || close.X < stage.X || close.X+close.W > stage.X+stage.W || close.Y <= stage.Y {
