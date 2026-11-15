@@ -13,9 +13,7 @@ func TestRenderDiscoverShowsAsyncLoadingState(t *testing.T) {
 	app := NewTestApp()
 	app.catalog.Loading = true
 	tt := ui.NewTester(app.Render, 1200, 800)
-	if !tt.HasText("正在加载目录...") {
-		t.Fatalf("loading text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 }
 
 func TestRenderCatalogShowsItems(t *testing.T) {
@@ -91,7 +89,7 @@ func TestRenderDetailShowsEpisodes(t *testing.T) {
 	app.playerOn = true
 	app.view = "detail"
 	tt := ui.NewTester(app.Render, 1200, 800)
-	if !tt.HasText("详情剧") || !tt.HasText("完结 · 321次播放") || !tt.HasText("第1集") || !tt.HasText("播放 / 继续观看") {
+	if !tt.HasText("详情剧") || (!tt.HasText("完结") || !tt.HasText("321次播放")) || !tt.HasText("第1集") || !tt.HasText("播放 / 继续观看") {
 		t.Fatalf("detail texts = %v", tt.Texts())
 	}
 }

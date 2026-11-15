@@ -101,8 +101,8 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				tester.SetFocused(false)
 				tester.Frame()
 
-				if !tester.HasText(page.header) {
-					t.Fatalf("%s page header missing: %v", page.name, tester.Texts())
+				if _, ok := tester.Find("返回上一页"); !ok {
+					t.Fatalf("%s navigation missing: %v", page.name, tester.Texts())
 				}
 				content, contentOK := tester.Find(page.title)
 				if !contentOK {
@@ -284,14 +284,16 @@ func TestDiscoverFiveThousandItemsStayVirtualized(t *testing.T) {
 	if tester.FramePending() {
 		t.Fatal("5000-item catalog requested continuous rebuild frames")
 	}
-	if app.catalogGrid == nil || app.catalogGrid.Key == nil {
-		t.Fatal("discover catalog did not own a stable-keyed virtual grid state")
+	if app.catalogList == nil || app.catalogList.Key == nil {
+		t.Fatal("catalog has no anchored native list")
 	}
-	for index := 0; index < 3; index++ {
-		if app.catalogGrid.Key(index) != fmt.Sprintf("catalog-%d|1", index) || app.catalogGrid.Label(index) != items[index].Title {
-			t.Fatalf("catalog key/label drifted at %d", index)
+	columns := dramaColumns(float32(1200 - defaultSidebarWidth - 32))
+	for row := 1; row <= 3; row++ {
+		if app.catalogList.Key(row) != fmt.Sprintf("catalog-%d|1", (row-1)*columns) {
+			t.Fatalf("catalog row lost its stable item key: %d", row)
 		}
 	}
+
 }
 
 func TestDiscoverDeepScrollVirtualizedWindow(t *testing.T) {
@@ -338,7 +340,7 @@ func TestDiscoverDeepScrollVirtualizedWindow(t *testing.T) {
 	// 2. 深度滚动到第 600 条附近（根据 1200 宽度的网格几何）：深处条目构建并显示，首项不渲染，节点数依然严格有界
 	// 1200 宽度下 5 列，每行 263.2，第 600 条在第 120 行左右 (120 * 263.2 ≈ 31584)
 	width := float32(1200 - defaultSidebarWidth - 32)
-	app.discoverPageScroll.Y = float32(600/dramaColumns(width)) * (catalogTextLineHeight + dramaCardWidth(width)*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap)
+	app.catalogList.ScrollTo(1+600/dramaColumns(width), ui.Start)
 	tester.Frame()
 	tester.Advance(260 * time.Millisecond)
 	tester.Frame()
@@ -410,14 +412,14 @@ func TestDiscoverDeepScrollVirtualizedWindow(t *testing.T) {
 }
 
 func TestAllCatalogCollectionsUseSharedVirtualPaths(t *testing.T) {
-	source := readFile(t, "view.go") + readFile(t, "feature_views.go")
+	source := readFile(t, "view.go") + readFile(t, "catalog_view.go") + readFile(t, "feature_views.go")
 	required := map[string][]string{
-		"discover":    {"a.catalogGrid = &ui.GridState{}", "ui.Column(c.Key(\"catalog-grid\"))"},
+		"discover":    {"a.catalogList = &ui.ListState{}", "ui.List(c.Key(\"discover-page-scroll\")"},
 		"search":      {"a.searchGrid = &ui.GridState{}", "a.cardGrid(c, \"search-grid\", a.searchGrid"},
 		"new":         {"a.releaseGrid = &ui.GridState{}", "a.cardGrid(c, \"releases-grid\", a.releaseGrid"},
-		"actor":       {"a.actorWorksGrid = &ui.GridState{}", "a.cardGrid(c, \"actor-grid\", a.actorWorksGrid"},
+		"actor":       {"a.actorWorksList = &ui.ListState{}", "ui.List(c.Key(\"actor-grid\")"},
 		"library all": {"a.library.Grids[grid]", "a.cardGrid(c, \"library-grid\", a.library.Grids[grid]"},
-		"rank":        {"a.rank.List = &ui.ListState{}", "ui.List(c, a.rank.List"},
+		"rank":        {"a.rank.List = &ui.ListState{}", "a.rank.List, len(rank.Items)"},
 	}
 	for page, patterns := range required {
 		for _, pattern := range patterns {

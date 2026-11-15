@@ -53,7 +53,13 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 		t.Fatalf("click clickable actor chip: %v", err)
 	}
 	wantActorID := "7407367786839676185"
-	waitFor(time.Second, func() bool { return app.view == "actor" && app.actor.ID == wantActorID })
+	waitFor(time.Second, func() bool {
+		app.mu.Lock()
+		defer app.mu.Unlock()
+		return app.view == "actor" && app.actor.ID == wantActorID
+	})
+	app.mu.Lock()
+	defer app.mu.Unlock()
 	if app.view != "actor" || app.actor.ID != wantActorID {
 		t.Fatalf("actor chip navigation mismatch: view=%q id=%q", app.view, app.actor.ID)
 	}
@@ -67,6 +73,7 @@ func TestDetailCollectionErrorDistinguishesFromHiddenEmpty(t *testing.T) {
 		Seasons:     DetailCollection{Title: "同系列短剧"},
 		Adaptations: DetailCollection{Title: "同一剧本改编", Error: "加载失败"},
 	}
+	app.detailTab = detailTabRelated
 	tt := renderTesterAndAdvance(t, app, 1000, 1000)
 	if tt.HasText("暂无同系列短剧") || tt.HasText("同系列短剧") {
 		t.Fatalf("empty collection rendered instead of hiding: texts=%v", tt.Texts())
@@ -114,13 +121,13 @@ func TestFavoriteDuringDetailLoadDoesNotRefetchContent(t *testing.T) {
 		state := app.DetailState()
 		return state.ID == "123456" && state.Source != nil
 	})
-	features.waitSeasonStarted(t)
+	waitFor(time.Second, func() bool { return adaptionCalls.Load() > 0 })
 	waitFor(time.Second, func() bool { return app.DetailState().Favorite })
 	waitFor(time.Second, func() bool { return app.DetailState().Seasons.Loading == false })
 	if pageCalls.Load() > 2 {
 		t.Fatalf("detail page calls exceeded initial plus one stale retry: %d", pageCalls.Load())
 	}
-	if seasonCalls.Load() != 1 || adaptionCalls.Load() > 1 {
+	if seasonCalls.Load() != 0 || adaptionCalls.Load() != 1 {
 		t.Fatalf("supplement requests raced: seasons=%d adaptations=%d", seasonCalls.Load(), adaptionCalls.Load())
 	}
 	<-done
@@ -155,19 +162,21 @@ func renderTesterAndAdvance(t *testing.T, app *App, width, height int) *ui.Teste
 }
 
 type countingDetailProvider struct {
-	calls       *atomic.Int32
-	block       chan struct{}
-	started     chan struct{}
-	once        sync.Once
-	startedInit sync.Once
+	calls   *atomic.Int32
+	block   chan struct{}
+	started chan struct{}
+	once    sync.Once
 }
 
 func (p *countingDetailProvider) GetSeriesPage(context.Context, string) (*ipc.SeriesDetailPageDTO, error) {
+	p.once.Do(func() {
+		if p.block == nil {
+			p.block = make(chan struct{})
+		}
+		p.started = make(chan struct{})
+		close(p.started)
+	})
 	p.calls.Add(1)
-	if p.block == nil {
-		p.block = make(chan struct{})
-	}
-	p.startedInit.Do(func() { p.started = make(chan struct{}); close(p.started) })
 	<-p.block
 	return &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "详情内容"}, Source: &ipc.SourceNovelDTO{ID: "source", Title: "原著"}}, nil
 }
@@ -195,17 +204,19 @@ type countingFeatureProvider struct {
 	seasonCalls, adaptationCalls *atomic.Int32
 	seasonStarted                chan struct{}
 	seasonOnce                   sync.Once
-	seasonStartedInit            sync.Once
 	seasonRelease                chan struct{}
 	released                     bool
 }
 
 func (p *countingFeatureProvider) GetSeriesSeasons(context.Context, string) (*ipc.SeriesCollectionDTO, error) {
+	p.seasonOnce.Do(func() {
+		if p.seasonRelease == nil {
+			p.seasonRelease = make(chan struct{})
+		}
+		p.seasonStarted = make(chan struct{})
+		close(p.seasonStarted)
+	})
 	p.seasonCalls.Add(1)
-	if p.seasonRelease == nil {
-		p.seasonRelease = make(chan struct{})
-	}
-	p.seasonStartedInit.Do(func() { p.seasonStarted = make(chan struct{}); close(p.seasonStarted) })
 	<-p.seasonRelease
 	return &ipc.SeriesCollectionDTO{Items: []ipc.SeriesCard{{ID: "season", Title: "同系列"}}}, nil
 }

@@ -109,12 +109,12 @@ func TestFlushPendingProgressPersistsScheduledRequestsBeforeClose(t *testing.T) 
 	service.progressScheduler.entries["710000000000001\x0071000000000101"] = &progressFlushRequest{
 		seriesID: "710000000000001", episodeID: "710000000000101", title: "剧", episodeNum: 1,
 		totalEpisodes: 2, positionSec: 3, durationSec: 10,
-		receivedAt: time.Now(), scheduleCancel: make(chan struct{}),
+		receivedAt: time.Unix(100, 0), scheduleCancel: make(chan struct{}),
 	}
 	service.progressScheduler.entries["710000000000001\x0071000000000102"] = &progressFlushRequest{
 		seriesID: "710000000000001", episodeID: "710000000000102", title: "剧", episodeNum: 2,
 		totalEpisodes: 2, positionSec: 4, durationSec: 10,
-		receivedAt: time.Now(), scheduleCancel: make(chan struct{}),
+		receivedAt: time.Unix(101, 0), scheduleCancel: make(chan struct{}),
 	}
 	service.progressScheduler.mu.Unlock()
 	service.WaitForBackgroundSync()
@@ -122,5 +122,19 @@ func TestFlushPendingProgressPersistsScheduledRequestsBeforeClose(t *testing.T) 
 	items, err := store.GetHistory()
 	if err != nil || len(items) != 1 || items[0].EpisodeNum != 2 || items[0].PositionSec != 4 {
 		t.Fatalf("history after flush = %#v, %v; want latest episode", items, err)
+	}
+}
+
+func TestExitProgressFlushKeepsTheLastWatchedEpisodeWhenRewatching(t *testing.T) {
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]any{"code": 0}) }))
+	service.progressScheduler.entries[progressSchedulerKey("710000000000001", "710000000000102")] = &progressFlushRequest{
+		seriesID: "710000000000001", episodeID: "710000000000102", title: "Replay", episodeNum: 2, totalEpisodes: 2, positionSec: 50, receivedAt: time.Unix(100, 0),
+	}
+	service.progressScheduler.entries[progressSchedulerKey("710000000000001", "710000000000101")] = &progressFlushRequest{
+		seriesID: "710000000000001", episodeID: "710000000000101", title: "Replay", episodeNum: 1, totalEpisodes: 2, positionSec: 8, receivedAt: time.Unix(101, 0),
+	}
+	service.FlushPendingProgress()
+	if item, ok := store.GetHistoryItem("710000000000001"); !ok || item.EpisodeNum != 1 || item.PositionSec != 8 {
+		t.Fatalf("exit flush lost latest rewatch: %+v found=%t", item, ok)
 	}
 }

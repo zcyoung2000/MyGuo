@@ -79,7 +79,7 @@ func (s *Store) GetAccountAuth() (AccountAuth, bool) {
 // SetAuthenticatedAccount publishes credentials, profile, and (for an identity
 // change) visible data removal in one transaction. A failure cannot leave a
 // new credential beside another account's visible rows.
-func (s *Store) SetAuthenticatedAccount(auth AccountAuth, p UserProfile, resetVisibleData bool) error {
+func (s *Store) SetAuthenticatedAccount(auth AccountAuth, p UserProfile, resetVisibleData bool, verifiedAliases ...string) error {
 	if auth.Cookies == "" {
 		return fmt.Errorf("登录凭据不能为空")
 	}
@@ -100,6 +100,8 @@ func (s *Store) SetAuthenticatedAccount(auth AccountAuth, p UserProfile, resetVi
 		if err := clearUserDataTx(tx); err != nil {
 			return err
 		}
+	} else if err := migrateVerifiedAccountQueues(tx, "user:"+p.UserID, verifiedAliases); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO account_auth (id, cookies, token, updated_at)
@@ -114,7 +116,11 @@ func (s *Store) SetAuthenticatedAccount(auth AccountAuth, p UserProfile, resetVi
 	if err := updateProfileTx(tx, p); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.syncScope = "user:" + p.UserID
+	return nil
 }
 
 // SignOut atomically forgets credentials and account-visible rows. Scoped sync
@@ -136,7 +142,11 @@ func (s *Store) SignOut(deviceID string) error {
 	if err := updateProfileTx(tx, anonymousUserProfile(deviceID)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.syncScope = ""
+	return nil
 }
 
 func updateProfileTx(tx *sql.Tx, p UserProfile) error {

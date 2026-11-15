@@ -45,7 +45,7 @@ func TestDetailPrimaryActionLabelStaysOnOneLine(t *testing.T) {
 			if !ok {
 				t.Fatalf("primary action missing: %v", tt.Texts())
 			}
-			if button.H > 36 {
+			if button.H > 38 {
 				t.Fatalf("primary action wrapped to multiple lines: %+v", button)
 			}
 		})

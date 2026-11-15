@@ -17,11 +17,22 @@ const seriesProgressTimeout = 8 * time.Second
 
 func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) (HistoryItem, error) {
 	seriesID = strings.TrimSpace(seriesID)
-	local, hasLocal := s.store.GetHistoryItem(seriesID)
+	ctx = s.bindSyncSession(ctx)
+	session := ctx.Value(syncSessionContextKey{}).(syncSession)
+	s.historyMu.Lock()
+	generation := s.historyGeneration
+	local, _ := s.store.GetHistoryItem(seriesID)
+	s.historyMu.Unlock()
 	if !mediautil.ValidContentID(seriesID) {
 		return local, fmt.Errorf("历史 ID 无效")
 	}
 	remote, err := s.fetchSeriesProgress(ctx, seriesID)
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	local, hasLocal := s.store.GetHistoryItem(seriesID)
+	if generation != s.historyGeneration || !s.syncSessionCurrent(session) {
+		return local, nil
+	}
 	if err != nil || remote == nil {
 		return local, err
 	}
@@ -31,7 +42,7 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 		merged.CoverURL = local.CoverURL
 		merged.Intro = local.Intro
 		merged.ContentType = local.ContentType
-		if merged.DurationSec <= 0 || merged.EpisodeNum == local.EpisodeNum {
+		if merged.DurationSec <= 0 && merged.EpisodeNum == local.EpisodeNum {
 			merged.DurationSec = local.DurationSec
 		}
 	}
@@ -39,14 +50,17 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 		merged = enrichProgress(merged, HistoryItem{})
 	}
 	if !hasLocal || !historyItemsEqual(local, merged) {
-		if err := s.store.SaveHistory(merged, s.currentSyncSession().scope); err != nil {
+		applied, err := s.store.SaveHistoryIfCurrentScope(merged, session.scope)
+		if err != nil {
 			return local, err
 		}
-		s.historyMu.Lock()
+		if !applied {
+			current, _ := s.store.GetHistoryItem(seriesID)
+			return current, nil
+		}
 		s.cachedHistory = nil
 		s.historyCachedAt = time.Time{}
 		s.historyGeneration++
-		s.historyMu.Unlock()
 	}
 	return merged, nil
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"myguo/internal/filterapi"
 	"myguo/internal/resourcecache"
 )
 
@@ -137,6 +138,7 @@ type EpisodeDTO struct {
 	Playable     bool   `json:"playable"`
 	PosterURL    string `json:"posterUrl,omitempty"`
 	CommentCount int64  `json:"commentCount"`
+	DurationSec  int64  `json:"durationSec,omitempty"`
 }
 
 type SeriesDetailDTO struct {
@@ -386,10 +388,7 @@ func (s *Service) GetDiscover(ctx context.Context, genre string, selections map[
 
 	shortSelections := shortFilterSelections(genre, selections)
 
-	res, err := s.client.ShortFilter(ctx, sdk.ShortFilterQuery{
-		Selections: shortSelections,
-		Cursor:     cursor,
-	})
+	res, err := filterapi.Query(ctx, s.client, shortSelections, cursor)
 	if err != nil {
 		if errors.Is(err, sdk.ErrContentUnavailable) {
 			resp := DiscoverResponse{
@@ -1221,6 +1220,7 @@ func (s *Service) GetSeriesDetail(ctx context.Context, seriesID string) (*Series
 			Playable:     true,
 			PosterURL:    s.imageURL(ep.CoverURL),
 			CommentCount: ep.CommentCount,
+			DurationSec:  int64(ep.Duration / time.Second),
 		})
 		commentCount += ep.CommentCount
 	}

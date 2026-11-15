@@ -82,58 +82,58 @@ type QualitySelection struct {
 }
 
 type MediaServer struct {
-	tasks              lifecycle.Group
-	client             *sdk.Client
-	cacheDir           string
-	port               int
-	server             *http.Server
-	lockMap            sync.Map // episodeID -> *sync.Mutex
-	imgLocks           sync.Map // hexHash -> *sync.Mutex
-	pbCacheMu          sync.RWMutex
-	pbCache            map[string]playbackCacheItem
-	pbLoadMu           sync.Mutex
-	pbLoads            map[string]*playbackLoad
-	multiModel         *MultiVideoModelBatcher
-	prefetchQ          chan PrefetchTask
-	prefetchMu         sync.Mutex
-	prefetchQueued     map[string]PrefetchTask
-	prefetchActive     map[string]*PrefetchExecution
-	progressiveMu      sync.Mutex
-	progressiveStreams map[string]*progressiveStream
-	hlsMu              sync.Mutex
-	hlsStreams         map[string]*hlsStream
-	feedPreloadMu      sync.Mutex
-	feedPreloadVersion int64
-	feedPreloadTasks   map[string]PrefetchTask
-	feedPreloadCurrent string
-	feedPreloadTries   map[string]time.Time
-	cachePinMu         sync.RWMutex
-	cachePins          map[string]int
-	onEpisodeCacheFn   atomic.Pointer[func(seriesID, episodeID string, num int, quality string) error]
-	onDeviceResetFn    atomic.Pointer[func(ctx context.Context) error]
-	resetDeviceForTest func(context.Context) error
-	evicting           atomic.Bool
-	lastEvictionAt     atomic.Int64
-	networkMu          sync.Mutex
-	networkSampleBytes int64
-	networkSampleAt    time.Time
-	networkBytesPerSec float64
-	networkSamples     uint64
-	networkErrors      uint64
-	networkLastErrorAt time.Time
-	playbackCacheHits  atomic.Int64
-	playbackCacheMiss  atomic.Int64
-	playbackResolver   PlaybackResolver
-	spareDevicePool    atomic.Pointer[sparedevice.Manager]
-	progressiveStarts  atomic.Int64
-	progressiveHits    atomic.Int64
-	hlsStarts          atomic.Int64
-	hlsHits            atomic.Int64
-	fullDownloads      atomic.Int64
-	prefetchCompleted  atomic.Int64
-	prefetchFailed     atomic.Int64
-	prefetchCanceled   atomic.Int64
-	prefetchDropped    atomic.Int64
+	tasks                    lifecycle.Group
+	client                   *sdk.Client
+	cacheDir                 string
+	port                     int
+	server                   *http.Server
+	lockMap                  sync.Map // episodeID -> *sync.Mutex
+	imgLocks                 sync.Map // hexHash -> *sync.Mutex
+	pbCacheMu                sync.RWMutex
+	pbCache                  map[string]playbackCacheItem
+	pbLoadMu                 sync.Mutex
+	pbLoads                  map[string]*playbackLoad
+	multiModel               *MultiVideoModelBatcher
+	prefetchQ                chan PrefetchTask
+	prefetchMu               sync.Mutex
+	prefetchQueued           map[string]PrefetchTask
+	prefetchActive           map[string]*PrefetchExecution
+	progressiveMu            sync.Mutex
+	progressiveStreams       map[string]*progressiveStream
+	hlsMu                    sync.Mutex
+	hlsStreams               map[string]*hlsStream
+	feedPreloadMu            sync.Mutex
+	feedPreloadVersion       int64
+	feedPreloadTasks         map[string]PrefetchTask
+	feedPreloadCurrent       string
+	feedPreloadPrevious      string
+	feedPreloadPreviousUntil time.Time
+	feedPreloadTries         map[string]time.Time
+	cachePinMu               sync.RWMutex
+	cachePins                map[string]int
+	onEpisodeCacheFn         atomic.Pointer[func(seriesID, episodeID string, num int, quality string) error]
+	evicting                 atomic.Bool
+	lastEvictionAt           atomic.Int64
+	networkMu                sync.Mutex
+	networkSampleBytes       int64
+	networkSampleAt          time.Time
+	networkBytesPerSec       float64
+	networkSamples           uint64
+	networkErrors            uint64
+	networkLastErrorAt       time.Time
+	playbackCacheHits        atomic.Int64
+	playbackCacheMiss        atomic.Int64
+	playbackResolver         PlaybackResolver
+	spareDevicePool          atomic.Pointer[sparedevice.Manager]
+	progressiveStarts        atomic.Int64
+	progressiveHits          atomic.Int64
+	hlsStarts                atomic.Int64
+	hlsHits                  atomic.Int64
+	fullDownloads            atomic.Int64
+	prefetchCompleted        atomic.Int64
+	prefetchFailed           atomic.Int64
+	prefetchCanceled         atomic.Int64
+	prefetchDropped          atomic.Int64
 }
 
 type playbackCacheItem struct {
@@ -468,6 +468,10 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	}
 	if errors.Is(err, sdk.ErrAnonymousLimited) || (err != nil && errors.Is(err, context.DeadlineExceeded)) {
 		if pool := ms.spareDevicePool.Load(); pool != nil {
+			if session == "" {
+				session = sparedevice.RandomSession()
+				defer pool.ReleaseSession(session)
+			}
 			spare, spareErr := pool.ResolveForSession(ctx, session, episodeID, err, ms.primaryResolverForSparePool)
 			if spareErr == nil {
 				pool.ReleaseSession(session)
@@ -476,18 +480,8 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 			}
 			log.Printf("[media] spare device playback failed: %v", spareErr)
 		}
-		if resetErr := ms.resetDevice(ctx); resetErr != nil {
-			log.Printf("[media] device reset failed: %v", resetErr)
-		}
-		ms.clearPlaybackCache()
-		reset, resetErr := sdkPlaybackResolver{client: ms.client}.ResolvePlayback(ctx, episodeID)
-		pb, err = nil, nil
-		if reset != nil {
-			pb = reset.Playback
-		}
-		if pb == nil {
-			err = fmt.Errorf("empty playback model after device reset: %w", resetErr)
-		}
+		// The SDK already bounds and coordinates device recovery. Repeating
+		// it here multiplies requests and discards other valid cached models.
 	}
 	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
 		err = nil
@@ -775,10 +769,6 @@ func (ms *MediaServer) Port() int {
 	return ms.port
 }
 
-func (ms *MediaServer) SetDeviceResetter(resetter func(ctx context.Context) error) {
-	ms.onDeviceResetFn.Store(&resetter)
-}
-
 func (ms *MediaServer) SetSpareDevicePool(pool *sparedevice.Manager) {
 	ms.spareDevicePool.Store(pool)
 }
@@ -787,16 +777,6 @@ func (ms *MediaServer) ReleasePlaybackSession(session string) {
 	if pool := ms.spareDevicePool.Load(); pool != nil {
 		(*pool).ReleaseSession(session)
 	}
-}
-
-func (ms *MediaServer) resetDevice(ctx context.Context) error {
-	if ms.resetDeviceForTest != nil {
-		return ms.resetDeviceForTest(ctx)
-	}
-	if resetter := ms.onDeviceResetFn.Load(); resetter != nil {
-		return (*resetter)(ctx)
-	}
-	return ms.client.ResetDevice(ctx)
 }
 
 func (ms *MediaServer) SetMultiModelDeviceIdentity(identity func() (deviceID, installID, cdid, openudid string)) {

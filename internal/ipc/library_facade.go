@@ -55,6 +55,15 @@ func (s *HongguoService) FlushPendingProgress() {
 	s.libraryService().FlushPendingProgress()
 }
 
+func (s *HongguoService) PlaybackScope() string { return s.libraryService().PlaybackScope() }
+
+func (s *HongguoService) SaveProgressForScope(ctx context.Context, scope, seriesID, episodeID, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
+	if strings.TrimSpace(episodeID) == "" {
+		return nil
+	}
+	return s.libraryService().SaveProgressForScope(ctx, scope, seriesID, episodeID, title, coverURL, episodeNum, totalEpisodes, positionSec, durationSec)
+}
+
 func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 	return s.libraryService().GetHistory(ctx)
 }
@@ -101,4 +110,8 @@ func (s *HongguoService) GetReservations(ctx context.Context) ([]ReservationItem
 
 func (s *HongguoService) RefreshReservations(ctx context.Context) ([]ReservationItem, error) {
 	return s.libraryService().RefreshReservations(ctx)
+}
+
+func (s *HongguoService) BindPlaybackContext(ctx context.Context, scope string) context.Context {
+	return s.libraryService().BindPlaybackContext(ctx, scope)
 }

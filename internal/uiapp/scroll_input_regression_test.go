@@ -38,7 +38,7 @@ func TestDiscoverWheelInputScrollsPageAndCollapsesFilters(t *testing.T) {
 	tt := scrollInputTester(app, 1600, 1000)
 	tt.Frame()
 
-	page, ok := tt.AccessByRole(ui.RoleGroup, "discover-page-scroll")
+	page, ok := tt.AccessByRole(ui.RoleList, "discover-page-scroll")
 	if !ok {
 		t.Fatal("discover scroll container missing before wheel")
 	}
@@ -86,42 +86,24 @@ func TestRankWheelInputScrollsList(t *testing.T) {
 	}
 }
 
-func TestDetailWideWheelInputScrollsColumnsIndependently(t *testing.T) {
+func TestDetailWheelScrollsOnePageFromHeroAndEpisodes(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
-	app.detail = detailWideFixture()
-	app.sidebarWidth = 0
+	app.detail = longDetailEpisodesFixture(812)
 	tt := scrollInputTester(app, 1600, 1000)
 	tt.Frame()
-	if app.detailLeftScroll.MaxY <= 1 || app.detailEpisodesScroll.MaxY <= 1 {
-		t.Fatalf("detail columns cannot accept wheel events: left-max=%v right-max=%v", app.detailLeftScroll.MaxY, app.detailEpisodesScroll.MaxY)
+	title, _ := tt.Find("宽屏详情")
+	tt.Wheel(title.X+20, title.Y+10, 0, 120)
+	if app.detailScroll.Y != 120 {
+		t.Fatalf("hero wheel did not scroll page: %v", app.detailScroll.Y)
 	}
-
-	seasons, seasonsOK := tt.Find("同系列短剧")
-	episodes, episodesOK := tt.Find("第1集")
-	if !seasonsOK || !episodesOK {
-		t.Fatalf("detail wheel landmarks missing: seasons=%v episodes=%v", seasonsOK, episodesOK)
-	}
-	leftDelta := min(120, app.detailLeftScroll.MaxY)
-	tt.Wheel(seasons.X+seasons.W/2, seasons.Y+seasons.H/2, 0, leftDelta)
-	if app.detailLeftScroll.Y != leftDelta {
-		t.Fatalf("left detail wheel did not scroll by the event delta: y=%v want=%v", app.detailLeftScroll.Y, leftDelta)
-	}
-	if app.detailEpisodesScroll.Y != 0 {
-		t.Fatalf("left detail wheel changed the right column: y=%v", app.detailEpisodesScroll.Y)
-	}
-
 	tt.Frame()
-	episodes, ok := tt.Find("第1集")
+	first, ok := tt.Find("第1集")
 	if !ok {
-		t.Fatal("right detail landmark disappeared after left-column wheel")
+		t.Fatal("episode missing after scrolling hero")
 	}
-	rightDelta := min(120, app.detailEpisodesScroll.MaxY)
-	tt.Wheel(episodes.X+episodes.W/2, episodes.Y+episodes.H/2, 0, rightDelta)
-	if app.detailEpisodesScroll.Y != rightDelta {
-		t.Fatalf("right detail wheel did not scroll by the event delta: y=%v want=%v", app.detailEpisodesScroll.Y, rightDelta)
-	}
-	if app.detailLeftScroll.Y != leftDelta {
-		t.Fatalf("right detail wheel changed the left column: y=%v want=%v", app.detailLeftScroll.Y, leftDelta)
+	tt.Wheel(first.X+20, first.Y+20, 0, 120)
+	if app.detailScroll.Y != 240 {
+		t.Fatalf("episode wheel used another scroller: %v", app.detailScroll.Y)
 	}
 }

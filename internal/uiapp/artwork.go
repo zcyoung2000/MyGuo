@@ -77,13 +77,21 @@ func (l *artworkLoader) get(source string) ui.ImageSource {
 func (l *artworkLoader) load(source string) {
 	l.slots <- struct{}{}
 	defer func() { <-l.slots }()
+	l.mu.Lock()
+	if l.pending[source] && l.frame != nil && !l.frame[source] && !l.visible[source] {
+		delete(l.pending, source)
+		l.trimLocked()
+		l.mu.Unlock()
+		return
+	}
+	l.mu.Unlock()
 	var bitmap ui.ImageSource
 	if l.cacheDir != "" {
 		if data, err := os.ReadFile(mediautil.ImageCachePath(l.cacheDir, source)); err == nil {
 			bitmap, _ = ui.DecodeImage(data)
 		}
 	}
-	if bitmap == nil {
+	if bitmap == nil && l.proxyURL != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.proxyURL(source), nil)
@@ -112,6 +120,12 @@ func (l *artworkLoader) load(source string) {
 	if l.invalidate != nil {
 		l.invalidate()
 	}
+}
+
+func (l *artworkLoader) isLoading(source string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.pending[source]
 }
 
 // The previous and current frame's artwork stays pinned while a frame is

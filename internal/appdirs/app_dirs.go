@@ -1,6 +1,7 @@
 package appdirs
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -30,6 +31,18 @@ func AppCacheDir(home string) string {
 // migrateAppDir adopts data written by the previous app identity when the new
 // directory does not exist yet, so users keep their profile and media caches.
 func migrateAppDir(home, base string) (string, error) {
+	// A separate data root lets native integration runs exercise real services
+	// without touching the installed app's profile, progress or media cache.
+	if root := os.Getenv("MYGUO_DATA_ROOT"); root != "" {
+		if !filepath.IsAbs(root) {
+			return "", fmt.Errorf("MYGUO_DATA_ROOT must be an absolute path")
+		}
+		dir := filepath.Join(root, base, AppName)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", err
+		}
+		return dir, nil
+	}
 	newDir := filepath.Join(home, libraryBasePath, base, AppName)
 	legacyDir := filepath.Join(home, libraryBasePath, base, legacyAppName)
 

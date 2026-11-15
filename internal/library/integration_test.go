@@ -619,7 +619,7 @@ func TestRemoteReservationsUpgradeOnlineStateAndNotify(t *testing.T) {
 	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.add(capturedRequest{path: r.URL.Path})
 		online, _ := strconv.ParseBool(r.URL.Query().Get("is_online"))
-		items := []map[string]any(nil)
+		items := []map[string]any{}
 		if online {
 			items = []map[string]any{{
 				"item_id":           "schedule-1",

@@ -12,9 +12,8 @@ var commentSVG []byte
 var commentIcon = ui.MustParseSVG(commentSVG)
 
 // renderPlayerVisualFixture is used only by headless UI acceptance. The
-// production player remains a WebView; this representation makes its fitted
-// video, right rail and control row inspectable when the host cannot paint
-// web content in tests.
+// historical layout model is retained for older browsing acceptance cases.
+// Current playback tests use renderNativePlayerState and native_player_qa.
 func (a *App) renderPlayerVisualFixture(c *ui.Context) {
 	ui.Column(c.Key("player-visual-fixture")).Fill().Background(ui.Hex("#000000")).Children(func() {
 		ui.Row(c.Key("fixture-topbar")).Height(52).Padding(0, 18, 0, 14).

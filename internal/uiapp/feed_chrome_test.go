@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/playback"
 )
 
 func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
@@ -34,38 +34,37 @@ func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
 	if host.desired["channel"] != "漫剧" {
 		t.Fatal("invalid channel changed the recommendation source")
 	}
-	host.markReady()
-	if len(host.queue) != 1 || host.queue[0].payload["channel"] != "漫剧" {
-		t.Fatal("channel selected before document ready was lost")
+	if host.Snapshot().Mode != playback.Feed {
+		t.Fatal("native feed not selected immediately")
 	}
+
 }
 
 func TestNativeFeedChannelsOverlayKeepsMediaAndHidesWithItsScene(t *testing.T) {
 	app := NewTestApp()
-	view := &mygo.WebView{}
-	app.SetMediaHost(&MediaHost{view: view})
+	player := newNativeUIPlayer()
+	app.SetMediaHost(&MediaHost{controller: player})
 	app.OpenView("recommend")
 	tt := ui.NewTester(app.Render, 1200, 800)
 	channels, ok := tt.Find("推荐频道")
 	if !ok || tt.WebViewAt(channels.X+channels.W/2, channels.Y+channels.H/2) != nil {
 		t.Fatal("native channel control doesn't take pointer input over the WebView")
 	}
-	if tt.WebViewAt(900, 300) != view || tt.WebViewAt(1199, 799) != view {
+	if !tt.HasText("原生播放器") || tt.WebViewAt(900, 300) != nil {
 		t.Fatal("native channel overlay changes the full media viewport")
 	}
-	shell := NativeShell{App: app}
-	shell.FeedChromeChanged(FeedChrome{Visible: true, RightInset: 420})
+	player.state.Panel = "comments"
 	tt.Frame()
 	moved, _ := tt.Find("推荐频道")
-	if channels.X-moved.X < 200 {
-		t.Fatal("channel control didn't move clear of the comment panel")
+	if channels.X != moved.X || channels.Y != moved.Y {
+		t.Fatal("overlay drawer must not shift the channel control or video stage")
 	}
-	shell.FeedChromeChanged(FeedChrome{Visible: false})
+	player.state.Preferences.Clear = true
 	tt.Frame()
 	if tt.HasText("推荐频道") {
 		t.Fatal("clear-screen/fullscreen state retained native controls")
 	}
-	shell.FeedChromeChanged(FeedChrome{Visible: true})
+	player.state.Preferences.Clear = false
 	app.detail = Detail{ID: "123456"}
 	app.PlayDetail()
 	tt.Frame()

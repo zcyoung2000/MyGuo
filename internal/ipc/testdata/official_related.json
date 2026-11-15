@@ -1,0 +1,133 @@
+{
+  "code": 0,
+  "data": [
+    {
+      "show_type": 547,
+      "cell_name": "相关作品",
+      "has_more": false,
+      "next_offset": 7,
+      "video_data": [
+        {
+          "series_id": "7700569108542147608",
+          "title": "十八岁的二次回响第二季",
+          "episode_cnt": 119,
+          "season_index": 2,
+          "tag_info": {
+            "text": "第2季",
+            "bg_color": [
+              "#00000066"
+            ],
+            "dark_bg_color": [
+              "#00000066"
+            ],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        },
+        {
+          "series_id": "7701251833355832344",
+          "title": "十八岁的二次回响第三季",
+          "episode_cnt": 0,
+          "season_index": 3,
+          "tag_info": {
+            "text": "第3季",
+            "bg_color": [
+              "#00000066"
+            ],
+            "dark_bg_color": [
+              "#00000066"
+            ],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        },
+        {
+          "series_id": "7696515003951631385",
+          "title": "重回一世，白月光我不追了",
+          "episode_cnt": 176,
+          "tag_info": {
+            "text": "同IP",
+            "bg_color": [
+              "#000000"
+            ],
+            "dark_bg_color": [],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        },
+        {
+          "series_id": "7699055404784831550",
+          "title": "再来一次，我绝不会再娶你",
+          "episode_cnt": 92,
+          "tag_info": {
+            "text": "同IP",
+            "bg_color": [
+              "#000000"
+            ],
+            "dark_bg_color": [],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        },
+        {
+          "series_id": "7682348825834425406",
+          "title": "重活一世谁还要追她啊",
+          "episode_cnt": 140,
+          "season_index": 1,
+          "tag_info": {
+            "text": "同IP",
+            "bg_color": [
+              "#000000"
+            ],
+            "dark_bg_color": [],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        },
+        {
+          "series_id": "7695601203773705240",
+          "title": "重活一世谁还要追她啊第二季",
+          "episode_cnt": 147,
+          "season_index": 2,
+          "tag_info": {
+            "text": "同IP",
+            "bg_color": [
+              "#000000"
+            ],
+            "dark_bg_color": [],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        },
+        {
+          "series_id": "7685329887812406296",
+          "title": "梦醒不赴旧情约",
+          "episode_cnt": 163,
+          "tag_info": {
+            "text": "同IP",
+            "bg_color": [
+              "#000000"
+            ],
+            "dark_bg_color": [],
+            "text_color": "#FFFFFF"
+          },
+          "cover": "https://images.example/cover.jpg"
+        }
+      ]
+    },
+    {
+      "show_type": 506,
+      "cell_name": "猜你喜欢",
+      "has_more": true,
+      "video_data": [
+        {
+          "series_id": "99999999",
+          "title": "不应进入改编列表",
+          "tag_info": {
+            "text": "同IP"
+          }
+        }
+      ]
+    }
+  ]
+}

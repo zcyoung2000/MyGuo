@@ -144,6 +144,8 @@ type HongguoService struct {
 	authTransport        auth.CredentialTransport
 	identityMu           sync.RWMutex
 	accountMu            sync.Mutex
+	qrMu                 sync.Mutex
+	qrActive             *qrLoginAttempt
 	authMu               sync.RWMutex
 	authUserID           string
 	userCookies          string

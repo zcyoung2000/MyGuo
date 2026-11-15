@@ -2171,6 +2171,7 @@ function resumeFeedPlayback() {
 function switchView(viewName) {
   if (!['recommend', 'native-idle'].includes(viewName)) return;
   if (viewName !== 'recommend') {
+    feedPlayToken++;
     if (window.ambientGlow) window.ambientGlow.stop();
     cancelScheduledFeedWarmup();
     cancelPendingFeedSwitch();
@@ -3014,10 +3015,10 @@ function switchFeedDrama(dir, request = null) {
 }
 
 async function enterSeriesPlayer(seriesId, episodeNum, playbackOrigin = 'detail') {
-  if (!seriesId) return;
+  if (!seriesId) return false;
   persistFeedProgress();
   clearCommentSceneLayout();
-  feedPlayToken++;
+  const requestToken = ++feedPlayToken;
   cancelScheduledFeedWarmup();
   cancelPendingFeedSwitch();
   pauseFeedPlayback();
@@ -3030,7 +3031,14 @@ async function enterSeriesPlayer(seriesId, episodeNum, playbackOrigin = 'detail'
   let index = state.feed.seriesId === seriesId ? state.feed.index : state.feed.items.findIndex(item => item.id === seriesId);
   let episodes = state.feed.seriesId === seriesId ? state.feed.episodes : [];
   if (index < 0) {
-    const detail = await apiCall('GetSeriesDetail', seriesId);
+    let detail;
+    try {
+      detail = await apiCall('GetSeriesDetail', seriesId);
+    } catch (error) {
+      if (requestToken !== feedPlayToken || state.currentView !== 'recommend') return false;
+      throw error;
+    }
+    if (requestToken !== feedPlayToken || state.currentView !== 'recommend') return false;
     if (!detail) throw new Error('获取短剧详情失败');
     episodes = detail.episodes || [];
     index = Math.max(0, state.feed.index || 0);
@@ -3047,6 +3055,8 @@ async function enterSeriesPlayer(seriesId, episodeNum, playbackOrigin = 'detail'
   const episodeId = episodes.find(episode => episode.number === targetEpisode)?.id || '';
   state.feed.episodes = episodes;
   await playFeedIndex(index, null, targetEpisode, episodeId);
+  return requestToken === feedPlayToken && state.currentView === 'recommend' &&
+    state.feed.seriesId === seriesId && state.feed.episodeNum === targetEpisode;
 }
 
 function clearCommentSceneLayout() {
@@ -3309,13 +3319,15 @@ async function changeFeedPlaybackQuality(quality) {
   if (!quality || quality === state.feed.quality) return;
   const feedVideo = getFeedVideo();
   const resumeAt = feedVideo.currentTime || 0;
+  const episodeNum = state.feed.episodeNum || 1;
+  const episodeId = state.feed.episodeId || '';
   state.feed.baseQuality = quality;
   state.feed.userQuality = quality;
   state.feed.quality = quality;
   cancelScheduledFeedWarmup();
   state.feed.preloadMap.clear();
   state.feed.playbackInfoLoads.clear();
-  await playFeedIndex(state.feed.index || 0, resumeAt);
+  await playFeedIndex(state.feed.index || 0, resumeAt, episodeNum, episodeId);
 }
 
 function danmakuContext() {
@@ -3361,7 +3373,7 @@ function initDanmaku() {
     const target = event.target;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
     const controller = danmakuControllers.feed;
-    if (controller) setDanmakuEnabled(source, controller, !controller.enabled);
+    if (controller) setDanmakuEnabled('feed', controller, !controller.enabled);
   });
 }
 

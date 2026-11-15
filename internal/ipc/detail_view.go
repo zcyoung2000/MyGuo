@@ -38,6 +38,7 @@ type SourceNovelDTO struct {
 type SeriesDetailPageDTO struct {
 	SeriesDetailDTO
 	Category       string          `json:"category"`
+	RelatedAlbumID string          `json:"relatedAlbumId,omitempty"`
 	ContentType    int             `json:"contentType,omitempty"`
 	Tags           []string        `json:"tags"`
 	Subtitles      []string        `json:"subtitles"`
@@ -57,8 +58,13 @@ type SeriesDetailPageDTO struct {
 }
 
 type SeriesCollectionDTO struct {
-	Title string       `json:"title"`
-	Items []SeriesCard `json:"items"`
+	Cursor  string       `json:"cursor,omitempty"`
+	HasMore bool         `json:"hasMore,omitempty"`
+	Title   string       `json:"title"`
+	Items   []SeriesCard `json:"items"`
+	// Seasons accompanies the official related-works page. Items contains other
+	// adaptations; a non-nil Seasons slice contains this version's other seasons.
+	Seasons []SeriesCard `json:"seasons,omitempty"`
 }
 
 func retryAnonymous[T any](s *HongguoService, ctx context.Context, op func(context.Context) (T, error)) (T, error) {
@@ -270,42 +276,33 @@ func nextPlayableSeason(seriesID string, collection *SeriesCollectionDTO) *Serie
 }
 
 func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sourceID, sourceTitle, sourceCoverURL, excludeIDs string) (*SeriesCollectionDTO, error) {
+	return s.GetSeriesAdaptationsPage(ctx, seriesID, sourceID, sourceTitle, sourceCoverURL, excludeIDs, "")
+}
+
+// GetSeriesAdaptationsPage loads the official detail_page_more_related scene.
+// Source-name arguments remain for compatibility with existing callers; related
+// works no longer depend on a novel title, search results, or season requests.
+func (s *HongguoService) GetSeriesAdaptationsPage(ctx context.Context, seriesID, sourceID, sourceTitle, sourceCoverURL, excludeIDs, cursor string) (*SeriesCollectionDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
-	sourceID = strings.TrimSpace(sourceID)
-	sourceTitle = strings.TrimSpace(sourceTitle)
-	if seriesID == "" {
-		return nil, fmt.Errorf("series ID cannot be empty")
+	if !validContentID(seriesID) {
+		return nil, fmt.Errorf("无效短剧 ID")
 	}
-	if sourceID == "" && sourceTitle == "" {
-		return &SeriesCollectionDTO{}, nil
+	if _, err := adaptationOffset(seriesID, cursor); err != nil {
+		return nil, err
 	}
-
 	exclude := parseIDList(excludeIDs)
-	exclude[seriesID] = true
-	cacheKey := "series_adaptations:" + seriesID + ":" + sourceID + ":" + normalizeTitle(sourceTitle) + ":" + cacheIDList(exclude)
-	if collection, ok := s.cachedCollection(cacheKey); ok {
-		return collection, nil
+	cacheKey := "series_adaptations:official:" + seriesID + ":" + cacheIDList(exclude) + ":" + cursor
+	if value, ok := s.cachedCollection(cacheKey); ok {
+		return value, nil
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, seriesPageDetailBudget)
 	defer cancel()
-
-	sourceData, err := retryAnonymous(s, ctx, func(c context.Context) (*sdk.Page[model.SeriesSummary], error) {
-		return s.client.Search(c, sourceTitle, sdk.SearchOptions{PageSize: 30})
-	})
+	value, err := s.officialAdaptations(ctx, seriesID, cursor, exclude)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch adapted series: %w", err)
+		return nil, err
 	}
-
-	source := &SourceNovelDTO{ID: sourceID, Title: sourceTitle, CoverURL: sourceCoverURL}
-	cards := s.adaptationsForSource(ctx, seriesID, source, pageItems(sourceData), exclude)
-	collection := &SeriesCollectionDTO{Items: cards}
-	if len(cards) > 0 {
-		collection.Title = "同一剧本改编"
-	}
-	collection = sanitizeIPC(collection)
-	s.cacheCollection(cacheKey, collection)
-	return collection, nil
+	s.cacheCollection(cacheKey, value)
+	return value, nil
 }
 
 func (s *HongguoService) cachedCollection(cacheKey string) (*SeriesCollectionDTO, bool) {
@@ -381,14 +378,15 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 			Heat:         formatHeatScore(d.Heat) + "热度",
 			IsFavorite:   s.store.IsFavorite(seriesID),
 		},
-		Subtitles:   sanitizeUTF8Strings(d.Subtitles),
-		ContentType: int(d.ContentType),
-		PlayCount:   d.PlayCount,
-		FollowCount: d.FollowCount,
-		LikeCount:   d.DiggCount,
-		StatusText:  seriesStatusText(d),
-		Upcoming:    upcoming,
-		Reserved:    s.store.HasReservation(seriesID),
+		Subtitles:      sanitizeUTF8Strings(d.Subtitles),
+		ContentType:    int(d.ContentType),
+		RelatedAlbumID: d.RelatedAlbumID,
+		PlayCount:      d.PlayCount,
+		FollowCount:    d.FollowCount,
+		LikeCount:      d.DiggCount,
+		StatusText:     seriesStatusText(d),
+		Upcoming:       upcoming,
+		Reserved:       s.store.HasReservation(seriesID),
 	}
 	if !d.CreatedAt.IsZero() && d.CreatedAt.Year() > 2000 {
 		page.PublishText = d.CreatedAt.Format("2006-01-02")
@@ -470,6 +468,7 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 			Playable:     ep.Playable,
 			PosterURL:    s.media.ImageURL(ep.CoverURL),
 			CommentCount: ep.CommentCount,
+			DurationSec:  int64(ep.Duration / time.Second),
 		})
 		commentCount += ep.CommentCount
 	}
@@ -695,121 +694,6 @@ func seasonDisplayTitle(title string, number int) string {
 		return title
 	}
 	return fmt.Sprintf("%s 第%d季", title, number)
-}
-
-func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID string, source *SourceNovelDTO, candidates []model.SeriesSummary, excludeIDs map[string]bool) []SeriesCard {
-	seasonIDs := make(map[string]bool, len(excludeIDs)+1)
-	for id := range excludeIDs {
-		seasonIDs[id] = true
-	}
-	seasonIDs[currentID] = true
-
-	candidatesByID := make(map[string]model.SeriesSummary, len(candidates))
-	var ids []string
-	seen := make(map[string]bool)
-	for _, candidate := range candidates {
-		if candidate.ID == "" || seasonIDs[candidate.ID] || seen[candidate.ID] {
-			continue
-		}
-		if candidate.ID == source.ID {
-			continue
-		}
-		seen[candidate.ID] = true
-		candidatesByID[candidate.ID] = candidate
-		ids = append(ids, candidate.ID)
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-
-	details, err := retryAnonymous(s, ctx, func(c context.Context) ([]model.SeriesDetail, error) {
-		batch := s.client.GetSeriesBatch
-		if s.seriesBatch != nil {
-			batch = s.seriesBatch
-		}
-		return batch(c, ids)
-	})
-	if err != nil {
-		return nil
-	}
-
-	out := make([]SeriesCard, 0, len(details))
-	for _, detail := range details {
-		if detail.Series == nil || detail.Series.ID == currentID || detail.Series.ID == source.ID {
-			continue
-		}
-		if !isSameSourceNovel(detail.Series, source) {
-			continue
-		}
-
-		d := detail.Series
-		coverURL := d.CoverURL
-		if !hasUsableCover(coverURL, d.CoverExpiresAt) {
-			coverURL = candidatesByID[d.ID].CoverURL
-			if !hasUsableCover(coverURL, candidatesByID[d.ID].CoverExpiresAt) {
-				coverURL = ""
-			}
-		}
-		upcoming := isUpcomingSeries(d.EpisodeCount, d.RightText)
-
-		var (
-			heatVal   string
-			statusStr string
-		)
-
-		if upcoming {
-			heatVal = "待上线"
-			statusStr = "upcoming"
-		} else {
-			statusStr = d.Status.String()
-			if d.Heat > 0 {
-				heatVal = formatHeatScore(d.Heat) + "热度"
-			} else {
-				switch d.Status {
-				case model.SeriesEnd:
-					heatVal = "已完结"
-					statusStr = "finished"
-				case model.SeriesUpdating:
-					if d.RightText != "" && !strings.HasPrefix(d.RightText, "全0") {
-						heatVal = d.RightText
-					} else {
-						heatVal = "更新中"
-					}
-					statusStr = "updating"
-				default:
-					heatVal = "热播"
-				}
-			}
-		}
-
-		out = append(out, SeriesCard{
-			ID:           d.ID,
-			Title:        d.Title,
-			Description:  d.Description,
-			CoverURL:     s.media.ImageURL(coverURL),
-			EpisodeCount: d.EpisodeCount,
-			Category:     seriesContentTypeLabel(int(d.ContentType)),
-			ContentType:  int(d.ContentType),
-			Status:       statusStr,
-			Heat:         heatVal,
-			Upcoming:     upcoming,
-			Reserved:     s.store.HasReservation(d.ID),
-		})
-		if len(out) >= 18 {
-			break
-		}
-	}
-	return out
-}
-
-func isSameSourceNovel(series *model.Series, source *SourceNovelDTO) bool {
-	if series == nil || source == nil || source.ID == "" {
-		return false
-	}
-	if series.Novel != nil && series.Novel.BookID == source.ID {
-		return true
-	}
-	return series.RelatedNovelBookID == source.ID
 }
 
 func hasUsableCover(coverURL string, expiresAt time.Time) bool {

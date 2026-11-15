@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,6 +193,11 @@ func (s *Service) FlushPendingProgress() {
 		delete(s.progressScheduler.entries, key)
 	}
 	s.progressScheduler.mu.Unlock()
+	// History and the upload queue keep one row per series. Persist older
+	// observations first so the last watched episode wins, including rewatches.
+	sort.SliceStable(requests, func(i, j int) bool {
+		return requests[i].receivedAt.Before(requests[j].receivedAt)
+	})
 	for _, request := range requests {
 		if err := s.SaveProgress(context.Background(),
 			request.seriesID,

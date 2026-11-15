@@ -445,7 +445,7 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 			return processed, err
 		}
 		s.historyMutationMu.Lock()
-		again := s.historyMutationWake
+		again := s.historyMutationWake || uploaded > 0 || deleted > 0
 		s.historyMutationWake = false
 		if !again {
 			s.historyMutationSyncing = false
@@ -460,7 +460,9 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 }
 
 func historyUploadKey(item userstore.PendingHistoryUpload) string {
-	return fmt.Sprintf("%s\x00%s\x00%d", item.Scope, item.SeriesID, item.Revision)
+	// New local clocks replace the durable revision every few seconds. They
+	// must not bypass an upstream failure's cooldown for this account/series.
+	return item.Scope + "\x00" + item.SeriesID
 }
 
 func (s *Service) markHistoryUploadFailed(items []userstore.PendingHistoryUpload, err error) {
@@ -500,24 +502,31 @@ func (s *Service) processPendingHistoryUploads() (int, error) {
 	if err != nil {
 		return 0, nil
 	}
-	items, err := s.store.PendingHistoryUploads(userSyncPageSize, session.scope)
-	if err != nil || len(items) == 0 {
-		return 0, err
-	}
-
-	due := make([]userstore.PendingHistoryUpload, 0, len(items))
-	for _, pending := range items {
-		if s.historyUploadReady(pending) {
-			due = append(due, pending)
+	due := make([]userstore.PendingHistoryUpload, 0, userSyncPageSize)
+	for offset := 0; len(due) < userSyncPageSize; offset += userSyncPageSize {
+		items, err := s.store.PendingHistoryUploadsPage(userSyncPageSize, offset, session.scope)
+		if err != nil {
+			return 0, err
+		}
+		for _, pending := range items {
+			if s.historyUploadReady(pending) {
+				due = append(due, pending)
+				if len(due) == userSyncPageSize {
+					break
+				}
+			}
+		}
+		if len(items) < userSyncPageSize {
+			break
 		}
 	}
 	if len(due) == 0 {
 		return 0, nil
 	}
 
-	valid := make([]HistoryItem, 0, len(items))
+	valid := make([]HistoryItem, 0, len(due))
 	ack := make([]userstore.PendingHistoryUpload, 0, len(due))
-	validEpisodeIDs := make([]string, 0, len(items))
+	validEpisodeIDs := make([]string, 0, len(due))
 	for _, pending := range due {
 		if s.store.HistoryDeleted(pending.SeriesID) {
 			if err := s.store.AckHistoryUploads([]userstore.PendingHistoryUpload{pending}); err != nil {

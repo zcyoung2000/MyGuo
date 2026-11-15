@@ -50,7 +50,10 @@ type Option func(*Manager)
 func WithClientConstructor(constructor ClientConstructor, transport sdk.Transport) Option {
 	return func(m *Manager) {
 		m.factory = func(profile sdk.ProfileStore) (PlaybackResolver, error) {
-			client, err := constructor(sdk.Options{Transport: transport, ProfileStore: profile})
+			// Pool identities and their failure budget belong to the manager;
+			// SDK recovery must not independently replace a borrowed device.
+			noResets := 0
+			client, err := constructor(sdk.Options{Transport: transport, ProfileStore: profile, DeviceResets: &noResets})
 			if err != nil {
 				return nil, err
 			}
@@ -169,6 +172,9 @@ func (m *Manager) ResolveForSession(ctx context.Context, session, episodeID stri
 	if deviceID != "" {
 		if resolver, device, err := m.resolverForDevice(deviceID); err == nil {
 			playback, resolveErr := resolver(ctx, episodeID, sdk.PlaybackOptions{})
+			if playback != nil && playback.Protected && len(playback.Streams) > 0 && errors.Is(resolveErr, sdk.ErrDRMProtected) {
+				resolveErr = nil // A usable encrypted model is decrypted by MediaServer.
+			}
 			m.note(session, episodeID, cause, device.DeviceID, resolveErr)
 			if resolveErr == nil {
 				return playback, nil
@@ -187,6 +193,9 @@ func (m *Manager) ResolveForSession(ctx context.Context, session, episodeID stri
 		return nil, err
 	}
 	playback, resolveErr := resolver(ctx, episodeID, sdk.PlaybackOptions{})
+	if playback != nil && playback.Protected && len(playback.Streams) > 0 && errors.Is(resolveErr, sdk.ErrDRMProtected) {
+		resolveErr = nil
+	}
 	m.note(session, episodeID, cause, device.DeviceID, resolveErr)
 	if resolveErr != nil {
 		m.releaseWithFailure(session, device.DeviceID, resolveErr)

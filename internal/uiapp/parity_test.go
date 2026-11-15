@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 )
@@ -154,7 +153,7 @@ func TestNewCalendarAndHotBoardHaveDistinctDataSources(t *testing.T) {
 		t.Fatalf("calendar affordances missing: %v", tt.Texts())
 	}
 }
-func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
+func TestDetailSupplementsKeepSourceAndSeparateSeasons(t *testing.T) {
 	provider := &parityProvider{seasons: &ipc.SeriesCollectionDTO{Title: "同系列", Items: []ipc.SeriesCard{{ID: "223456", Title: "第二季"}}}, adaptations: &ipc.SeriesCollectionDTO{Title: "同剧本", Items: []ipc.SeriesCard{{ID: "323456", Title: "改编剧"}}}}
 	app := NewTestApp()
 	app.featuresSource = provider
@@ -166,8 +165,9 @@ func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
 	if !provider.has("adaptations:123456:source:123456,223456") {
 		t.Fatal("adaptations did not exclude same-series seasons")
 	}
+	app.detailTab = detailTabRelated
 	tt := ui.NewTester(app.Render, 1000, 1200)
-	if !tt.HasText("第二季") || !tt.HasText("原著书名") || !tt.HasText("演员甲") {
+	if !tt.HasText("第二季") || !tt.HasText("改编剧") || !tt.HasText("原著书名") || !tt.HasText("演员甲") {
 		t.Fatalf("detail sections missing: %v", tt.Texts())
 	}
 }
@@ -265,14 +265,18 @@ func TestCollectionRemovalPreservesOtherLikedEpisodesAndConfirmsReservations(t *
 	}
 }
 
-func TestNoGlobalBackForwardControlsOnAnyNativePage(t *testing.T) {
+func TestNativePagesHaveCompactTopNavigation(t *testing.T) {
 	for _, view := range []string{"recommend", "discover", "search", "rank", "new", "history", "favorites", "likes", "reservations", "settings", "detail", "actor"} {
 		app := NewTestApp()
 		app.view = view
 		tt := ui.NewTester(app.Render, 1200, 800)
-		for _, text := range tt.Texts() {
-			if text == "返回" || text == "前进" {
-				t.Fatalf("%s still shows global navigation button %q", view, text)
+		back, ok := tt.AccessByRole(ui.RoleButton, "返回上一页")
+		if !ok || back.Bounds.W > 32 || back.Bounds.H > 32 || back.Bounds.Y > 10 {
+			t.Fatalf("%s compact back missing or oversized: %+v", view, back)
+		}
+		for _, title := range []string{"短剧详情", "演员主页", "发现短剧", "观看历史", "我的收藏", "我的点赞", "我的预约"} {
+			if tt.HasText(title) {
+				t.Fatalf("%s still has redundant page title %q", view, title)
 			}
 		}
 	}
@@ -287,7 +291,7 @@ func TestDetailShowsOnlyBackNavigation(t *testing.T) {
 	app.loadDetail("123456")
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Advance(200 * time.Millisecond)
-	if !tt.HasText("短剧详情") || !tt.HasText("← 返回") {
+	if !tt.HasText("回归详情") || !tt.HasText("返回上一页") {
 		t.Fatalf("detail back navigation missing: %v", tt.Texts())
 	}
 	if tt.HasText("关闭") || tt.HasText("关闭详情") {
@@ -352,9 +356,9 @@ func TestEveryBrowsingPageMatchesOriginalLayoutAndSkeleton(t *testing.T) {
 		{view: "rank", loading: "正在加载排行榜", ready: []string{"第1名", "热度剧"}},
 		{view: "new", loading: "加载中", ready: []string{"热播新剧", "新剧日历"}},
 		{view: "search", loading: "加载中", ready: []string{"搜索"}},
-		{view: "history", loading: "加载中", ready: []string{"观看历史"}},
-		{view: "favorites", loading: "加载中", ready: []string{"我的收藏"}},
-		{view: "likes", loading: "加载中", ready: []string{"我的点赞"}},
+		{view: "history", loading: "加载中", ready: []string{"全部", "未看完", "已看完"}},
+		{view: "favorites", loading: "加载中", ready: []string{"收藏"}},
+		{view: "likes", loading: "加载中", ready: []string{"点赞"}},
 		{view: "reservations", loading: "加载中", ready: []string{"新剧预约"}},
 		{view: "actor", loading: "加载中", ready: []string{"演员甲"}},
 	}
@@ -383,9 +387,7 @@ func TestEveryBrowsingPageMatchesOriginalLayoutAndSkeleton(t *testing.T) {
 			waitFor(200*time.Millisecond, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return app.rank.Loading })
 			time.Sleep(100 * time.Millisecond)
 			tt.Frame()
-			if !tt.HasText(test.loading) {
-				t.Fatalf("%s missing skeleton/loading state: %v", test.view, tt.Texts())
-			}
+			assertQuietLoading(t, tt)
 			close(blockedRank)
 			app.featuresSource = provider
 			waitFor(time.Second, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return !app.rank.Loading })
@@ -467,9 +469,7 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	waitFor(200*time.Millisecond, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return app.catalog.Loading })
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
-	if !tt.HasText("正在加载目录") {
-		t.Fatalf("discover skeleton text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 	close(blockedDiscover)
 	app.view = "rank"
 
@@ -480,9 +480,7 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	go app.LoadRank(false)
 	waitFor(200*time.Millisecond, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return app.rank.Loading })
 	tt.Frame()
-	if !tt.HasText("正在加载排行榜") {
-		t.Fatalf("rank skeleton text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 
 	close(blockedRank)
 	waitFor(time.Second, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return !app.rank.Loading })
@@ -490,31 +488,25 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	app.view = "new"
 	app.releases.Loading = true
 	tt.Frame()
-	if !tt.HasText("正在加载新剧") {
-		t.Fatalf("new skeleton text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 
 	app.view = "search"
 	app.releases.Loading = false
 	app.search.Loading = true
 	tt.Frame()
-	if !tt.HasText("正在搜索") {
-		t.Fatalf("search skeleton text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 
 	app.view = "history"
 	app.search.Loading = false
 	app.library.History.Loading = true
 	tt.Frame()
-	if !tt.HasText("正在加载本地数据") {
-		t.Fatalf("library skeleton text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 
 	app.view = "detail"
 	app.library.History.Loading = false
 	app.detail.Loading = true
 	tt.Frame()
-	if !tt.HasText("短剧详情") {
+	if !tt.HasText("详情内容") {
 		t.Fatalf("detail skeleton text missing: %v", tt.Texts())
 	}
 
@@ -522,11 +514,9 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	app.detail.Loading = false
 	app.actor.Loading = true
 	tt.Frame()
-	if !tt.HasText("正在加载演员主页") {
-		t.Fatalf("actor skeleton text missing: %v", tt.Texts())
-	}
+	assertQuietLoading(t, tt)
 
-	app.SetMediaHost(&MediaHost{view: &mygo.WebView{}})
+	app.SetMediaHost(&MediaHost{controller: newNativeUIPlayer()})
 	app.OpenView("settings")
 	tt.Frame()
 	if tt.WebViewAt(700, 400) != nil {
@@ -575,7 +565,7 @@ func TestNativePageScreens(t *testing.T) {
 		tt := ui.NewTester(app.Render, width, height)
 		tt.SetDark(true)
 		if strings.Contains(name, "-loading") {
-			tt.Advance(shimmerSampleOffset)
+			tt.Advance(loadingLayoutSettle)
 		}
 		file, err := os.Create(filepath.Join(dir, name+".png"))
 		if err != nil {
@@ -663,8 +653,6 @@ func TestNativePageScreens(t *testing.T) {
 				DeviceArch:     "darwin-arm64",
 				LegacyNickname: "Old Account",
 				LoginOpen:      true,
-				LoginCookie:    "sessionid=visual",
-				LoginToken:     "token",
 			}
 		}},
 	}

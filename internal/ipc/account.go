@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"myguo/internal/native"
+	"myguo/internal/qrauth"
 	"myguo/internal/store"
 	"net/http"
 	"os"
@@ -75,7 +76,11 @@ func (s *HongguoService) GetDeviceInfo(ctx context.Context) (map[string]string, 
 func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token string) (*UserProfile, error) {
 	s.accountMu.Lock()
 	defer s.accountMu.Unlock()
-	previousUserID, _, _ := s.authSession()
+	return s.loginWithCookiesLocked(ctx, cookies, token)
+}
+
+func (s *HongguoService) loginWithCookiesLocked(ctx context.Context, cookies, token string) (*UserProfile, error) {
+	previousUserID, previousCookies, _ := s.authSession()
 	cookies = strings.TrimSpace(cookies)
 	token = strings.TrimSpace(token)
 
@@ -117,9 +122,15 @@ func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token st
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("请求官方登录接口失败: %w", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, qrauth.ErrTemporary
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("%w（HTTP %d）", qrauth.ErrTemporary, resp.StatusCode)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -168,10 +179,28 @@ func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token st
 		UserID: uid, Nickname: nickname, Avatar: avatar, LoggedIn: true,
 		DeviceID: s.store.GetProfile().DeviceID,
 	}
+	// A profile refresh must not masquerade as an account switch. Older builds
+	// persisted req_id as the user ID; accept it only as a migration alias tied
+	// to the exact existing credential, never as evidence of login by itself.
+	sameAccount := previousUserID != "" && (previousUserID == uid || previousUserID == nonZeroUserID(res.Data.UserID))
+	var aliases []string
+	legacyID := legacyAccountID(res.Data.ReqID)
+	if previousCookies != "" && cookies == previousCookies && legacyID != "" && previousUserID == legacyID {
+		sameAccount = true
+		aliases = append(aliases, "user:"+legacyID)
+	}
+	// Once the profile is canonical, req_id alone cannot prove ownership of an
+	// orphaned queue. Only recover the canonical account's own pending records.
+	if sameAccount && previousUserID != "" {
+		aliases = append(aliases, "user:"+previousUserID)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := s.store.SetAuthenticatedAccount(store.AccountAuth{
 		Cookies: cookies,
 		Token:   token,
-	}, profile, previousUserID != uid); err != nil {
+	}, profile, !sameAccount, aliases...); err != nil {
 		return nil, fmt.Errorf("保存登录账号失败: %w", err)
 	}
 	s.setAuthCredentials(cookies, token, uid)
@@ -185,6 +214,20 @@ func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token st
 	return sanitizeIPC(&profile), nil
 }
 
+func legacyAccountID(value any) string {
+	var id string
+	switch v := value.(type) {
+	case string:
+		id = v
+	case float64:
+		id = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	if !validContentID(id) {
+		return ""
+	}
+	return id
+}
+
 func nonZeroUserID(value string) string {
 	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil || id <= 0 {
@@ -194,16 +237,24 @@ func nonZeroUserID(value string) string {
 }
 
 func (s *HongguoService) RefreshUserProfile(ctx context.Context) (*UserProfile, error) {
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
 	userCookies, userToken := s.authCredentials()
 	if userCookies == "" {
 		return nil, fmt.Errorf("当前未登录")
 	}
-	return s.LoginWithCookies(ctx, userCookies, userToken)
+	return s.loginWithCookiesLocked(ctx, userCookies, userToken)
 }
 
 func (s *HongguoService) Logout(ctx context.Context) error {
 	s.accountMu.Lock()
 	defer s.accountMu.Unlock()
+	s.qrMu.Lock()
+	if s.qrActive != nil {
+		s.qrActive.cancel()
+		s.qrActive = nil
+	}
+	s.qrMu.Unlock()
 	deviceID := s.store.GetProfile().DeviceID
 	if err := s.store.SignOut(deviceID); err != nil {
 		return fmt.Errorf("退出登录失败: %w", err)

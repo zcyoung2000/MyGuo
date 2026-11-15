@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -33,26 +32,14 @@ func newReleasePosterWidth(height float32) float32 {
 	return min(newReleaseSparsePosterWidth, available/posterAspectRatio)
 }
 
-var (
-	artworkFade             = ui.Animation{Duration: 320 * time.Millisecond, NonMotion: true}
-	cardSpring              = ui.Snappy
-	feedbackAnimationValues = ui.Animation{Duration: 120 * time.Millisecond}
-	drawerTransition        = ui.ElementTransition{
-		Duration: 240 * time.Millisecond,
-		Ease:     ui.CubicBezier(0.32, 0.72, 0, 1),
-		Position: true,
-		Colors:   true,
-	}
-)
-
 // hoverBackground always names the idle target first, so a pointer leaving
 // interrupts toward the correct color instead of freezing at the hovered one.
 func hoverBackground(element ui.Element, idle, hovered ui.Color) ui.Element {
-	background := element.AnimateColor("background", idle, feedbackAnimationValues)
+	target := idle
 	if element.Hovered() {
-		background = element.AnimateColor("background", hovered, feedbackAnimationValues)
+		target = hovered
 	}
-	element.Background(background)
+	element.Background(element.AnimateColor("background", target, feedbackAnimationValues))
 	pose := ui.Pose{}
 	if element.Pressed() {
 		pose.Scale = 0.98
@@ -100,7 +87,7 @@ func (a *App) gridContentWidth(c *ui.Context) float32 {
 // dramaSkeleton mirrors the real card geometry before any content arrives,
 // so skeletons and loaded grids cannot shift the page.
 func dramaSkeleton(c *ui.Context, count int, width float32) {
-	skeleton := pageShimmer(c)
+	skeleton := pagePlaceholder(c)
 	cardWidth := dramaCardWidth(width)
 	posterHeight := cardWidth * posterAspectRatio
 	ui.Row(c.Key("drama-skeleton")).Wrap().Gap(dramaCardGap).Children(func() {
@@ -112,15 +99,6 @@ func dramaSkeleton(c *ui.Context, count int, width float32) {
 				skeleton.text(c.Key("metadata"), 12, 1.3).WidthPercent(boneWidth(index))
 			})
 		}
-	})
-}
-
-// pageHeader establishes one shared rhythm across catalog, rank, release,
-// actor, search, library and detail pages.
-func pageHeader(c *ui.Context, title string) {
-	ui.Column(c.Key("page-header:"+title)).Gap(2).Padding(0, 0, 4, 0).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold().LetterSpacing(-0.4).TextColor(c.Theme().Text).SingleLine().
-			Role(ui.RoleHeading).Level(1)
 	})
 }
 

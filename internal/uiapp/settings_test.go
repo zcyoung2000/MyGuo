@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -44,6 +45,12 @@ func (f *settingsTestProvider) LoginWithCookies(_ context.Context, cookie, _ str
 		return nil, f.err
 	}
 	return &ipc.UserProfile{UserID: "42", Nickname: "New User", LoggedIn: true}, nil
+}
+func (f *settingsTestProvider) BeginQRLogin(context.Context) (*ipc.QRLoginDTO, error) {
+	return nil, errors.New("扫码服务测试占位")
+}
+func (f *settingsTestProvider) PollQRLogin(context.Context, string) (*ipc.QRLoginStatusDTO, error) {
+	return nil, errors.New("扫码会话不存在")
 }
 func (f *settingsTestProvider) RefreshUserProfile(context.Context) (*ipc.UserProfile, error) {
 	f.calls = append(f.calls, "RefreshUserProfile")
@@ -126,7 +133,6 @@ func settingsFixture() (*App, *settingsTestProvider, *ui.Tester) {
 		Profile: fake.profile, CacheSize: fake.cache, DeviceID: "device-id",
 		DeviceVersion: "2.0.0", DeviceArch: "darwin-arm64",
 		LegacyNickname: "Old Account", HasLegacy: true, LoginOpen: true,
-		LoginCookie: "sessionid=test", LoginToken: "token",
 	}
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
@@ -145,7 +151,7 @@ func TestSettingsRendersNativeSectionsAndActions(t *testing.T) {
 		"设置", "Henry", "已登录官方账号", "账号 ID:", "42", "刷新资料", "退出登录", "切换账号",
 		"设备与存储管理", "本地媒体缓存", "5.0 MB", "清理缓存", "匿名设备指纹", "device-id", "重置设备",
 		"播放备用设备池", "仅在播放受限时借用", "手动导入备用设备", "did (必填)", "导入备用设备",
-		"账号凭据登录", "Cookie (必填)", "验证并登录",
+		"扫码登录", "打开手机红果 App，扫一扫后确认登录", "刷新二维码", "取消",
 	} {
 		if !tt.HasText(text) {
 			t.Fatalf("native settings missing %q: %v", text, tt.Texts())
@@ -187,7 +193,7 @@ func TestSettingsMediaRoutingKeepsRecommendAndDetail(t *testing.T) {
 	app.SetMediaHost(host)
 	app.view = "recommend"
 	app.mediaOn = true
-	host.scene(map[string]any{"event": "recommend"})
+	host.Recommend()
 	app.OpenView("recommend")
 	if host.desired["event"] != "recommend" {
 		t.Fatal("recommend host changed")
@@ -200,33 +206,6 @@ func TestSettingsMediaRoutingKeepsRecommendAndDetail(t *testing.T) {
 	app.PlayDetail()
 	if host.desired["event"] != "stop" {
 		t.Fatal("navigation stop changed")
-	}
-}
-
-func TestSettingsSubmitLoginValidatesAndCallsIPC(t *testing.T) {
-	app, fake, _ := settingsFixture()
-	app.SubmitSettingsLogin()
-	app.mu.Lock()
-	provider := app.settingsProvider()
-	app.mu.Unlock()
-	if provider == nil {
-		t.Fatal("settings login provider missing")
-	}
-	provider.LoginWithCookies(context.Background(), "sessionid=test", "token")
-	if !containsString(fake.calls, "LoginWithCookies:sessionid=test") {
-		t.Fatalf("login IPC missing: %v", fake.calls)
-	}
-}
-
-func TestSettingsSubmitLoginRejectsBlankCookie(t *testing.T) {
-	app := NewTestApp()
-	fake := &settingsTestProvider{}
-	app.settingsTestProvider = fake
-	app.view = "settings"
-	app.settings.LoginOpen = true
-	app.SubmitSettingsLogin()
-	if app.SettingsState().Error == "" || len(fake.calls) != 0 {
-		t.Fatalf("blank cookie not rejected: error=%q calls=%v", app.SettingsState().Error, fake.calls)
 	}
 }
 
@@ -257,3 +236,24 @@ func containsString(values []string, want string) bool {
 }
 
 var _ = mygo.WebView{}
+
+func TestOpeningAndCancellingAccountSwitchDoesNotMutateSessionOrHistory(t *testing.T) {
+	a, fake, tt := settingsFixture()
+	a.SetSettingsLoginOpen(false)
+	a.library.History = Library{Loaded: true, Items: []CatalogItem{{ID: "existing", Title: "已有历史"}}}
+	tt.Frame()
+	if err := tt.Click("切换账号"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(time.Second, func() bool { return a.SettingsState().LoginOpen })
+	tt.Frame()
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(time.Second, func() bool { return !a.SettingsState().LoginOpen })
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.settings.Profile.UserID != "42" || len(a.library.History.Items) != 1 || len(fake.calls) != 0 {
+		t.Fatalf("opening/cancelling switched session: calls=%v", fake.calls)
+	}
+}

@@ -26,18 +26,16 @@ func TestDetailVerticalRhythmAndCollectionSpacing(t *testing.T) {
 		tt.Advance(200)
 	}
 
-	title, ok := tt.Find("紧凑详情页")
-	source, sourceOK := tt.Find("原著小说")
-	seasons, seasonsOK := tt.Find("同系列短剧")
-	collectionLabel, collectionOK := tt.Find("同一剧本改编")
-	if !ok || !sourceOK || !seasonsOK || !collectionOK {
-		t.Fatalf("detail sections missing: title=%+v source=%+v seasons=%+v collection=%+v", title, source, seasons, collectionLabel)
+	if err := tt.Click("相关作品"); err != nil {
+		t.Fatal(err)
 	}
-	if title.Y+title.H > source.Y || source.Y+source.H > collectionLabel.Y {
-		t.Fatalf("detail sections overlap or clip: title=%+v source=%+v collection=%+v", title, source, collectionLabel)
+	tt.Frame()
+	adaptations, ok := tt.Find("同一剧本改编")
+	if !ok || adaptations.Y <= 0 || !tt.HasText("同系列其他季") {
+		t.Fatalf("adaptation section missing or seasons mixed in: %v", tt.Texts())
 	}
-	gap := float64(collectionLabel.Y - (seasons.Y + seasons.H))
-	if gap < 6 || collectionLabel.Y+collectionLabel.H > 820 {
-		t.Fatalf("detail collection spacing or viewport bounds wrong: gap=%.1f label=%+v seasons=%+v", gap, collectionLabel, seasons)
+	source, ok := tt.AccessByRole(ui.RoleGroup, "原著信息")
+	if !ok || source.Bounds.Y >= adaptations.Y {
+		t.Fatal("source summary not moved into introduction")
 	}
 }

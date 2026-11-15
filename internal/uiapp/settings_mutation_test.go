@@ -19,13 +19,13 @@ type mutatingSettingsProvider struct {
 	clearError   error
 }
 
-func (f *mutatingSettingsProvider) LoginWithCookies(_ context.Context, cookie, token string) (*ipc.UserProfile, error) {
+func (f *mutatingSettingsProvider) RefreshUserProfile(_ context.Context) (*ipc.UserProfile, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.loginStarted != nil {
 		close(f.loginStarted)
 	}
-	f.settingsTestProvider.LoginWithCookies(context.Background(), cookie, token)
+	f.settingsTestProvider.RefreshUserProfile(context.Background())
 	if f.loginError != nil {
 		return nil, f.loginError
 	}
@@ -88,13 +88,12 @@ func TestSettingsMutationSuccessShowsMessageAndRefreshesState(t *testing.T) {
 	fake.profile = ipc.UserProfile{UserID: "42", Nickname: "New User", LoggedIn: true}
 	app.settingsTestProvider = fake
 	app.settings = Settings{
-		Profile:     ipc.UserProfile{UserID: "old", Nickname: "Old User", LoggedIn: true},
-		CacheSize:   5 << 20,
-		Error:       "旧错误",
-		LoginOpen:   true,
-		LoginCookie: "sessionid=test",
+		Profile:   ipc.UserProfile{UserID: "old", Nickname: "Old User", LoggedIn: true},
+		CacheSize: 5 << 20,
+		Error:     "旧错误",
+		LoginOpen: true,
 	}
-	app.SubmitSettingsLogin()
+	app.RefreshSettingsProfile()
 	select {
 	case <-fake.loginStarted:
 	case <-time.After(time.Second):
@@ -112,7 +111,7 @@ func TestSettingsMutationSuccessShowsMessageAndRefreshesState(t *testing.T) {
 	if state.Error != "" {
 		t.Fatalf("old settings error survived success: %q", state.Error)
 	}
-	if state.Success != "登录成功！欢迎回来，New User" {
+	if state.Success != "个人资料已刷新" {
 		t.Fatalf("settings success message missing: %q", state.Success)
 	}
 

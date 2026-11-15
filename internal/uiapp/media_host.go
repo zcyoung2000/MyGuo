@@ -1,159 +1,108 @@
 package uiapp
 
 import (
-	"encoding/json"
-	"log"
-	"sync"
-	"time"
-
 	"github.com/egoist/mygo"
 	"myguo/internal/native"
+	"myguo/internal/playback"
+	"sync"
 )
 
-// MediaHost embeds the existing feature-complete playback scenes. Navigation and
-// catalog UI remain native; source negotiation, MSE/HLS, buffering and controls
-// share the same tested implementation as before the shell migration.
+// MediaHost connects native navigation to the Go playback controller. It
+// carries no document, JavaScript dispatcher or WebView lifecycle.
 type MediaHost struct {
-	mu              sync.Mutex
-	view            *mygo.WebView
-	ready           bool
-	nextID          uint64
-	eval            func(string) (any, error)
-	desired         map[string]any
-	pendingCommands []mediaMessage
-	queue           []mediaMessage
-	draining        bool
-	sent            []map[string]any
+	mu         sync.Mutex
+	controller nativePlayerController
+	desired    map[string]any
+	sent       []map[string]any
 }
 
-type mediaMessage struct {
-	id      uint64
-	payload map[string]any
+type nativePlayerController interface {
+	ShowFeed(string)
+	Play(string, int, float64, int64)
+	Stop()
+	Command(string, any)
+	Snapshot() playback.State
+	Close()
+	ToggleFavorite()
+	ToggleLike()
+	MoreComments()
+	LoadReplies(string)
+	SendDanmaku(string, string)
+	LikeDanmaku(string, bool)
 }
 
-func (h *MediaHost) Attach(view *mygo.WebView) {
-	h.mu.Lock()
-	h.view = view
-	h.startLocked()
-	h.mu.Unlock()
-	view.Page().OnRenderProcessGone(func(reason string) {
-		h.mu.Lock()
-		h.ready = false
-		h.mu.Unlock()
-		log.Printf("[media-host] renderer gone: %s", reason)
-	})
+func NewNativeMediaHost(controller *playback.Controller) *MediaHost {
+	return &MediaHost{controller: controller}
 }
-func (h *MediaHost) WebView() *mygo.WebView { h.mu.Lock(); defer h.mu.Unlock(); return h.view }
-func (h *MediaHost) scene(payload map[string]any) {
-	h.sceneLocked(payload)
-}
-func (h *MediaHost) sceneLocked(payload map[string]any) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.desired = payload
-	h.queue = nil
-	if h.ready {
-		h.queue = append(h.queue, h.newMessageLocked(payload))
-		h.startLocked()
+func (h *MediaHost) record(payload map[string]any) { h.mu.Lock(); h.desired = payload; h.mu.Unlock() }
+func (h *MediaHost) Recommend()                    { h.RecommendChannel("") }
+func (h *MediaHost) RecommendChannel(channel string) {
+	h.record(map[string]any{"event": "recommend", "channel": channel})
+	if h.controller != nil {
+		h.controller.ShowFeed(channel)
 	}
 }
-func (h *MediaHost) Recommend() { h.scene(map[string]any{"event": "recommend"}) }
-func (h *MediaHost) RecommendChannel(channel string) {
-	h.scene(map[string]any{"event": "recommend", "channel": channel})
+func (h *MediaHost) Settings()        { h.Stop() }
+func (h *MediaHost) Detail(id string) { h.Stop() }
+func (h *MediaHost) Stop() {
+	h.record(map[string]any{"event": "stop"})
+	if h.controller != nil {
+		h.controller.Stop()
+	}
 }
-func (h *MediaHost) Settings() { h.scene(map[string]any{"event": "settings"}) }
-func (h *MediaHost) Stop()     { h.scene(map[string]any{"event": "stop"}) }
-func (h *MediaHost) StopNow()  { h.stopWithoutWaiting() }
-func (h *MediaHost) Detail(id string) {
-	h.scene(map[string]any{"event": "detail", "seriesId": id})
-}
+func (h *MediaHost) StopNow() { h.Stop() }
 func (h *MediaHost) Play(id string, num int, position float64, session int64) {
-	// nil retains PlayEpisode's saved position for normal play/episode selection.
 	var resume any
 	if position >= 0 {
 		resume = position
 	}
-	h.scene(map[string]any{"event": "play", "seriesId": id, "episodeNum": num, "resumeAt": resume, "session": session})
-}
-func (h *MediaHost) Command(p native.MediaCommandPayload) {
-	h.mu.Lock()
-	message := h.newMessageLocked(map[string]any{"event": "command", "command": p.Command, "position": p.Position})
-	if h.ready {
-		h.queue = append(h.queue, message)
-		h.startLocked()
-	} else {
-		h.pendingCommands = append(h.pendingCommands, message)
+	h.record(map[string]any{"event": "play", "seriesId": id, "episodeNum": num, "resumeAt": resume, "session": session})
+	if h.controller != nil {
+		h.controller.Play(id, num, position, session)
 	}
-	h.mu.Unlock()
 }
-func (h *MediaHost) PictureInPicture() { h.Command(native.MediaCommandPayload{Command: "pip"}) }
+func (h *MediaHost) Command(p native.MediaCommandPayload) { h.PlayerControl(p.Command, p.Position) }
+func (h *MediaHost) PictureInPicture()                    { h.PlayerControl("pip", nil) }
 func (h *MediaHost) PlayerControl(command string, value any) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.PlayerControlLocked(command, value)
+	h.mu.Unlock()
 }
-
 func (h *MediaHost) PlayerControlLocked(command string, value any) {
-	payload := map[string]any{"event": "command", "command": command, "value": value}
-	h.sent = append(h.sent, payload)
-	message := h.newMessageLocked(payload)
-	if h.ready {
-		h.queue = append(h.queue, message)
-	} else {
-		h.pendingCommands = append(h.pendingCommands, message)
+	h.sent = append(h.sent, map[string]any{"event": "command", "command": command, "value": value})
+	if len(h.sent) > 128 {
+		h.sent = h.sent[len(h.sent)-128:]
 	}
-	if !h.ready {
-		return
-	}
-	h.startLocked()
-}
-func (h *MediaHost) startLocked() {
-	if !h.draining && h.view != nil {
-		h.draining = true
-		go h.drain()
+	if h.controller != nil {
+		h.controller.Command(command, value)
 	}
 }
-func (h *MediaHost) drain() {
-	for {
-		h.mu.Lock()
-		if len(h.queue) == 0 || !h.ready {
-			h.draining = false
-			h.mu.Unlock()
-			return
-		}
-		message, view := h.queue[0], h.view
-		eval := h.eval
-		h.mu.Unlock()
-		data, err := json.Marshal(message.payload)
-		if err == nil && eval != nil {
-			_, err = eval("window.nativeMediaEvent && window.nativeMediaEvent(" + string(data) + ");void 0")
-		} else if err == nil && view != nil {
-			_, err = view.Page().Eval("window.nativeMediaEvent && window.nativeMediaEvent(" + string(data) + ");void 0")
-		}
-		if err != nil {
-			log.Printf("[media-host] command failed: %v", err)
-			h.mu.Lock()
-			if h.ready && len(h.queue) > 0 && h.queue[0].id == message.id {
-				time.AfterFunc(200*time.Millisecond, func() {
-					h.mu.Lock()
-					h.draining = false
-					h.startLocked()
-					h.mu.Unlock()
-				})
-			}
-			h.draining = false
-			h.mu.Unlock()
-			return
-		}
-		h.mu.Lock()
-		if len(h.queue) > 0 && h.queue[0].id == message.id {
-			h.queue = h.queue[1:]
-		}
-		h.mu.Unlock()
+func (h *MediaHost) Snapshot() playback.State {
+	if h.controller != nil {
+		return h.controller.Snapshot()
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := playback.State{Preferences: playback.DefaultPreferences()}
+	if h.desired["event"] == "recommend" {
+		s.Mode = playback.Feed
+	} else if h.desired["event"] == "play" {
+		s.Mode = playback.Series
+	}
+	return s
+}
+func (h *MediaHost) Close() {
+	if h.controller != nil {
+		h.controller.Close()
+	}
+}
+func (h *MediaHost) SentControls() []map[string]any {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]map[string]any(nil), h.sent...)
 }
 
-// NativeShell exposes only callbacks needed by the media document.
+// NativeShell retains compatibility with existing session and navigation callers.
 type NativeShell struct{ App *App }
 
 type AmbientGlowPayload struct {
@@ -182,46 +131,4 @@ func (s *NativeShell) ToggleFullscreen() {
 		return
 	}
 	native.ToggleWindowFullscreen()
-}
-
-// StopNow uses the same ordered dispatcher as playback. An independent Eval
-// could arrive after a newer Play and leave its visible WebView on native-idle.
-func (h *MediaHost) stopWithoutWaiting() { h.Stop() }
-
-// MediaReady is sent by native-media.js after its scene handler is installed.
-// DOM ready alone is insufficient: a command must never be silently dropped
-// because nativeMediaEvent hasn't been defined yet.
-func (s *NativeShell) MediaReady() {
-	s.App.mu.Lock()
-	host := s.App.media
-	s.App.mu.Unlock()
-	if host != nil {
-		host.markReady()
-	}
-}
-func (h *MediaHost) markReady() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.ready {
-		return
-	}
-	h.ready = true
-	if h.desired != nil {
-		h.queue = append(h.queue, h.newMessageLocked(h.desired))
-	}
-	h.queue = append(h.queue, h.pendingCommands...)
-	h.pendingCommands = nil
-	h.draining = false
-	h.startLocked()
-}
-
-func (h *MediaHost) SentControls() []map[string]any {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return append([]map[string]any(nil), h.sent...)
-}
-
-func (h *MediaHost) newMessageLocked(payload map[string]any) mediaMessage {
-	h.nextID++
-	return mediaMessage{id: h.nextID, payload: payload}
 }

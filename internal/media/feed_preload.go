@@ -99,6 +99,7 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 	if validContentID(currentEpisodeID) {
 		currentKey = PrefetchTaskKey(PrefetchTask{EpisodeID: currentEpisodeID, Quality: currentQuality})
 	}
+
 	tasks := make([]PrefetchTask, 0, 2)
 	desired := make(map[string]PrefetchTask, 2)
 	for _, item := range items {
@@ -114,15 +115,47 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 		tasks = append(tasks, task)
 	}
 
+	// Keep one previous active writer briefly for reverse swipes. While it
+	// holds a worker, reserve the other two for current + nearest-next.
+	now := time.Now()
+	previous := ms.feedPreloadPrevious
+	if currentKey != ms.feedPreloadCurrent {
+		previous = ms.feedPreloadCurrent
+		if ms.feedPreloadPrevious != "" && ms.feedPreloadPrevious != previous && ms.feedPreloadPrevious != currentKey {
+			if _, wanted := desired[ms.feedPreloadPrevious]; !wanted {
+				ms.stopFeedPreload(ms.feedPreloadPrevious)
+			}
+		}
+		ms.feedPreloadPreviousUntil = now.Add(activeHLSMediaRequestGrace)
+	}
+	keepPrevious := false
+	if len(tasks) > 0 && currentKey != "" && previous != "" && previous != currentKey && now.Before(ms.feedPreloadPreviousUntil) {
+		ms.hlsMu.Lock()
+		if stream := ms.hlsStreams[previous]; stream != nil && stream.retired == nil && stream.hasRecentMediaRequest(now) {
+			select {
+			case <-stream.done:
+			default:
+				keepPrevious = true
+			}
+		}
+		ms.hlsMu.Unlock()
+	}
+	if !keepPrevious && previous != "" && previous != currentKey {
+		if _, wanted := desired[previous]; !wanted {
+			ms.stopFeedPreload(previous)
+		}
+		previous = ""
+	}
+	ms.feedPreloadPrevious = previous
 	// Explicit speculative ownership lets backpressure cancel a background
 	// video even when its offscreen decoder recently requested an HLS segment.
 	// The protected current key is never canceled, including on promotion.
 	for key := range ms.feedPreloadTasks {
-		if _, keep := desired[key]; !keep && key != currentKey {
+		if _, keep := desired[key]; !keep && key != currentKey && !(keepPrevious && key == previous) {
 			ms.stopFeedPreload(key)
 		}
 	}
-	if old := ms.feedPreloadCurrent; old != "" && old != currentKey {
+	if old := ms.feedPreloadCurrent; old != "" && old != currentKey && !(keepPrevious && old == previous) {
 		if _, keep := desired[old]; !keep {
 			ms.stopFeedPreload(old)
 		}
@@ -146,11 +179,14 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 	// both continue towards complete caches. Waiting for the entire nearest
 	// episode leaves rapid consecutive swipes with nothing ready to play.
 	nearestReady := len(statuses) > 0 && (statuses[0].Complete || statuses[0].CachedSeconds >= 6)
-	if len(tasks) == 2 && !nearestReady && statuses[1].Active {
+	if len(tasks) == 2 && (!nearestReady || keepPrevious) && statuses[1].Active {
 		ms.stopFeedPreload(PrefetchTaskKey(tasks[1]))
 		statuses[1].Active = false
 	}
 	for i, task := range tasks {
+		if i > 0 && keepPrevious {
+			break
+		}
 		if i > 0 && !statuses[i-1].Complete && statuses[i-1].CachedSeconds < 6 {
 			break
 		}

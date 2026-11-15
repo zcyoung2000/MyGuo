@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,6 +178,32 @@ func TestFailedHistoryUploadUsesBackoffAndRetainsIntent(t *testing.T) {
 		t.Fatal("failed retry was not marked")
 	}
 	assertLocalHistoryPreserved(t, store)
+}
+
+func TestNewPlaybackClockDoesNotBypassFailedUploadCooldown(t *testing.T) {
+	var requests atomic.Int32
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		writeJSON(w, map[string]any{"code": 100103, "message": "PARAM_INVALID"})
+	}))
+	seedQueuedHistoryUpload(t, store)
+	if _, err := service.processPendingHistoryUploads(); err == nil {
+		t.Fatal("fixture upload must fail")
+	}
+	for n := 0; n < 12; n++ {
+		item := historyRefreshTestItem()
+		item.PositionSec += float64(n + 1)
+		if _, err := store.SavePlaybackProgress(item, "710000000000103", service.PlaybackScope()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.processPendingHistoryUploads(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, err := store.PendingHistoryUploads(10)
+	if requests.Load() != 1 || err != nil || len(pending) != 1 || pending[0].PositionSec != historyRefreshTestItem().PositionSec+12 {
+		t.Fatalf("new clocks bypassed cooldown or lost latest intent: requests=%d pending=%+v err=%v", requests.Load(), pending, err)
+	}
 }
 
 func TestHistoryInvalidUploadRetainsEveryIntent(t *testing.T) {

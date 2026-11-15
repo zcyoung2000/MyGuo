@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk"
+	"myguo/internal/filterapi"
 )
 
 type CredentialTransport interface {
@@ -54,6 +55,11 @@ func (t *Transport) SetCredentials(cookies, token, storeRegion string) {
 func (t *Transport) Do(ctx context.Context, req *sdk.Request) (*sdk.Response, error) {
 	if req == nil {
 		return nil, errors.New("auth transport: nil request")
+	}
+	var err error
+	req, err = filterapi.AmendSignedRequest(ctx, req)
+	if err != nil {
+		return nil, err
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, methodOrGet(req.Method), req.URL, bytes.NewReader(req.Body))

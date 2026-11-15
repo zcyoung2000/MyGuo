@@ -14,7 +14,7 @@ const (
 )
 
 func (s *HongguoService) enrichSeriesCards(ctx context.Context, cards []SeriesCard) []SeriesCard {
-	if len(cards) == 0 {
+	if len(cards) == 0 || (s.client == nil && s.seriesBatch == nil) {
 		return cards
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, seriesBatchTimeout)

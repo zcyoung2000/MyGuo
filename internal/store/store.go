@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,10 +119,20 @@ func NewStore(dir string) (*Store, error) {
 	}
 
 	dbPath := filepath.Join(dir, "userdata.db")
-	db, err := sql.Open("sqlite", dbPath)
+	// database/sql opens more connections during concurrent playback, cache
+	// bookkeeping and sync. Connection-local PRAGMAs must apply to every one.
+	// IMMEDIATE also avoids upgrading an obsolete read snapshot to a writer.
+	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}
+	dsn.RawQuery = url.Values{
+		"_pragma": {"busy_timeout(5000)", "synchronous(NORMAL)"},
+		"_txlock": {"immediate"},
+	}.Encode()
+	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 
 	// Optimize SQLite performance & concurrency
 	if _, err := db.Exec(`
@@ -901,7 +913,7 @@ func (s *Store) migrateFromJSON(jsonPath string) error {
 }
 
 func (s *Store) importOldAppData() {
-	if os.Getenv("MYGUO_TEST_NO_LEGACY_IMPORT") == "1" {
+	if os.Getenv("MYGUO_TEST_NO_LEGACY_IMPORT") == "1" || os.Getenv("MYGUO_DATA_ROOT") != "" {
 		return
 	}
 	home, err := os.UserHomeDir()
@@ -937,27 +949,45 @@ func (s *Store) importOldAppData() {
 func (s *Store) SaveHistory(item HistoryItem, scopes ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveHistoryLocked(item, scopes)
+}
 
+// SaveHistoryIfCurrentScope prevents a late remote read from repopulating
+// visible history after an account transaction has cleared it.
+func (s *Store) SaveHistoryIfCurrentScope(item HistoryItem, scope string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope != s.syncScope {
+		return false, nil
+	}
+	return true, s.saveHistoryLocked(item, []string{scope})
+}
+
+func (s *Store) saveHistoryLocked(item HistoryItem, scopes []string) error {
 	if item.UpdatedAt <= 0 {
 		item.UpdatedAt = time.Now().Unix()
 	}
 	if item.ContentType == 0 {
 		item.ContentType = 1004
 	}
-
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-
+	if err = saveHistoryTx(tx, item, s.syncScopeLocked(scopes)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func saveHistoryTx(tx *sql.Tx, item HistoryItem, scope string) error {
 	if _, err := tx.Exec(`DELETE FROM history_tombstones WHERE series_id = ?`, item.SeriesID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ? AND scope = ?`, item.SeriesID, s.syncScopeLocked(scopes)); err != nil {
+	if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ? AND scope = ?`, item.SeriesID, scope); err != nil {
 		return err
 	}
-	_, err = tx.Exec(`
+	_, err := tx.Exec(`
 		INSERT INTO history (
 			series_id, title, cover_url, episode_num, episode_title,
 			position_sec, duration_sec, total_episodes, updated_at, intro, content_type
@@ -978,7 +1008,7 @@ func (s *Store) SaveHistory(item HistoryItem, scopes ...string) error {
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) SaveHistoryBatch(items []HistoryItem, scopes ...string) error {
@@ -1327,6 +1357,12 @@ func (s *Store) QueueHistoryUpload(item HistoryItem, episodeID string, scopes ..
 		return err
 	}
 	defer tx.Rollback()
+	if err = queueHistoryUploadTx(tx, item, episodeID, s.syncScopeLocked(scopes)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func queueHistoryUploadTx(tx *sql.Tx, item HistoryItem, episodeID, scope string) error {
 	revision, err := nextSyncRevision(tx)
 	if err != nil {
 		return err
@@ -1349,14 +1385,58 @@ func (s *Store) QueueHistoryUpload(item HistoryItem, episodeID string, scopes ..
 			intro = excluded.intro,
 			content_type = excluded.content_type, revision = excluded.revision
 	`, item.SeriesID, episodeID, item.Title, item.CoverURL, item.EpisodeNum, item.EpisodeTitle,
-		item.PositionSec, item.DurationSec, item.TotalEpisodes, item.UpdatedAt, item.Intro, item.ContentType, s.syncScopeLocked(scopes), revision)
+		item.PositionSec, item.DurationSec, item.TotalEpisodes, item.UpdatedAt, item.Intro, item.ContentType, scope, revision)
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
+}
+
+// SavePlaybackProgress commits the visible clock and its durable sync intent
+// together, under the same identity lock used by account transitions.
+func (s *Store) SavePlaybackProgress(item HistoryItem, episodeID, scope string) (HistoryItem, error) {
+	return s.SavePlaybackProgressContext(context.Background(), item, episodeID, scope)
+}
+
+func (s *Store) SavePlaybackProgressContext(ctx context.Context, item HistoryItem, episodeID, scope string) (HistoryItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope != s.syncScope {
+		return HistoryItem{}, fmt.Errorf("账号已切换，未保存旧播放进度")
+	}
+	if item.UpdatedAt <= 0 {
+		item.UpdatedAt = time.Now().Unix()
+	}
+	if item.ContentType == 0 {
+		item.ContentType = 1004
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return HistoryItem{}, err
+	}
+	defer tx.Rollback()
+	if err = saveHistoryTx(tx, item, scope); err != nil {
+		return HistoryItem{}, err
+	}
+	var stored HistoryItem
+	err = tx.QueryRow(`SELECT series_id,title,cover_url,episode_num,episode_title,position_sec,duration_sec,total_episodes,updated_at,intro,content_type FROM history WHERE series_id=?`, item.SeriesID).Scan(&stored.SeriesID, &stored.Title, &stored.CoverURL, &stored.EpisodeNum, &stored.EpisodeTitle, &stored.PositionSec, &stored.DurationSec, &stored.TotalEpisodes, &stored.UpdatedAt, &stored.Intro, &stored.ContentType)
+	if err != nil {
+		return HistoryItem{}, err
+	}
+	if err = queueHistoryUploadTx(tx, stored, episodeID, scope); err != nil {
+		return HistoryItem{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return HistoryItem{}, err
+	}
+	return stored, nil
 }
 
 func (s *Store) PendingHistoryUploads(limit int, scopes ...string) ([]PendingHistoryUpload, error) {
+	return s.PendingHistoryUploadsPage(limit, 0, scopes...)
+}
+
+func (s *Store) PendingHistoryUploadsPage(limit, offset int, scopes ...string) ([]PendingHistoryUpload, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -1367,9 +1447,9 @@ func (s *Store) PendingHistoryUploads(limit int, scopes ...string) ([]PendingHis
 		       position_sec, duration_sec, total_episodes, updated_at, intro, content_type, scope, revision
 		FROM pending_history_uploads
 		WHERE scope = ?
-		ORDER BY updated_at
-		LIMIT ?
-	`, s.syncScopeLocked(scopes), limit)
+		ORDER BY updated_at, series_id
+		LIMIT ? OFFSET ?
+	`, s.syncScopeLocked(scopes), limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1473,21 +1553,39 @@ func (s *Store) HistoryDeleted(seriesID string) bool {
 	return err == nil
 }
 
-func (s *Store) ToggleFavorite(item FavoriteItem) (bool, error) {
+func (s *Store) ToggleFavorite(item FavoriteItem, scopes ...string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM favorites WHERE series_id = ?`, item.SeriesID).Scan(&exists)
-	if err == nil && exists == 1 {
-		_, err := s.db.Exec(`DELETE FROM favorites WHERE series_id = ?`, item.SeriesID)
-		return false, err
+	if len(scopes) > 0 && scopes[0] != s.syncScope {
+		return false, fmt.Errorf("账号已切换，未修改收藏")
 	}
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var exists int
+	err = tx.QueryRow(`SELECT 1 FROM favorites WHERE series_id = ?`, item.SeriesID).Scan(&exists)
+	if err == nil && exists == 1 {
+		if _, err = tx.Exec(`DELETE FROM favorites WHERE series_id=?`, item.SeriesID); err != nil {
+			return false, err
+		}
+		if len(scopes) > 0 {
+			if err = queueFavoriteOpTx(tx, item.SeriesID, false, scopes[0]); err != nil {
+				return false, err
+			}
+		}
+		return false, tx.Commit()
+	}
+
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
 	if item.AddedAt <= 0 {
 		item.AddedAt = time.Now().Unix()
 	}
-	_, err = s.db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO favorites (series_id, title, cover_url, description, total_episodes, added_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(series_id) DO UPDATE SET
@@ -1497,7 +1595,15 @@ func (s *Store) ToggleFavorite(item FavoriteItem) (bool, error) {
 			total_episodes = excluded.total_episodes,
 			added_at = excluded.added_at
 	`, item.SeriesID, item.Title, item.CoverURL, item.Description, item.TotalEpisodes, item.AddedAt)
-	return true, err
+	if err != nil {
+		return false, err
+	}
+	if len(scopes) > 0 {
+		if err = queueFavoriteOpTx(tx, item.SeriesID, true, scopes[0]); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 func (s *Store) IsFavorite(seriesID string) bool {
@@ -1637,6 +1743,12 @@ func (s *Store) QueueFavoriteOp(seriesID string, added bool, scopes ...string) e
 		return err
 	}
 	defer tx.Rollback()
+	if err = queueFavoriteOpTx(tx, seriesID, added, s.syncScopeLocked(scopes)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func queueFavoriteOpTx(tx *sql.Tx, seriesID string, added bool, scope string) error {
 	revision, err := nextSyncRevision(tx)
 	if err != nil {
 		return err
@@ -1647,11 +1759,11 @@ func (s *Store) QueueFavoriteOp(seriesID string, added bool, scopes ...string) e
 		ON CONFLICT(scope, series_id) DO UPDATE SET
 			added = excluded.added,
 			updated_at = excluded.updated_at, revision = excluded.revision
-	`, seriesID, boolToInt(added), time.Now().Unix(), s.syncScopeLocked(scopes), revision)
+	`, seriesID, boolToInt(added), time.Now().Unix(), scope, revision)
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func boolToInt(value bool) int {
@@ -1754,9 +1866,13 @@ func (s *Store) IsLiked(seriesID, episodeID string, episodeNum int) bool {
 
 // SetLike persists the acknowledged target state, even if a background refresh
 // changed the local row while the mutation was in flight.
-func (s *Store) SetLike(item LikeItem, liked bool) error {
+func (s *Store) SetLike(item LikeItem, liked bool, scopes ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(scopes) > 0 && scopes[0] != s.syncScope {
+		return fmt.Errorf("账号已切换，未修改点赞")
+	}
+
 	if !liked {
 		_, err := s.db.Exec(`DELETE FROM likes WHERE series_id = ? AND episode_id = ?`, item.SeriesID, item.EpisodeID)
 		return err

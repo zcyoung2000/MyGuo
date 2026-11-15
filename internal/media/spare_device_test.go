@@ -3,7 +3,6 @@ package media
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/beilunyang/openhongguo/sdk"
@@ -35,9 +34,8 @@ func TestSparePoolDisabledKeepsExistingPlaybackBehavior(t *testing.T) {
 	server.playbackResolver = fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
 		return nil, sdk.ErrAnonymousLimited
 	}}
-	server.resetDeviceForTest = func(context.Context) error { return errors.New("reset unavailable") }
 	result, err := server.resolvePlaybackForSession(context.Background(), "7100000000000201", "session")
-	if result != nil || err == nil || !strings.Contains(err.Error(), "playback client unavailable") {
+	if result != nil || !errors.Is(err, sdk.ErrAnonymousLimited) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -67,12 +65,17 @@ func TestSparePoolResolvesWithoutChangingPrimaryIdentity(t *testing.T) {
 		primaryCalls++
 		return nil, sdk.ErrAnonymousLimited
 	}}
-	server.resetDeviceForTest = func(context.Context) error { return errors.New("must not reset") }
 	got, err := server.resolvePlaybackForSession(context.Background(), "episode", "session")
 	if err != nil || got.EpisodeID != "spare-episode" {
 		t.Fatalf("got = %+v err = %v", got, err)
 	}
 	if primaryCalls != 1 {
 		t.Fatalf("primary called %d times", primaryCalls)
+	}
+	// HLS and full-file HTTP handlers have no UI negotiation session. They
+	// still need a scoped spare-device lease when the primary is unavailable.
+	got, err = server.resolvePlayback(context.Background(), "another-episode")
+	if err != nil || got.EpisodeID != "spare-episode" || primaryCalls != 2 {
+		t.Fatalf("media handler fallback: playback=%v err=%v calls=%d", got != nil, err, primaryCalls)
 	}
 }

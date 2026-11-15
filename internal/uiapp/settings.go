@@ -2,12 +2,10 @@ package uiapp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 )
@@ -17,7 +15,8 @@ type settingsProvider interface {
 	GetCacheSize(context.Context) (int64, error)
 	GetDeviceInfo(context.Context) (map[string]string, error)
 	CheckExistingAccount(context.Context) (map[string]any, error)
-	LoginWithCookies(context.Context, string, string) (*ipc.UserProfile, error)
+	BeginQRLogin(context.Context) (*ipc.QRLoginDTO, error)
+	PollQRLogin(context.Context, string) (*ipc.QRLoginStatusDTO, error)
 	RefreshUserProfile(context.Context) (*ipc.UserProfile, error)
 	Logout(context.Context) error
 	ImportHgplayerAccount(context.Context) (*ipc.UserProfile, error)
@@ -46,6 +45,7 @@ func (a *App) LoadSettings() {
 	provider := a.settingsProvider()
 	if provider == nil {
 		a.finishSettingsLoadLocked(version, ipc.UserProfile{}, 0, nil, nil, nil, errSettingsUnavailable)
+		a.mu.Unlock()
 		return
 	}
 	a.mu.Unlock()
@@ -124,88 +124,6 @@ func legacyAccountName(state Settings) string {
 		return state.LegacyUserID
 	}
 	return "旧账号"
-}
-
-func (a *App) SetSettingsLoginOpen(open bool) {
-	a.mu.Lock()
-	a.settings.LoginOpen = open
-	if !open {
-		a.settings.LoginCookie, a.settings.LoginToken = "", ""
-	}
-	a.mu.Unlock()
-	a.invalidate()
-}
-
-func (a *App) SetSettingsCookie(value string) {
-	a.mu.Lock()
-	a.settings.LoginCookie = value
-	a.mu.Unlock()
-	a.invalidate()
-}
-
-func (a *App) SetSettingsToken(value string) {
-	a.mu.Lock()
-	a.settings.LoginToken = value
-	a.mu.Unlock()
-	a.invalidate()
-}
-
-func (a *App) PasteLoginCookie() {
-	value := strings.TrimSpace(mygo.Clipboard.ReadText())
-	if value == "" {
-		a.setNotice("剪贴板为空")
-		return
-	}
-	if strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
-		cookie, token := parseCredentialJSON(value)
-		if cookie != "" {
-			a.mu.Lock()
-			a.settings.LoginCookie, a.settings.LoginToken = cookie, token
-			a.mu.Unlock()
-			a.invalidate()
-			return
-		}
-	}
-	a.mu.Lock()
-	a.settings.LoginCookie = value
-	a.mu.Unlock()
-	a.invalidate()
-}
-
-func parseCredentialJSON(value string) (cookie, token string) {
-	var credential struct {
-		Cookies string `json:"cookies"`
-		Token   string `json:"token"`
-	}
-	if json.Unmarshal([]byte(value), &credential) != nil {
-		return "", ""
-	}
-	return strings.TrimSpace(credential.Cookies), strings.TrimSpace(credential.Token)
-}
-
-func (a *App) SubmitSettingsLogin() {
-	a.mu.Lock()
-	cookie, token := strings.TrimSpace(a.settings.LoginCookie), strings.TrimSpace(a.settings.LoginToken)
-	if cookie == "" {
-		a.settings.Error = "请输入有效的 Cookie 凭据"
-		a.mu.Unlock()
-		a.invalidate()
-		return
-	}
-	key := "settings-login"
-	if !a.beginSettingsMutationLocked(key) {
-		a.mu.Unlock()
-		return
-	}
-	provider := a.settingsProvider()
-	a.mu.Unlock()
-	go a.runSettingsMutation(key, func(ctx context.Context) (string, error) {
-		profile, err := provider.LoginWithCookies(ctx, cookie, token)
-		if err != nil {
-			return "", err
-		}
-		return "登录成功！欢迎回来，" + settingsDisplayName(profile.Nickname), nil
-	})
 }
 
 func settingsDisplayName(value string) string {
@@ -306,8 +224,9 @@ func (a *App) ImportSettingsSpareDevice() {
 		return
 	}
 	provider := a.settingsProvider()
+	version := a.generation
 	a.mu.Unlock()
-	go a.runSettingsMutation(key, func(ctx context.Context) (string, error) {
+	go a.runSettingsMutation(key, version, func(ctx context.Context) (string, error) {
 		state, err := provider.ImportSpareDevice(ctx, deviceID, installID, userID)
 		if err != nil {
 			return "", err
@@ -356,8 +275,9 @@ func (a *App) beginSettingsAction(key string, action func(context.Context, setti
 		return
 	}
 	provider := a.settingsProvider()
+	version := a.generation
 	a.mu.Unlock()
-	go a.runSettingsMutation(key, func(ctx context.Context) (string, error) {
+	go a.runSettingsMutation(key, version, func(ctx context.Context) (string, error) {
 		return action(ctx, provider)
 	})
 }
@@ -374,12 +294,19 @@ func (a *App) beginSettingsMutationLocked(key string) bool {
 	return true
 }
 
-func (a *App) runSettingsMutation(key string, action func(context.Context) (string, error)) {
+func (a *App) runSettingsMutation(key string, version uint64, action func(context.Context) (string, error)) {
+	a.mu.Lock()
+	provider := a.settingsProvider()
+	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 	defer cancel()
 	message, err := action(ctx)
 	a.mu.Lock()
 	delete(a.settingsMutations, key)
+	if version != a.generation {
+		a.mu.Unlock()
+		return
+	}
 	a.settings.Success = ""
 	a.settings.Error = settingsError(err)
 	if err != nil {
@@ -391,13 +318,11 @@ func (a *App) runSettingsMutation(key string, action func(context.Context) (stri
 	a.settings.Loading = true
 	a.settings.Error = ""
 	a.invalidate()
-	a.mu.Unlock()
-	provider := a.settingsProvider()
-	a.mu.Lock()
 	if provider == nil {
 		a.settings.Loading = false
 		a.settings.Error = settingsError(errSettingsUnavailable)
 		a.invalidate()
+		a.mu.Unlock()
 		return
 	}
 	a.mu.Unlock()
@@ -407,11 +332,11 @@ func (a *App) runSettingsMutation(key string, action func(context.Context) (stri
 	legacy, legacyErr := provider.CheckExistingAccount(ctx)
 	spare, spareErr := provider.GetSpareDeviceState(ctx)
 	err = firstError(profileErr, cacheErr, deviceErr, legacyErr, spareErr)
-	a.finishSettingsLoad(0, profile, cacheSize, device, legacy, spare, err)
+	a.finishSettingsLoad(version, profile, cacheSize, device, legacy, spare, err)
 }
 
 func (a *App) settingsButton(c *ui.Context, key, label, variant string, action func()) {
-	row := ui.Row(c.Key(key)).Height(32).Padding(0, 14).Radius(8).
+	row := ui.ButtonBase(c.Key(key)).Height(32).Padding(0, 14).Radius(8).
 		AlignItems(ui.Center).Justify(ui.Center).
 		Role(ui.RoleButton).Label(label).Focusable()
 	switch variant {
@@ -429,8 +354,8 @@ func (a *App) settingsButton(c *ui.Context, key, label, variant string, action f
 		row.Background(ui.RGBA(255, 255, 255, 0.06)).Border(1, ui.RGBA(255, 255, 255, 0.09))
 		hoverBackground(row, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
 	}
-	if action != nil && row.Clicked() {
-		go action()
+	if action != nil {
+		row.OnClick(func() { go action() })
 	}
 	row.Children(func() {
 		text := ui.Text(c, label).FontSize(12)
@@ -448,7 +373,7 @@ func (a *App) settingsButton(c *ui.Context, key, label, variant string, action f
 }
 
 func (a *App) settingsCard(c *ui.Context, key string, children func()) {
-	ui.Column(c.Key(key)).Grow(1).Gap(16).Padding(20, 22).Radius(12).
+	ui.Column(c.Key(key)).Grow(1).Gap(16).Padding(20, 22).Radius(12).Clip().Transition(sectionTransition).
 		Background(ui.RGBA(20, 21, 28, 255)).
 		Border(1, ui.RGBA(255, 255, 255, 0.08)).
 		Children(children)
@@ -476,56 +401,67 @@ func settingsMeta(label, value string) (string, float32) {
 	return label + ":" + value, 76
 }
 
+// The profile and its actions stack when the sidebar leaves little content
+// width. Badge supplies an unbroken status label; Toolbar owns action overflow.
+func (a *App) renderSettingsProfile(c *ui.Context, state Settings) {
+	windowWidth, _ := c.Size()
+	sidebarWidth := a.sidebarWidth
+	if sidebarWidth == 0 {
+		sidebarWidth = defaultSidebarWidth
+	}
+	narrow := windowWidth-sidebarWidth < 700
+	var layout ui.Element
+	if narrow {
+		layout = ui.Column(c.Key("settings-profile-stacked")).Gap(14).FillWidth()
+	} else {
+		layout = ui.Row(c.Key("settings-profile")).Gap(18).AlignItems(ui.Center)
+	}
+	layout.Children(func() {
+		ui.Row(c.Key("settings-profile-identity")).Grow(1).MinWidth(0).Gap(18).AlignItems(ui.Center).Children(func() {
+			ui.Box(c.Key("settings-avatar-host")).Size(58, 58).Shrink(0).Radius(29).
+				Background(ui.Hex("#202230")).Border(2, ui.RGBA(255, 255, 255, 0.16)).Clip().Children(func() {
+				if state.Profile.Avatar != "" {
+					a.image(c, state.Profile.Avatar, 54, 54)
+				}
+			})
+			ui.Column(c.Key("settings-profile-info")).Grow(1).Gap(6).MinWidth(0).Children(func() {
+				ui.Row(c).Gap(10).AlignItems(ui.Center).MinWidth(0).Children(func() {
+					nickname := settingsDisplayName(state.Profile.Nickname)
+					if !state.Profile.LoggedIn && state.Profile.Nickname == "" {
+						nickname = "myguo用户"
+					}
+					ui.Text(c, nickname).FontSize(16).Bold().TextColor(ui.Hex("#ffffff")).SingleLine().MinWidth(0)
+					badgeColor, textColor := ui.RGBA(255, 255, 255, 0.08), ui.RGBA(255, 255, 255, 0.70)
+					if state.Profile.LoggedIn {
+						badgeColor, textColor = ui.RGBA(34, 197, 94, 0.15), ui.Hex("#4ade80")
+					}
+					ui.Badge(c, accountBadge(state.Profile.LoggedIn)).Padding(2, 8).Background(badgeColor).TextColor(textColor)
+				})
+				ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
+					ui.Text(c, "账号 ID:").FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Shrink(0)
+					ui.Text(c, settingsAccountID(state)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.72)).SingleLine().MinWidth(0)
+				})
+			})
+		})
+		ui.Toolbar(c.Key("settings-profile-actions"), func() {
+			a.settingsButton(c, "refresh-profile", "刷新资料", "subtle", a.RefreshSettingsProfile)
+			if state.Profile.LoggedIn {
+				a.settingsButton(c, "logout", "退出登录", "danger", a.LogoutSettings)
+				a.settingsButton(c, "show-login", "切换账号", "primary", func() { a.SetSettingsLoginOpen(true) })
+			} else {
+				a.settingsButton(c, "show-login", "立即登录", "primary", func() { a.SetSettingsLoginOpen(true) })
+			}
+		}).Label("账号操作").Gap(10).Padding(0).Shrink(0)
+	})
+}
+
 func (a *App) renderSettings(c *ui.Context) {
-	pageHeader(c, "设置")
 	state := a.settings
 	scroll := ui.Scroll(c.Key("settings-scroll")).Scrollbars(false).Grow(1).Gap(22).Padding(0, 0, 18, 0)
 	scroll.Children(func() {
 		state = a.settings
 		a.settingsCard(c, "settings-account", func() {
-			ui.Row(c.Key("settings-profile")).Gap(18).AlignItems(ui.Center).Children(func() {
-				avatar := ui.Box(c.Key("settings-avatar-host")).Size(58, 58).Radius(29).
-					Background(ui.Hex("#202230")).Border(2, ui.RGBA(255, 255, 255, 0.16)).Clip()
-				avatar.Children(func() {
-					if state.Profile.Avatar != "" {
-						a.image(c, state.Profile.Avatar, 54, 54)
-					}
-				})
-				profile := ui.Column(c.Key("settings-profile-info")).Grow(1).Gap(6).MinWidth(0)
-				profile.Children(func() {
-					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-						nickname := settingsDisplayName(state.Profile.Nickname)
-						if !state.Profile.LoggedIn && state.Profile.Nickname == "" {
-							nickname = "myguo用户"
-						}
-						ui.Text(c, nickname).FontSize(16).Bold().TextColor(ui.Hex("#ffffff")).SingleLine()
-						badge := ui.Row(c).Padding(2, 8).Radius(12)
-						badgeColor := ui.RGBA(255, 255, 255, 0.08)
-						textColor := ui.RGBA(255, 255, 255, 0.70)
-						if state.Profile.LoggedIn {
-							badgeColor = ui.RGBA(34, 197, 94, 0.15)
-							textColor = ui.Hex("#4ade80")
-						}
-						badge.Background(badgeColor).Children(func() {
-							ui.Text(c, accountBadge(state.Profile.LoggedIn)).FontSize(11).TextColor(textColor)
-						})
-					})
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "账号 ID:").FontSize(12).TextColor(c.Theme().TextMuted)
-						ui.Text(c, settingsAccountID(state)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.72)).SingleLine()
-					})
-				})
-				actions := ui.Row(c.Key("settings-profile-actions")).Gap(10).AlignItems(ui.Center).Justify(ui.End).MinWidth(250)
-				actions.Children(func() {
-					a.settingsButton(c, "refresh-profile", "刷新资料", "subtle", a.RefreshSettingsProfile)
-					if state.Profile.LoggedIn {
-						a.settingsButton(c, "logout", "退出登录", "danger", a.LogoutSettings)
-						a.settingsButton(c, "show-login", "切换账号", "primary", func() { a.SetSettingsLoginOpen(true) })
-					} else {
-						a.settingsButton(c, "show-login", "立即登录", "primary", func() { a.SetSettingsLoginOpen(true) })
-					}
-				})
-			})
+			a.renderSettingsProfile(c, state)
 			if !state.Profile.LoggedIn && state.HasLegacy {
 				ui.Row(c.Key("settings-import-banner")).Gap(16).AlignItems(ui.Center).Padding(12, 16).Radius(10).
 					Background(ui.RGBA(254, 44, 85, 0.08)).Border(1, ui.RGBA(254, 44, 85, 0.25)).Children(func() {
@@ -550,12 +486,6 @@ func (a *App) renderSettings(c *ui.Context) {
 
 		a.renderSpareDevices(c, state)
 
-		if state.Loading {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Padding(8).Children(func() {
-				ui.Spinner(c)
-				ui.Text(c, "正在加载设置...").TextColor(c.Theme().TextMuted)
-			})
-		}
 		if state.Error != "" {
 			ui.Text(c, state.Error).FontSize(12).TextColor(ui.Hex("#ff8f98"))
 		}
@@ -637,39 +567,4 @@ func settingsAccountID(state Settings) string {
 		return "已同步"
 	}
 	return "anonymous"
-}
-
-func (a *App) renderSettingsLogin(c *ui.Context, state Settings) {
-	ui.Box(c.Key("login-divider")).Height(1).Grow(1).Background(c.Theme().Border)
-	ui.Column(c.Key("settings-login")).Gap(14).Children(func() {
-		ui.Column(c).Gap(2).Children(func() {
-			ui.Text(c, "账号凭据登录").FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
-			ui.Text(c, "通过 Cookie / Token 同步红果/番茄短剧账户数据").FontSize(12).TextColor(c.Theme().TextMuted)
-		})
-		ui.Column(c).Gap(6).Children(func() {
-			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Cookie (必填)").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.80))
-			})
-			cookie := state.LoginCookie
-			ui.TextArea(c, &cookie).Grow(1).Height(82).Padding(10, 12).Radius(8).
-				Background(ui.RGBA(24, 25, 36, 255)).Border(1, ui.RGBA(255, 255, 255, 0.09)).
-				Placeholder("粘贴完整 Cookie 或包含 cookies 字段的 JSON").Label("Cookie 凭据").
-				OnChange(func() { a.SetSettingsCookie(cookie) })
-		})
-		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "x-tt-token (可选)").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.80))
-			token := state.LoginToken
-			ui.TextInput(c, &token).Height(34).Padding(0, 12).Radius(8).
-				Background(ui.RGBA(24, 25, 36, 255)).Border(1, ui.RGBA(255, 255, 255, 0.09)).
-				Placeholder("输入长效会话 Token").Label("Token 凭据").
-				OnChange(func() { a.SetSettingsToken(token) })
-		})
-		ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "凭据将通过官方接口验证并保存到本地。").FontSize(11).TextColor(c.Theme().TextMuted).Grow(1)
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Justify(ui.End).Children(func() {
-				a.settingsButton(c, "cancel-login", "收起", "subtle", func() { a.SetSettingsLoginOpen(false) })
-				a.settingsButton(c, "submit-login", "验证并登录", "primary", a.SubmitSettingsLogin)
-			})
-		})
-	})
 }

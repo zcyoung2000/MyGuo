@@ -4,12 +4,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 )
 
-// FeedChrome mirrors presentation only. The existing document remains the
-// authority for recommendation requests, playback and media state.
+// FeedChrome describes the native player channel overlay and open drawer.
 type FeedChrome struct {
 	Visible    bool    `json:"visible"`
 	RightInset float32 `json:"rightInset"`
@@ -56,16 +54,7 @@ func (s *NativeShell) FeedChromeChanged(value FeedChrome) {
 	a.invalidate()
 }
 
-func (a *App) focusMediaAfterPointer() {
-	a.mu.Lock()
-	host, test := a.media, a.testMode
-	a.mu.Unlock()
-	if host != nil && !test {
-		if view := host.WebView(); view != nil {
-			view.Focus()
-		}
-	}
-}
+func (a *App) focusMediaAfterPointer() {}
 
 func (a *App) renderFeedChannels(c *ui.Context) {
 	if a.feedChromeKnown && !a.feedChrome.Visible {
@@ -77,12 +66,12 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 			selected = index
 		}
 	}
-	// A transparent absolute row leaves the full WebView in place. Only the
-	// actual segmented control intercepts input, including over the native view.
-	ui.Row(c.Key("feed-channel-overlay")).Absolute().Top(14).Left(0).Right(a.feedChrome.RightInset).Justify(ui.Center).Children(func() {
+	// The transparent row places channels above the native player. Only the
+	// segmented control intercepts input.
+	ui.Row(c.Key("feed-channel-overlay")).Absolute().Top(14).Left(0).Right(a.feedChrome.RightInset).Justify(ui.Center).PassThrough().Transition(playerChromeTransition).Children(func() {
 		parts := ui.SegmentedBase(c.Key("feed-channels"), &selected, len(feedChannels))
 		track := parts.Track.Label("推荐频道").Padding(4, 6).Gap(4).Radius(24).
-			Material(glass.Glass{Style: glass.Regular}).
+			Material(chromeMaterial()).
 			OnChange(func() { go a.SelectFeedChannel(feedChannels[selected].value) })
 
 		if a.ambientActive {

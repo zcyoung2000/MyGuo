@@ -2,13 +2,8 @@ package uiapp
 
 import (
 	"encoding/json"
-	"errors"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/egoist/mygo"
 	"myguo/internal/native"
 )
 
@@ -59,99 +54,28 @@ func TestResumeBridgeRejectsStaleAndReplayedSequences(t *testing.T) {
 	}
 }
 
-type recordingEval struct {
-	mu      sync.Mutex
-	scripts []string
-	events  []string
-}
-
-func (r *recordingEval) eval(script string) (any, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.scripts = append(r.scripts, script)
-	r.events = append(r.events, script)
-	return nil, nil
-}
-
-func (r *recordingEval) count() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.scripts)
-}
-
-func (r *recordingEval) dispatched() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.events...)
-}
-
-type failingEval struct {
-	calls int
-}
-
-func (e *failingEval) eval(string) (any, error) {
-	e.calls++
-	return nil, errors.New("webview unavailable")
-}
-
-func TestMediaSceneReplacementCancelsFailedPayloadRetry(t *testing.T) {
-	evaluator := &failingEval{}
-	host := &MediaHost{ready: true, eval: evaluator.eval}
+func TestNativeSceneReplacementKeepsNewestSelection(t *testing.T) {
+	host := &MediaHost{}
 	host.Play("123456", 1, -1, 1)
-	waitFor(250*time.Millisecond, func() bool { return evaluator.calls > 0 })
 	host.Stop()
 	host.Play("223456", 2, -1, 2)
-	calls := evaluator.calls
-	time.Sleep(250 * time.Millisecond)
-	if evaluator.calls > calls {
-		t.Fatalf("replaced scene was retried: before=%d after=%d", calls, evaluator.calls)
-	}
-	if host.desired["event"] != "play" || host.desired["seriesId"] != "223456" {
-		t.Fatalf("new scene was lost: %+v", host.desired)
+	if host.desired["event"] != "play" || host.desired["seriesId"] != "223456" || host.desired["session"] != int64(2) {
+		t.Fatalf("new native scene lost: %+v", host.desired)
 	}
 }
 
-func TestMediaCommandWaitsForReadyAndSurvivesSceneReplacement(t *testing.T) {
-	evaluator := &recordingEval{}
-	host := &MediaHost{view: &mygo.WebView{}, eval: evaluator.eval}
-	host.PlayerControl("seek", 12.5)
-	host.mu.Lock()
-	pendingBeforeReady := len(host.pendingCommands)
-	host.mu.Unlock()
-	if pendingBeforeReady != 1 {
-		t.Fatalf("command was not retained before ready: %d", pendingBeforeReady)
-	}
-	host.Stop()
-	host.markReady()
-	waitFor(250*time.Millisecond, func() bool { return evaluator.count() == 2 })
-	if evaluator.count() != 2 {
-		t.Fatalf("ready messages were not dispatched: %d", evaluator.count())
-	}
-	dispatched := strings.Join(evaluator.dispatched(), "\n")
-	if !strings.Contains(dispatched, `"event":"stop"`) || !strings.Contains(dispatched, `"seek"`) {
-		t.Fatalf("scene and command payload missing: %s", dispatched)
-	}
-}
-
-func TestMediaCommandsDispatchExactlyOnce(t *testing.T) {
-	evaluator := &recordingEval{}
-	host := &MediaHost{ready: true, view: &mygo.WebView{}, eval: evaluator.eval}
-	for range 5 {
-		host.startLocked()
-	}
+func TestNativeCommandsDispatchOnceWithoutDocumentReadiness(t *testing.T) {
+	player := newNativeUIPlayer()
+	host := &MediaHost{controller: player}
 	host.Command(native.MediaCommandPayload{Command: "pause"})
-	waitFor(250*time.Millisecond, func() bool { return evaluator.count() == 1 })
-	if evaluator.count() != 1 {
-		t.Fatalf("command was not dispatched: %d", evaluator.count())
+	host.PlayerControl("seek", 12.5)
+	if len(player.commands) != 2 || player.commands[0] != "pause" || player.commands[1] != "seek" {
+		t.Fatalf("native commands missing or repeated: %v", player.commands)
 	}
-	time.Sleep(30 * time.Millisecond)
-	if evaluator.count() != 1 {
-		t.Fatalf("command dispatched more than once: %d", evaluator.count())
+	for range 1000 {
+		host.PlayerControl("pause", nil)
 	}
-	host.mu.Lock()
-	remaining := len(host.queue)
-	host.mu.Unlock()
-	if remaining != 0 {
-		t.Fatalf("successful command remained queued: %d", remaining)
+	if len(host.SentControls()) > 128 {
+		t.Fatal("diagnostic command history grows without bound")
 	}
 }

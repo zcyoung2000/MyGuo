@@ -3,6 +3,7 @@ package ipc
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -195,5 +196,97 @@ func TestSeriesPageRefreshesUserFlagsWithoutMutatingCache(t *testing.T) {
 	page, err = service.GetSeriesPage(context.Background(), id)
 	if err != nil || page.IsFavorite {
 		t.Fatal("unfavorite did not refresh the cached detail response")
+	}
+}
+
+func TestProfileRefreshCanonicalizesLegacyIdentityWithoutClearingHistory(t *testing.T) {
+	for _, alreadyCanonical := range []bool{false, true} {
+		t.Run(fmt.Sprint(alreadyCanonical), func(t *testing.T) {
+			s, store := accountTestService(t, t.TempDir(), t.TempDir())
+			oldID := "710000000000001"
+			canonical := "710000000000099"
+			profileID := oldID
+			if alreadyCanonical {
+				profileID = canonical
+			}
+			cookie := "sessionid=same"
+			if err := store.SetAuthenticatedAccount(userstore.AccountAuth{Cookies: cookie}, UserProfile{UserID: profileID, LoggedIn: true}, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.restoreSavedAccount(); err != nil {
+				t.Fatal(err)
+			}
+			item := HistoryItem{SeriesID: "710000000000002", Title: "已有观看记录", UpdatedAt: 100, EpisodeNum: 3, PositionSec: 45}
+			if err := store.QueueHistoryUpload(item, "710000000000102", "user:"+profileID); err != nil {
+				t.Fatal(err)
+			}
+			if !alreadyCanonical {
+				if err := store.SaveHistory(item, "user:"+oldID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.httpClient = &http.Client{Transport: ipcHandlerTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"code":0,"data":{"user_id":"0","biz_user_id":"710000000000099","req_id":710000000000001,"user_name":"Same account"}}`))
+			})}}
+			if _, err := s.RefreshUserProfile(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			rows, _ := store.GetHistory()
+			if len(rows) != 1 || rows[0].PositionSec != 45 {
+				t.Fatal("same-credential refresh lost history")
+			}
+			pending, _ := store.PendingHistoryUploads(10, "user:"+canonical)
+			if len(pending) != 1 {
+				t.Fatal("legacy queue remained stranded")
+			}
+		})
+	}
+}
+
+func TestCanonicalAccountDoesNotAdoptUnprovenLegacyQueue(t *testing.T) {
+	s, db := accountTestService(t, t.TempDir(), t.TempDir())
+	if err := db.SetAuthenticatedAccount(userstore.AccountAuth{Cookies: "sessionid=current"}, UserProfile{UserID: "710000000000099", LoggedIn: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.restoreSavedAccount(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueueHistoryUpload(HistoryItem{SeriesID: "710000000000002", UpdatedAt: 100}, "710000000000102", "user:710000000000001"); err != nil {
+		t.Fatal(err)
+	}
+	s.httpClient = &http.Client{Transport: ipcHandlerTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"code":0,"data":{"biz_user_id":"710000000000099","req_id":710000000000001}}`))
+	})}}
+	if _, err := s.RefreshUserProfile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.GetHistory()
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("unproven legacy history was adopted: %v %v", rows, err)
+	}
+	old, err := db.PendingHistoryUploads(10, "user:710000000000001")
+	if err != nil || len(old) != 1 {
+		t.Fatal("unproven queue was removed")
+	}
+}
+
+func TestChangedCredentialCannotClaimLegacyRequestID(t *testing.T) {
+	s, store := accountTestService(t, t.TempDir(), t.TempDir())
+	oldID := "710000000000001"
+	store.SetAuthenticatedAccount(userstore.AccountAuth{Cookies: "sessionid=old"}, UserProfile{UserID: oldID, LoggedIn: true}, false)
+	s.restoreSavedAccount()
+	item := HistoryItem{SeriesID: "710000000000002", UpdatedAt: 100}
+	store.SaveHistory(item)
+	store.QueueHistoryUpload(item, "710000000000102", "user:"+oldID)
+	s.httpClient = &http.Client{Transport: ipcHandlerTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"code":0,"data":{"biz_user_id":"710000000000099","req_id":710000000000001}}`))
+	})}}
+	if _, err := s.LoginWithCookies(context.Background(), "sessionid=different", ""); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := store.GetHistory()
+	old, _ := store.PendingHistoryUploads(10, "user:"+oldID)
+	if len(rows) != 0 || len(old) != 1 {
+		t.Fatal("new credential adopted an unverified legacy account")
 	}
 }

@@ -26,10 +26,13 @@ func TestReconcileSeriesProgressUsesBatchEndpointAndMergesRules(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if merged.EpisodeNum != 2 || merged.PositionSec != 10 || merged.Title != "Local" || merged.DurationSec != 100 {
+		wantDuration := 0.0
+		if local.EpisodeNum == 2 {
+			wantDuration = local.DurationSec
+		}
+		if merged.EpisodeNum != 2 || merged.PositionSec != 10 || merged.Title != "Local" || merged.DurationSec != wantDuration {
 			t.Fatalf("merged progress = %#v, want remote episode 2 at 10 seconds", merged)
 		}
-		_ = local
 	}
 }
 

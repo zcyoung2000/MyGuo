@@ -79,7 +79,8 @@
           activeSession = payload.session || 0;
           switchView('recommend', false);
           enterSeriesPlayer(payload.seriesId, payload.episodeNum || 1)
-            .then(() => {
+            .then(started => {
+              if (started === false || activeSession !== (payload.session || 0) || state.currentView !== 'recommend') return;
               const resumeAt = Number(payload.resumeAt);
               if (Number.isFinite(resumeAt) && resumeAt > 0) {
                 const feedVideo = getFeedVideo();
@@ -87,6 +88,7 @@
               }
             })
             .catch(error => {
+              if (activeSession !== (payload.session || 0) || state.currentView !== 'recommend') return;
               console.error('[native-media] enterSeriesPlayer failed:', error);
               showToast(String(error));
               closeNativeMedia();

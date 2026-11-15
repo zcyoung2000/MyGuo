@@ -5,15 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 )
 
 func (a *App) renderRank(c *ui.Context) {
 	rank := a.rank
-	pageHeader(c, "排行榜")
-	a.maybeLoadMore(a.rankScroll.Y, a.rankScroll.MaxY, rank.HasMore, rank.Loading, func() { a.LoadRank(true) })
 
 	// Top Category Switcher Track: [全部] [系列剧] [漫剧] [真人剧] [AI剧] [演员]
 	if len(rank.Contents) > 0 {
@@ -55,10 +52,13 @@ func (a *App) renderRank(c *ui.Context) {
 	}
 
 	if rank.Error != "" {
-		a.errorView(c, rank.Error, func() { go a.LoadRank(len(rank.Items) > 0) })
+		if len(rank.Items) == 0 {
+			a.errorView(c, rank.Error, func() { go a.LoadRank(false) })
+			return
+		}
+		inlineError(c, rank.Error, func() { go a.LoadRank(rank.Cursor != "") })
 	}
 	if rank.Loading && len(rank.Items) == 0 {
-		ui.Text(c.Key("rank-loading"), "正在加载排行榜...").TextColor(c.Theme().TextMuted).MarginEnd(12)
 		a.rankSkeleton(c)
 		return
 	}
@@ -69,18 +69,21 @@ func (a *App) renderRank(c *ui.Context) {
 	if a.rank.List == nil {
 		a.rank.List = &ui.ListState{}
 	}
+	a.rank.List.NearEnd = 3
+	a.rank.List.EndReached = func(int) {
+		if rank.HasMore && !rank.Loading && rank.Error == "" {
+			go a.LoadRank(true)
+		}
+	}
 	a.rank.List.Key = func(row int) any {
 		item := rank.Items[row]
 		return fmt.Sprintf("%s|%s|%d", item.SeriesID, item.UserID, row)
 	}
 	a.rank.List.Label = func(row int) string { return rank.Items[row].Title }
-	ui.List(c, a.rank.List, len(rank.Items), func(row int) {
+	ui.List(c.Key(fmt.Sprintf("rank-result:%d", a.rankResultVersion)), a.rank.List, len(rank.Items), func(row int) {
 		item := rank.Items[row]
 		a.rankItem(c, row, item)
-	}).Grow(1).TrackScroll(&a.rankScroll).Scrollbars(false)
-	if rank.Loading {
-		a.scrollLoading(c, rank.Loading)
-	}
+	}).Grow(1).TrackScroll(&a.rankScroll).Scrollbars(false).Transition(resultTransition)
 }
 
 func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
@@ -203,7 +206,6 @@ func rankPositionColor(position int, promoted bool) ui.Color {
 
 func (a *App) renderReleases(c *ui.Context) {
 	value := a.releases
-	pageHeader(c, "新剧")
 	a.renderSlidingTabs(c, "releases-track", "releases-kind", []slidingTabItem{
 		{"hot", "热播新剧"},
 		{"calendar", "新剧日历"},
@@ -251,10 +253,13 @@ func (a *App) renderReleases(c *ui.Context) {
 		})
 	}
 	if value.Error != "" {
-		a.errorView(c, value.Error, func() { go a.LoadReleases() })
+		if len(value.Items) == 0 {
+			a.errorView(c, value.Error, func() { go a.LoadReleases() })
+			return
+		}
+		inlineError(c, value.Error, func() { go a.LoadReleases() })
 	}
-	if value.Loading {
-		ui.Text(c, "正在加载新剧...").TextColor(c.Theme().TextMuted)
+	if value.Loading && len(value.Items) == 0 {
 		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
@@ -275,10 +280,12 @@ func (a *App) renderReleases(c *ui.Context) {
 func (a *App) releaseCardGrid(c *ui.Context, items []CatalogItem) {
 	_, windowHeight := c.Size()
 	posterWidth := newReleasePosterWidth(float32(windowHeight))
-	ui.Column(c.Key("releases-sparse-content")).FillWidth().Gap(18).Children(func() {
-		for _, item := range items {
-			a.releaseFeatureRow(c, item, posterWidth)
-		}
+	ui.Column(c.Key("releases-sparse-content")).FillWidth().Children(func() {
+		ui.Column(c.Key(fmt.Sprintf("release-result:%d", a.releaseResultVersion))).FillWidth().Gap(18).Transition(resultTransition).Children(func() {
+			for _, item := range items {
+				a.releaseFeatureRow(c, item, posterWidth)
+			}
+		})
 	})
 }
 
@@ -360,25 +367,7 @@ func posterLabel(item CatalogItem) string {
 }
 func (a *App) renderActor(c *ui.Context) {
 	actor := a.actor
-	pageHeader(c, "演员主页")
 	sectionHeader(c, "作品")
-	a.maybeLoadMore(a.actorScroll.Y, a.actorScroll.MaxY, actor.HasMore, actor.Loading || actor.Profile == nil, func() { a.loadActor(true) })
-
-	// Top Bar with back button
-	ui.Row(c.Key("actor-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 8, 0).Children(func() {
-		backBtn := ui.Row(c.Key("actor-nav-back")).Height(30).Padding(0, 14).Radius(7).
-			Material(glass.Glass{Interactive: true}).
-			Border(1, ui.RGBA(255, 255, 255, 0.12)).
-			AlignItems(ui.Center).Role(ui.RoleButton).Label("返回短剧详情").Focusable()
-		hoverBackground(backBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.10))
-		if backBtn.Clicked() || backBtn.Shortcut(0, ui.KeyEnter) || backBtn.Shortcut(0, ui.KeySpace) {
-			go a.NavigateHistory(-1)
-		}
-		backBtn.Children(func() {
-			ui.Text(c, "← 返回").FontSize(13).TextColor(ui.Hex("#ffffff")).Bold()
-		})
-		ui.Text(c, "演员个人主页").FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.50))
-	})
 
 	if actor.Profile != nil {
 		profile := actor.Profile
@@ -396,7 +385,6 @@ func (a *App) renderActor(c *ui.Context) {
 		a.errorView(c, actor.Error, func() { go a.loadActor(actor.Profile != nil) })
 	}
 	if actor.Loading && actor.Profile == nil {
-		ui.Text(c, "正在加载演员主页...").TextColor(c.Theme().TextMuted)
 		ui.Row(c).Gap(18).AlignItems(ui.Start).Children(func() {
 			ui.Box(c).Size(90, 90).Radius(45).Background(c.Theme().SurfaceHover)
 			ui.Column(c).Grow(1).Gap(12).Children(func() {
@@ -413,11 +401,38 @@ func (a *App) renderActor(c *ui.Context) {
 		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
-	if a.actorWorksGrid == nil {
-		a.actorWorksGrid = &ui.GridState{}
+	if a.actorWorksList == nil {
+		a.actorWorksList = &ui.ListState{}
 	}
-	a.cardGrid(c, "actor-grid", a.actorWorksGrid, &a.actorScroll, actor.Works, 0, nil).Grow(1)
-	a.scrollLoading(c, actor.Loading)
+	width := a.gridContentWidth(c)
+	columns := dramaColumns(width)
+	rows := (len(actor.Works) + columns - 1) / columns
+	state := a.actorWorksList
+	state.Key = func(row int) any {
+		if row == rows {
+			return "actor-footer"
+		}
+		item := actor.Works[row*columns]
+		return item.ID + "|" + item.EpisodeID
+	}
+	state.NearEnd = 2
+	state.EndReached = func(int) {
+		if actor.HasMore && !actor.Loading && actor.Error == "" {
+			go a.loadActor(true)
+		}
+	}
+	ui.List(c.Key("actor-grid"), state, rows+1, func(row int) {
+		if row == rows {
+
+			a.continuePageInView(c, "actor-page-end", pageFillVersion{actor.ID, actor.Cursor, len(actor.Works)}, 0,
+				a.actorScroll.MaxY <= 0 && actor.HasMore && !actor.Loading && actor.Error == "", func() { a.loadActor(true) })
+
+			return
+		}
+		first := row * columns
+		a.posterRow(c, actor.Works[first:min(first+columns, len(actor.Works))], width)
+	}).Grow(1).TrackScroll(&a.actorScroll).Scrollbars(false)
+
 }
 func (a *App) renderCollection(c *ui.Context, label string, value DetailCollection, retry func()) {
 	if value.Title != "" {
@@ -429,13 +444,14 @@ func (a *App) renderCollection(c *ui.Context, label string, value DetailCollecti
 	section := ui.Column(c.Key("detail-collection:" + label)).Gap(8)
 	section.Children(func() {
 		ui.Text(c, label).Bold().FontSize(15).TextColor(ui.Hex("#ffffff"))
-		if value.Loading {
-			ui.Text(c, "正在加载...").FontSize(12).TextColor(c.Theme().TextMuted)
+		if value.Loading && len(value.Items) == 0 {
 			return
 		}
 		if value.Error != "" {
-			a.errorView(c, value.Error, retry)
-			return
+			inlineError(c, value.Error, retry)
+			if len(value.Items) == 0 {
+				return
+			}
 		}
 		ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Scrollbars(false).Height(catalogRowHeight(value.Items)).Children(func() {
 			ui.Row(c.Key("collection-" + label)).Gap(c.Theme().Space(3)).Children(func() {

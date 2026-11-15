@@ -32,7 +32,7 @@ func TestExportDetailLoadingAndReadyScreens(t *testing.T) {
 				tt.SetDark(true)
 				tt.Frame()
 				if state.detail.Loading {
-					tt.Advance(shimmerSampleOffset)
+					tt.Advance(loadingLayoutSettle)
 					tt.Frame()
 				}
 				if err := os.MkdirAll(dir, 0o755); err != nil {

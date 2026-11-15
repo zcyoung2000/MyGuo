@@ -31,3 +31,10 @@ e2e/screenshots/
 # Local tool caches and generated visualization snapshots
 __pycache__/
 .codex-viz/
+
+# Native module build output
+/.mygo/
+
+# Local reverse-engineering materials
+/ghidra/
+/docs/hongguo-api-reverse-engineering-2026-11-14.md

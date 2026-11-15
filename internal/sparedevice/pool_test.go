@@ -31,13 +31,13 @@ func testManager(t *testing.T, factory ClientFactory) (*Manager, *store.Store, *
 	return manager, state, logs
 }
 
-func TestManagerBorrowsOnlyForSwitchableFailureAndStaysSessionStable(t *testing.T) {
+func TestManagerBorrowsProtectedPlaybackAndStaysSessionStable(t *testing.T) {
 	var requested []string
 	manager, state, logs := testManager(t, func(profile sdk.ProfileStore) (PlaybackResolver, error) {
 		device, _ := profile.Load(context.Background())
 		requested = append(requested, device.DeviceID)
 		return func(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
-			return &model.Playback{EpisodeID: "episode"}, nil
+			return &model.Playback{EpisodeID: "episode", Protected: true, Streams: []model.Stream{{URL: "https://media.invalid/encrypted.mp4", Protected: true}}}, sdk.ErrDRMProtected
 		}, nil
 	})
 	if err := manager.Import(store.SpareDevice{DeviceID: "did-1", InstallID: "iid-1"}); err != nil {

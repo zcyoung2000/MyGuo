@@ -151,7 +151,10 @@ func parseDanmakuPage(raw []byte, seriesID, groupID string, startMs, durationMs 
 }
 
 func (s *HongguoService) postCommentAPI(ctx context.Context, path string, body any, source, channel string, requireLogin bool) ([]byte, error) {
-	userCookies, userToken := s.authCredentials()
+	userCookies, userToken, credentialErr := s.libraryService().PlaybackCredentials(ctx)
+	if credentialErr != nil {
+		return nil, credentialErr
+	}
 	if requireLogin && userCookies == "" {
 		return nil, fmt.Errorf("请先登录后使用弹幕互动")
 	}

@@ -1,14 +1,12 @@
 package main
 
 import (
-	"embed"
-	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk"
@@ -16,9 +14,11 @@ import (
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/appdirs"
 	"myguo/internal/auth"
+	"myguo/internal/avkit"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 	"myguo/internal/native"
+	"myguo/internal/playback"
 	"myguo/internal/resourcelog"
 	"myguo/internal/sparedevice"
 	userstore "myguo/internal/store"
@@ -26,8 +26,8 @@ import (
 	"myguo/internal/upstream"
 )
 
-//go:embed frontend/*
-var embeddedFS embed.FS
+var initialView = "recommend"
+var mainWindowTitle = appdirs.AppName
 
 func main() {
 	started := time.Now()
@@ -126,19 +126,33 @@ func main() {
 		ipc.WithUpstreamTransport(hostTransport),
 	)
 	defer ipc.CloseService(service)
-	mediaServer.SetDeviceResetter(service.ResetDevice)
 	mediaServer.SetMultiModelDeviceIdentity(ipc.MediaDeviceIdentityProvider(service))
-	mygo.Bind(service)
 
-	// 5. Setup embedded frontend
-	frontendFS, err := fs.Sub(embeddedFS, "frontend")
-	if err != nil {
-		log.Fatalf("failed to sub frontend fs: %v", err)
+	if err := playback.MigrateLegacyPreferences(home, filepath.Join(appDir, "native-player.json")); err != nil {
+		log.Printf("[native-player] preference migration: %v", err)
 	}
-	mygo.SetFrontend(frontendFS)
-
 	app := uiapp.NewApp(service)
-	host := &uiapp.MediaHost{}
+	controller := playback.New(service, avkit.NewPlayer, filepath.Join(appDir, "native-player.json"), playback.Hooks{
+		Changed: app.PlaybackChanged,
+		Progress: func(p playback.Progress) {
+			app.UpdateResumeProgress(uiapp.ResumeProgress{SeriesID: p.SeriesID, EpisodeNum: p.EpisodeNum, Position: p.Position, Session: p.Session, Sequence: p.Sequence})
+		},
+		LibraryChanged: app.LibraryChanged,
+		Closed:         app.ClosePlayer,
+		Fullscreen:     native.ToggleWindowFullscreen,
+		System: func(s playback.State) {
+			native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "")
+			active := s.Mode != playback.Idle && s.Playback != nil
+			native.SetPlaybackKeepAwake(active && s.Status.Playing && !s.Paused)
+			if !active {
+				app.SetAmbientGlow(false, [3]uint8{}, [3]uint8{})
+				native.ClearNowPlaying()
+				return
+			}
+			native.UpdateNowPlaying(mediaServer.CacheDir(), native.UpdateNowPlayingArgs{Title: s.Book.Title, Series: s.Book.Title, Episode: s.Playback.EpisodeNum, Duration: s.Status.Duration, Position: s.Status.Position, Playing: s.Status.Playing && !s.Paused, Rate: s.Preferences.Rate, CoverURL: s.Book.CoverURL})
+		},
+	})
+	host := uiapp.NewNativeMediaHost(controller)
 	app.SetMediaHost(host)
 	app.SetArtworkSource(mediaServer.CacheDir(), mediaServer.ImageURL)
 	app.LoadPreferences(filepath.Join(appDir, "native-ui.json"))
@@ -146,7 +160,6 @@ func main() {
 		ok, err := native.ShowConfirmDialog(native.ConfirmDialogArgs{Message: message, ConfirmText: "确认", Destructive: true})
 		return err == nil && ok
 	})
-	mygo.BindAs("NativeShell", &uiapp.NativeShell{App: app})
 
 	// Set the app-wide source before Run so the initial sidebar material is
 	// already dark; MyGo applies this setting when the app starts.
@@ -159,7 +172,7 @@ func main() {
 		native.Init()
 
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:           appdirs.AppName,
+			Title:           mainWindowTitle,
 			Width:           1280,
 			Height:          820,
 			MinWidth:        1000,
@@ -170,19 +183,16 @@ func main() {
 			Vibrancy:        mygo.VibrancySidebar,
 			Content:         ui.View(app.Render),
 		})
-		playerView, err := win.NewWebView(mygo.WebViewOptions{
-			URL: "/",
-			Page: mygo.PageOptions{
-				PictureInPicture: true,
-				PreloadScript:    `window.myguoNativeMedia = true;`,
-			},
+		native.SetPictureInPictureHandler(host.PictureInPicture)
+		native.SetScrollGestureHandler(func(payload native.ScrollGesturePayload) {
+			command := "next"
+			if payload.Direction == "up" {
+				command = "prev"
+			}
+			app.MediaCommand(native.MediaCommandPayload{Command: command})
 		})
-		if err != nil {
-			log.Fatalf("failed to create player webview: %v", err)
-		}
-		host.Attach(playerView)
-		native.SetScrollPage(playerView.Page())
-		native.SetPictureInPictureHandler(func() { playerView.Page().TogglePictureInPicture() })
+		win.OnEnterFullScreen(func() { app.SetPlayerFullscreen(true) })
+		win.OnLeaveFullScreen(func() { app.SetPlayerFullscreen(false) })
 		app.SetLibraryGrids(uiapp.NewLibraryGrids())
 		app.SetInvalidator(win.Invalidate)
 		native.SetMediaCommandHandler(app.MediaCommand)
@@ -198,14 +208,57 @@ func main() {
 		win.Show()
 		win.Focus()
 		native.StartScrollGestureMonitor()
-		go app.OpenView("recommend")
+		go func() {
+			app.OpenView(initialView)
+			if initialView == "settings" {
+				app.SetSettingsLoginOpen(true)
+			}
+		}()
 		win.Invalidate()
-		win.OnClosed(func() {
-			fmt.Println("Main window closed")
-			service.FlushPendingProgress()
-			app.FlushPreferences()
-			native.Cleanup()
+		// Keep AppKit running while the actor captures its final native clock.
+		// Waiting for it from OnClosed would deadlock the main-thread native bridge.
+		var stopping, stopped, quitRequested atomic.Bool
+		beginShutdown := func(quit bool) {
+			if quit {
+				quitRequested.Store(true)
+			}
+			if !stopping.CompareAndSwap(false, true) {
+				return
+			}
+			app.CloseQRLogin()
+			go func() {
+				host.Close()
+				service.FlushPendingProgress()
+				app.FlushPreferences()
+				stopped.Store(true)
+				mygo.RunOnMain(func() {
+					if quitRequested.Load() {
+						mygo.App.Quit()
+					} else {
+						win.Close()
+					}
+				})
+			}()
+		}
+		win.OnClose(func(e *mygo.CloseEvent) {
+			if !stopped.Load() {
+				e.PreventDefault()
+				beginShutdown(false)
+			}
 		})
+		mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+			if e.SessionEnding {
+				app.CloseQRLogin()
+				controller.FlushSnapshotForSessionEnd()
+				app.FlushPreferences()
+				return
+			}
+			if !stopped.Load() {
+				e.PreventDefault()
+				beginShutdown(true)
+			}
+		})
+		win.OnClosed(native.Cleanup)
 	})
 
 	if err := mygo.App.Run(); err != nil {

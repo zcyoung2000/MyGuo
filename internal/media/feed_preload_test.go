@@ -4,9 +4,56 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestFeedPreloadPreviousGraceIsBoundedAndReservesCurrentWorker(t *testing.T) {
+	ms := &MediaServer{cacheDir: t.TempDir(), hlsStreams: make(map[string]*hlsStream)}
+	ids := []string{"710000000000001", "710000000000002", "710000000000003", "710000000000004"}
+	counts := map[string]*atomic.Int32{}
+	items := make([]FeedPreloadItem, 0, 4)
+	for _, id := range ids {
+		item := FeedPreloadItem{EpisodeID: id, Quality: "720p"}
+		items = append(items, item)
+		key := PrefetchTaskKey(PrefetchTask{EpisodeID: id, Quality: "720p"})
+		dir := ms.hlsCacheDir(id, "720p")
+		playlist := writeHLSFixture(t, dir, false)
+		data, err := os.ReadFile(playlist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(playlist, []byte(strings.ReplaceAll(string(data), "#EXTINF:2,", "#EXTINF:6,")), 0600); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		count := &atomic.Int32{}
+		counts[id] = count
+		ms.hlsStreams[key] = &hlsStream{key: key, dir: dir, playlistPath: playlist, done: done, lastMediaRequestAt: time.Now(), cancel: func() {
+			if count.Add(1) == 1 {
+				close(done)
+			}
+		}}
+	}
+	ms.SetFeedPreloadWindow(1, ids[0], "720p", items[1:3])
+	ms.SetFeedPreloadWindow(2, ids[1], "720p", items[2:])
+	if counts[ids[0]].Load() != 0 || counts[ids[1]].Load() != 0 || counts[ids[2]].Load() != 0 || counts[ids[3]].Load() != 1 {
+		t.Fatal("previous + current + nearest must reserve all three workers, canceling only farthest")
+	}
+	ms.feedPreloadPreviousUntil = time.Now().Add(-time.Second)
+	ms.SetFeedPreloadWindow(3, ids[1], "720p", items[2:3])
+	if counts[ids[0]].Load() != 1 || counts[ids[1]].Load() != 0 {
+		t.Fatal("expired previous stream was retained or current was canceled")
+	}
+	ms.feedPreloadPrevious = PrefetchTaskKey(PrefetchTask{EpisodeID: ids[2], Quality: "720p"})
+	ms.feedPreloadPreviousUntil = time.Now().Add(time.Minute)
+	ms.SetFeedPreloadWindow(4, ids[1], "720p", nil)
+	if counts[ids[2]].Load() != 1 || counts[ids[1]].Load() != 0 {
+		t.Fatal("playback pressure did not yield the previous writer to current")
+	}
+	ms.SetFeedPreloadWindow(5, "", "720p", nil)
+}
 
 func TestFeedPreloadStatusCountsOnlyPublishedPlayableSegments(t *testing.T) {
 	ms := &MediaServer{cacheDir: t.TempDir()}

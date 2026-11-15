@@ -1,0 +1,1550 @@
+{
+  "short_play": [
+    {
+      "key": "genre",
+      "name": "全部体裁",
+      "options": [
+        {
+          "name": "真人剧",
+          "value": "short_play"
+        },
+        {
+          "name": "漫剧",
+          "value": "comic_series"
+        },
+        {
+          "name": "AI剧",
+          "value": "ai_series"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_theme",
+      "name": "全部主题",
+      "options": [
+        {
+          "name": "动作",
+          "value": "cate_9165"
+        },
+        {
+          "name": "冒险",
+          "value": "cate_9163"
+        },
+        {
+          "name": "魔幻",
+          "value": "cate_9164"
+        },
+        {
+          "name": "爱情",
+          "value": "cate_5000"
+        },
+        {
+          "name": "家庭",
+          "value": "cate_5001"
+        },
+        {
+          "name": "家族",
+          "value": "cate_5002"
+        },
+        {
+          "name": "萌宝",
+          "value": "cate_5003"
+        },
+        {
+          "name": "悬疑",
+          "value": "cate_5004"
+        },
+        {
+          "name": "志怪",
+          "value": "cate_5006"
+        },
+        {
+          "name": "古装",
+          "value": "cate_5007"
+        },
+        {
+          "name": "玄幻",
+          "value": "cate_5008"
+        },
+        {
+          "name": "奇幻",
+          "value": "cate_5009"
+        },
+        {
+          "name": "成长",
+          "value": "cate_5010"
+        },
+        {
+          "name": "传奇",
+          "value": "cate_5011"
+        },
+        {
+          "name": "年代",
+          "value": "cate_5021"
+        },
+        {
+          "name": "都市",
+          "value": "cate_5022"
+        },
+        {
+          "name": "青春",
+          "value": "cate_5023"
+        },
+        {
+          "name": "喜剧",
+          "value": "cate_5024"
+        },
+        {
+          "name": "科幻",
+          "value": "cate_5025"
+        },
+        {
+          "name": "灾难",
+          "value": "cate_5026"
+        },
+        {
+          "name": "战争",
+          "value": "cate_5028"
+        },
+        {
+          "name": "综艺",
+          "value": "cate_5029"
+        },
+        {
+          "name": "剧情",
+          "value": "cate_5030"
+        },
+        {
+          "name": "逆袭",
+          "value": "cate_5031"
+        },
+        {
+          "name": "惊悚",
+          "value": "cate_5132"
+        },
+        {
+          "name": "恐怖",
+          "value": "cate_5133"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_role",
+      "name": "全部设定",
+      "options": [
+        {
+          "name": "女强",
+          "value": "cate_5221"
+        },
+        {
+          "name": "女尊",
+          "value": "cate_5222"
+        },
+        {
+          "name": "神女",
+          "value": "cate_5223"
+        },
+        {
+          "name": "大男主",
+          "value": "cate_5224"
+        },
+        {
+          "name": "男强",
+          "value": "cate_5225"
+        },
+        {
+          "name": "忠诚男主",
+          "value": "cate_5226"
+        },
+        {
+          "name": "天之骄子",
+          "value": "cate_5227"
+        },
+        {
+          "name": "热血硬汉",
+          "value": "cate_5228"
+        },
+        {
+          "name": "群像",
+          "value": "cate_5229"
+        },
+        {
+          "name": "团宠",
+          "value": "cate_5241"
+        },
+        {
+          "name": "大叔",
+          "value": "cate_5242"
+        },
+        {
+          "name": "美强惨",
+          "value": "cate_5243"
+        },
+        {
+          "name": "小人物",
+          "value": "cate_5244"
+        },
+        {
+          "name": "反派主角",
+          "value": "cate_5245"
+        },
+        {
+          "name": "霸道男主",
+          "value": "cate_5246"
+        },
+        {
+          "name": "市井英雄",
+          "value": "cate_5247"
+        },
+        {
+          "name": "商界女王",
+          "value": "cate_5248"
+        },
+        {
+          "name": "直爽女主",
+          "value": "cate_5250"
+        },
+        {
+          "name": "大女主",
+          "value": "cate_5260"
+        },
+        {
+          "name": "战神",
+          "value": "cate_5201"
+        },
+        {
+          "name": "神豪",
+          "value": "cate_5203"
+        },
+        {
+          "name": "龙王",
+          "value": "cate_5204"
+        },
+        {
+          "name": "总裁",
+          "value": "cate_5206"
+        },
+        {
+          "name": "业界精英",
+          "value": "cate_5207"
+        },
+        {
+          "name": "医生",
+          "value": "cate_5208"
+        },
+        {
+          "name": "法医",
+          "value": "cate_5209"
+        },
+        {
+          "name": "律师",
+          "value": "cate_5210"
+        },
+        {
+          "name": "特工",
+          "value": "cate_5211"
+        },
+        {
+          "name": "黑客",
+          "value": "cate_5213"
+        },
+        {
+          "name": "厨师",
+          "value": "cate_5214"
+        },
+        {
+          "name": "厨娘",
+          "value": "cate_5215"
+        },
+        {
+          "name": "拳击手",
+          "value": "cate_5216"
+        },
+        {
+          "name": "主播",
+          "value": "cate_5217"
+        },
+        {
+          "name": "豪门千金",
+          "value": "cate_5218"
+        },
+        {
+          "name": "落魄千金",
+          "value": "cate_5219"
+        },
+        {
+          "name": "真假千金",
+          "value": "cate_5220"
+        },
+        {
+          "name": "侠客",
+          "value": "cate_5235"
+        },
+        {
+          "name": "剑客",
+          "value": "cate_5236"
+        },
+        {
+          "name": "刺客杀手",
+          "value": "cate_5237"
+        },
+        {
+          "name": "武林高手",
+          "value": "cate_5239"
+        },
+        {
+          "name": "少帅",
+          "value": "cate_5261"
+        },
+        {
+          "name": "军阀",
+          "value": "cate_5262"
+        },
+        {
+          "name": "书生",
+          "value": "cate_5263"
+        },
+        {
+          "name": "女帝",
+          "value": "cate_5265"
+        },
+        {
+          "name": "将军",
+          "value": "cate_5266"
+        },
+        {
+          "name": "世子",
+          "value": "cate_5268"
+        },
+        {
+          "name": "学神",
+          "value": "cate_5284"
+        },
+        {
+          "name": "天才",
+          "value": "cate_5285"
+        },
+        {
+          "name": "神童",
+          "value": "cate_5286"
+        },
+        {
+          "name": "天生灵骨",
+          "value": "cate_5287"
+        },
+        {
+          "name": "锦鲤",
+          "value": "cate_5288"
+        },
+        {
+          "name": "狼人",
+          "value": "cate_5322"
+        },
+        {
+          "name": "萌宠",
+          "value": "cate_5323"
+        },
+        {
+          "name": "傲娇",
+          "value": "cate_5291"
+        },
+        {
+          "name": "高冷禁欲",
+          "value": "cate_5292"
+        },
+        {
+          "name": "嘴硬心软",
+          "value": "cate_5293"
+        },
+        {
+          "name": "甜妹",
+          "value": "cate_5294"
+        },
+        {
+          "name": "御姐",
+          "value": "cate_5295"
+        },
+        {
+          "name": "古灵精怪",
+          "value": "cate_5296"
+        },
+        {
+          "name": "乖乖女",
+          "value": "cate_5297"
+        },
+        {
+          "name": "大小姐",
+          "value": "cate_5298"
+        },
+        {
+          "name": "灰姑娘",
+          "value": "cate_5299"
+        },
+        {
+          "name": "腹黑",
+          "value": "cate_5324"
+        },
+        {
+          "name": "毒舌",
+          "value": "cate_5325"
+        },
+        {
+          "name": "病娇",
+          "value": "cate_5326"
+        },
+        {
+          "name": "高冷",
+          "value": "cate_5327"
+        },
+        {
+          "name": "戏精",
+          "value": "cate_5328"
+        },
+        {
+          "name": "作精",
+          "value": "cate_5329"
+        },
+        {
+          "name": "痞少",
+          "value": "cate_5330"
+        },
+        {
+          "name": "宠夫",
+          "value": "cate_5274"
+        },
+        {
+          "name": "宠妻",
+          "value": "cate_5275"
+        },
+        {
+          "name": "年龄差",
+          "value": "cate_5276"
+        },
+        {
+          "name": "年上",
+          "value": "cate_5277"
+        },
+        {
+          "name": "年下",
+          "value": "cate_5278"
+        },
+        {
+          "name": "白月光",
+          "value": "cate_5279"
+        },
+        {
+          "name": "欢喜冤家",
+          "value": "cate_5280"
+        },
+        {
+          "name": "姐弟恋",
+          "value": "cate_5300"
+        },
+        {
+          "name": "强强联合",
+          "value": "cate_5332"
+        },
+        {
+          "name": "极品亲戚",
+          "value": "cate_5336"
+        },
+        {
+          "name": "后妈",
+          "value": "cate_5337"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_epoch",
+      "name": "全部背景",
+      "options": [
+        {
+          "name": "未来",
+          "value": "cate_5311"
+        },
+        {
+          "name": "架空",
+          "value": "cate_5312"
+        },
+        {
+          "name": "现代",
+          "value": "cate_5338"
+        },
+        {
+          "name": "古代",
+          "value": "cate_5339"
+        },
+        {
+          "name": "民国",
+          "value": "cate_5340"
+        },
+        {
+          "name": "乡村",
+          "value": "cate_5314"
+        },
+        {
+          "name": "校园",
+          "value": "cate_5315"
+        },
+        {
+          "name": "职场",
+          "value": "cate_5301"
+        },
+        {
+          "name": "商界",
+          "value": "cate_5302"
+        },
+        {
+          "name": "黑道",
+          "value": "cate_5305"
+        },
+        {
+          "name": "豪门",
+          "value": "cate_5318"
+        },
+        {
+          "name": "世家",
+          "value": "cate_5319"
+        },
+        {
+          "name": "娱乐圈",
+          "value": "cate_5320"
+        },
+        {
+          "name": "星际",
+          "value": "cate_5306"
+        },
+        {
+          "name": "游戏世界",
+          "value": "cate_5308"
+        },
+        {
+          "name": "荒岛",
+          "value": "cate_5309"
+        },
+        {
+          "name": "异界",
+          "value": "cate_5310"
+        },
+        {
+          "name": "方言",
+          "value": "cate_5331"
+        },
+        {
+          "name": "英语",
+          "value": "cate_9455"
+        },
+        {
+          "name": "德语",
+          "value": "cate_9456"
+        },
+        {
+          "name": "法语",
+          "value": "cate_9457"
+        },
+        {
+          "name": "日语",
+          "value": "cate_9458"
+        },
+        {
+          "name": "韩语",
+          "value": "cate_9459"
+        },
+        {
+          "name": "小语种",
+          "value": "cate_9474"
+        }
+      ]
+    },
+    {
+      "key": "sort",
+      "name": "全部推荐",
+      "options": [
+        {
+          "name": "最新上架",
+          "value": "online_time"
+        },
+        {
+          "name": "最高热度",
+          "value": "hot_score"
+        },
+        {
+          "name": "最高收藏",
+          "value": "hot_collect"
+        }
+      ]
+    },
+    {
+      "key": "gender",
+      "name": "全部受众",
+      "options": [
+        {
+          "name": "男频",
+          "value": "1"
+        },
+        {
+          "name": "女频",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "key": "online_time",
+      "name": "全部时间",
+      "options": [
+        {
+          "name": "7天内上新",
+          "value": "days_7"
+        },
+        {
+          "name": "14天内上新",
+          "value": "days_14"
+        },
+        {
+          "name": "30天内上新",
+          "value": "days_30"
+        },
+        {
+          "name": "90天内上新",
+          "value": "days_90"
+        }
+      ]
+    }
+  ],
+  "comic_series": [
+    {
+      "key": "genre",
+      "name": "全部体裁",
+      "options": [
+        {
+          "name": "真人剧",
+          "value": "short_play"
+        },
+        {
+          "name": "漫剧",
+          "value": "comic_series"
+        },
+        {
+          "name": "AI剧",
+          "value": "ai_series"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_art_style",
+      "name": "全部画风",
+      "options": [
+        {
+          "name": "3D漫",
+          "value": "cate_5415"
+        },
+        {
+          "name": "2D漫",
+          "value": "cate_5416"
+        },
+        {
+          "name": "表情包",
+          "value": "cate_5417"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_theme",
+      "name": "全部主题",
+      "options": [
+        {
+          "name": "动作",
+          "value": "cate_9281"
+        },
+        {
+          "name": "综艺",
+          "value": "cate_9280"
+        },
+        {
+          "name": "爱情",
+          "value": "cate_5876"
+        },
+        {
+          "name": "年代",
+          "value": "cate_5891"
+        },
+        {
+          "name": "逆袭",
+          "value": "cate_5898"
+        },
+        {
+          "name": "传奇",
+          "value": "cate_5912"
+        },
+        {
+          "name": "成长",
+          "value": "cate_5916"
+        },
+        {
+          "name": "家庭",
+          "value": "cate_5924"
+        },
+        {
+          "name": "家族",
+          "value": "cate_5931"
+        },
+        {
+          "name": "萌宝",
+          "value": "cate_5936"
+        },
+        {
+          "name": "悬疑",
+          "value": "cate_5939"
+        },
+        {
+          "name": "惊悚",
+          "value": "cate_5949"
+        },
+        {
+          "name": "恐怖",
+          "value": "cate_5951"
+        },
+        {
+          "name": "志怪",
+          "value": "cate_5955"
+        },
+        {
+          "name": "古装",
+          "value": "cate_5958"
+        },
+        {
+          "name": "玄幻",
+          "value": "cate_5967"
+        },
+        {
+          "name": "奇幻",
+          "value": "cate_5975"
+        },
+        {
+          "name": "都市",
+          "value": "cate_5981"
+        },
+        {
+          "name": "青春",
+          "value": "cate_5987"
+        },
+        {
+          "name": "喜剧",
+          "value": "cate_5991"
+        },
+        {
+          "name": "科幻",
+          "value": "cate_5994"
+        },
+        {
+          "name": "灾难",
+          "value": "cate_5998"
+        },
+        {
+          "name": "冒险",
+          "value": "cate_6003"
+        },
+        {
+          "name": "战争",
+          "value": "cate_6014"
+        },
+        {
+          "name": "剧情",
+          "value": "cate_6019"
+        },
+        {
+          "name": "魔幻",
+          "value": "cate_6023"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_role",
+      "name": "全部设定",
+      "options": [
+        {
+          "name": "大女主",
+          "value": "cate_6171"
+        },
+        {
+          "name": "女强",
+          "value": "cate_6172"
+        },
+        {
+          "name": "神女",
+          "value": "cate_6173"
+        },
+        {
+          "name": "大男主",
+          "value": "cate_6174"
+        },
+        {
+          "name": "男强",
+          "value": "cate_6175"
+        },
+        {
+          "name": "忠诚男主",
+          "value": "cate_6176"
+        },
+        {
+          "name": "热血硬汉",
+          "value": "cate_6177"
+        },
+        {
+          "name": "群像",
+          "value": "cate_6178"
+        },
+        {
+          "name": "团宠",
+          "value": "cate_6179"
+        },
+        {
+          "name": "大叔",
+          "value": "cate_6180"
+        },
+        {
+          "name": "小人物",
+          "value": "cate_6181"
+        },
+        {
+          "name": "反派主角",
+          "value": "cate_6182"
+        },
+        {
+          "name": "霸道男主",
+          "value": "cate_6183"
+        },
+        {
+          "name": "市井英雄",
+          "value": "cate_6184"
+        },
+        {
+          "name": "商界女王",
+          "value": "cate_6185"
+        },
+        {
+          "name": "直爽女主",
+          "value": "cate_6186"
+        },
+        {
+          "name": "废柴",
+          "value": "cate_6188"
+        },
+        {
+          "name": "银发",
+          "value": "cate_6190"
+        },
+        {
+          "name": "天之骄子",
+          "value": "cate_9311"
+        },
+        {
+          "name": "女尊",
+          "value": "cate_9312"
+        },
+        {
+          "name": "美强惨",
+          "value": "cate_9313"
+        },
+        {
+          "name": "战神",
+          "value": "cate_6192"
+        },
+        {
+          "name": "神豪",
+          "value": "cate_6194"
+        },
+        {
+          "name": "龙王",
+          "value": "cate_6195"
+        },
+        {
+          "name": "总裁",
+          "value": "cate_6197"
+        },
+        {
+          "name": "业界精英",
+          "value": "cate_6198"
+        },
+        {
+          "name": "医生",
+          "value": "cate_6199"
+        },
+        {
+          "name": "黑客",
+          "value": "cate_6200"
+        },
+        {
+          "name": "厨师",
+          "value": "cate_6201"
+        },
+        {
+          "name": "厨娘",
+          "value": "cate_6202"
+        },
+        {
+          "name": "拳击手",
+          "value": "cate_6203"
+        },
+        {
+          "name": "主播",
+          "value": "cate_6204"
+        },
+        {
+          "name": "豪门千金",
+          "value": "cate_6205"
+        },
+        {
+          "name": "落魄千金",
+          "value": "cate_6206"
+        },
+        {
+          "name": "真假千金",
+          "value": "cate_6207"
+        },
+        {
+          "name": "少帅",
+          "value": "cate_6208"
+        },
+        {
+          "name": "军阀",
+          "value": "cate_6209"
+        },
+        {
+          "name": "侠客",
+          "value": "cate_6211"
+        },
+        {
+          "name": "剑客",
+          "value": "cate_6212"
+        },
+        {
+          "name": "刺客杀手",
+          "value": "cate_6213"
+        },
+        {
+          "name": "武林高手",
+          "value": "cate_6215"
+        },
+        {
+          "name": "学神",
+          "value": "cate_6220"
+        },
+        {
+          "name": "天才",
+          "value": "cate_6221"
+        },
+        {
+          "name": "神童",
+          "value": "cate_6222"
+        },
+        {
+          "name": "天生灵骨",
+          "value": "cate_6223"
+        },
+        {
+          "name": "锦鲤",
+          "value": "cate_6224"
+        },
+        {
+          "name": "狼人",
+          "value": "cate_6226"
+        },
+        {
+          "name": "萌宠",
+          "value": "cate_6227"
+        },
+        {
+          "name": "诡物",
+          "value": "cate_6228"
+        },
+        {
+          "name": "异族",
+          "value": "cate_6229"
+        },
+        {
+          "name": "骑士",
+          "value": "cate_6230"
+        },
+        {
+          "name": "龙族",
+          "value": "cate_6231"
+        },
+        {
+          "name": "落魄弃少",
+          "value": "cate_6232"
+        },
+        {
+          "name": "神怪",
+          "value": "cate_6233"
+        },
+        {
+          "name": "毒士",
+          "value": "cate_6234"
+        },
+        {
+          "name": "变异体",
+          "value": "cate_6236"
+        },
+        {
+          "name": "女帝",
+          "value": "cate_6237"
+        },
+        {
+          "name": "包租公",
+          "value": "cate_6238"
+        },
+        {
+          "name": "世子",
+          "value": "cate_9317"
+        },
+        {
+          "name": "书生",
+          "value": "cate_9318"
+        },
+        {
+          "name": "将军",
+          "value": "cate_9321"
+        },
+        {
+          "name": "律师",
+          "value": "cate_9322"
+        },
+        {
+          "name": "法医",
+          "value": "cate_9323"
+        },
+        {
+          "name": "仵作",
+          "value": "cate_9325"
+        },
+        {
+          "name": "特工",
+          "value": "cate_9326"
+        },
+        {
+          "name": "腹黑",
+          "value": "cate_6240"
+        },
+        {
+          "name": "毒舌",
+          "value": "cate_6241"
+        },
+        {
+          "name": "病娇",
+          "value": "cate_6242"
+        },
+        {
+          "name": "高冷",
+          "value": "cate_6243"
+        },
+        {
+          "name": "戏精",
+          "value": "cate_6244"
+        },
+        {
+          "name": "作精",
+          "value": "cate_6245"
+        },
+        {
+          "name": "痞少",
+          "value": "cate_6246"
+        },
+        {
+          "name": "高冷禁欲",
+          "value": "cate_6247"
+        },
+        {
+          "name": "嘴硬心软",
+          "value": "cate_6248"
+        },
+        {
+          "name": "御姐",
+          "value": "cate_6249"
+        },
+        {
+          "name": "古灵精怪",
+          "value": "cate_6250"
+        },
+        {
+          "name": "乖乖女",
+          "value": "cate_6251"
+        },
+        {
+          "name": "大小姐",
+          "value": "cate_6252"
+        },
+        {
+          "name": "灰姑娘",
+          "value": "cate_6253"
+        },
+        {
+          "name": "反差萌",
+          "value": "cate_6254"
+        },
+        {
+          "name": "反差强",
+          "value": "cate_6255"
+        },
+        {
+          "name": "傲娇",
+          "value": "cate_9314"
+        },
+        {
+          "name": "杀伐果断",
+          "value": "cate_9315"
+        },
+        {
+          "name": "甜妹",
+          "value": "cate_9316"
+        },
+        {
+          "name": "姐弟恋",
+          "value": "cate_6257"
+        },
+        {
+          "name": "宠夫",
+          "value": "cate_6260"
+        },
+        {
+          "name": "宠妻",
+          "value": "cate_6261"
+        },
+        {
+          "name": "年龄差",
+          "value": "cate_6262"
+        },
+        {
+          "name": "年上",
+          "value": "cate_6263"
+        },
+        {
+          "name": "年下",
+          "value": "cate_6264"
+        },
+        {
+          "name": "白月光",
+          "value": "cate_6265"
+        },
+        {
+          "name": "欢喜冤家",
+          "value": "cate_6266"
+        },
+        {
+          "name": "强强联合",
+          "value": "cate_6267"
+        },
+        {
+          "name": "极品亲戚",
+          "value": "cate_6271"
+        },
+        {
+          "name": "后妈",
+          "value": "cate_6272"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_epoch",
+      "name": "全部背景",
+      "options": [
+        {
+          "name": "现代",
+          "value": "cate_6274"
+        },
+        {
+          "name": "古代",
+          "value": "cate_6275"
+        },
+        {
+          "name": "民国",
+          "value": "cate_6276"
+        },
+        {
+          "name": "未来",
+          "value": "cate_6278"
+        },
+        {
+          "name": "架空",
+          "value": "cate_6279"
+        },
+        {
+          "name": "乡村",
+          "value": "cate_6282"
+        },
+        {
+          "name": "校园",
+          "value": "cate_6283"
+        },
+        {
+          "name": "豪门",
+          "value": "cate_6287"
+        },
+        {
+          "name": "世家",
+          "value": "cate_6288"
+        },
+        {
+          "name": "娱乐圈",
+          "value": "cate_6289"
+        },
+        {
+          "name": "职场",
+          "value": "cate_6290"
+        },
+        {
+          "name": "商界",
+          "value": "cate_6291"
+        },
+        {
+          "name": "黑道",
+          "value": "cate_6292"
+        },
+        {
+          "name": "公路",
+          "value": "cate_6293"
+        },
+        {
+          "name": "星际",
+          "value": "cate_6295"
+        },
+        {
+          "name": "游戏世界",
+          "value": "cate_6297"
+        },
+        {
+          "name": "荒岛",
+          "value": "cate_6298"
+        },
+        {
+          "name": "异界",
+          "value": "cate_6299"
+        },
+        {
+          "name": "乱世",
+          "value": "cate_6301"
+        },
+        {
+          "name": "秘境",
+          "value": "cate_6302"
+        },
+        {
+          "name": "废土",
+          "value": "cate_6303"
+        },
+        {
+          "name": "极寒",
+          "value": "cate_6305"
+        },
+        {
+          "name": "高温",
+          "value": "cate_6306"
+        },
+        {
+          "name": "洪荒",
+          "value": "cate_6307"
+        },
+        {
+          "name": "多朝代",
+          "value": "cate_6308"
+        },
+        {
+          "name": "海洋",
+          "value": "cate_9333"
+        },
+        {
+          "name": "野外",
+          "value": "cate_9334"
+        },
+        {
+          "name": "方言",
+          "value": "cate_6310"
+        },
+        {
+          "name": "英语",
+          "value": "cate_9461"
+        },
+        {
+          "name": "德语",
+          "value": "cate_9462"
+        },
+        {
+          "name": "法语",
+          "value": "cate_9463"
+        },
+        {
+          "name": "日语",
+          "value": "cate_9464"
+        },
+        {
+          "name": "韩语",
+          "value": "cate_9465"
+        },
+        {
+          "name": "小语种",
+          "value": "cate_9473"
+        }
+      ]
+    },
+    {
+      "key": "sort",
+      "name": "全部推荐",
+      "options": [
+        {
+          "name": "最新上架",
+          "value": "online_time"
+        },
+        {
+          "name": "最高热度",
+          "value": "hot_score"
+        },
+        {
+          "name": "最高收藏",
+          "value": "hot_collect"
+        }
+      ]
+    },
+    {
+      "key": "gender",
+      "name": "全部受众",
+      "options": [
+        {
+          "name": "男频",
+          "value": "1"
+        },
+        {
+          "name": "女频",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "key": "creation_status",
+      "name": "全部状态",
+      "options": [
+        {
+          "name": "已完结",
+          "value": "creation_status_0"
+        },
+        {
+          "name": "连载中",
+          "value": "creation_status_1"
+        }
+      ]
+    },
+    {
+      "key": "online_time",
+      "name": "全部时间",
+      "options": [
+        {
+          "name": "7天内上新",
+          "value": "days_7"
+        },
+        {
+          "name": "14天内上新",
+          "value": "days_14"
+        },
+        {
+          "name": "30天内上新",
+          "value": "days_30"
+        },
+        {
+          "name": "90天内上新",
+          "value": "days_90"
+        }
+      ]
+    }
+  ],
+  "ai_series": [
+    {
+      "key": "genre",
+      "name": "全部体裁",
+      "options": [
+        {
+          "name": "真人剧",
+          "value": "short_play"
+        },
+        {
+          "name": "漫剧",
+          "value": "comic_series"
+        },
+        {
+          "name": "AI剧",
+          "value": "ai_series"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_theme",
+      "name": "全部主题",
+      "options": [
+        {
+          "name": "剧情",
+          "value": "cate_316"
+        },
+        {
+          "name": "末世",
+          "value": "cate_68"
+        },
+        {
+          "name": "科幻",
+          "value": "cate_1092"
+        },
+        {
+          "name": "奇幻",
+          "value": "cate_6"
+        },
+        {
+          "name": "冒险",
+          "value": "cate_1182"
+        },
+        {
+          "name": "豪门",
+          "value": "cate_936"
+        },
+        {
+          "name": "玄幻",
+          "value": "cate_7"
+        },
+        {
+          "name": "脑洞",
+          "value": "cate_755"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_role",
+      "name": "全部设定",
+      "options": [
+        {
+          "name": "逆袭",
+          "value": "cate_739"
+        },
+        {
+          "name": "反转",
+          "value": "cate_756"
+        },
+        {
+          "name": "重生",
+          "value": "cate_36"
+        },
+        {
+          "name": "穿越",
+          "value": "cate_37"
+        },
+        {
+          "name": "总裁",
+          "value": "cate_29"
+        },
+        {
+          "name": "系统",
+          "value": "cate_19"
+        },
+        {
+          "name": "娱乐圈",
+          "value": "cate_43"
+        },
+        {
+          "name": "异能",
+          "value": "cate_598"
+        }
+      ]
+    },
+    {
+      "key": "category_dim_epoch",
+      "name": "全部背景",
+      "options": [
+        {
+          "name": "乡村",
+          "value": "cate_11"
+        },
+        {
+          "name": "年代",
+          "value": "cate_79"
+        },
+        {
+          "name": "校园",
+          "value": "cate_4"
+        },
+        {
+          "name": "民国",
+          "value": "cate_390"
+        },
+        {
+          "name": "都市",
+          "value": "cate_1"
+        },
+        {
+          "name": "职场",
+          "value": "cate_127"
+        },
+        {
+          "name": "架空",
+          "value": "cate_452"
+        },
+        {
+          "name": "异界",
+          "value": "cate_599"
+        },
+        {
+          "name": "古代",
+          "value": "cate_758"
+        }
+      ]
+    },
+    {
+      "key": "sort",
+      "name": "全部推荐",
+      "options": [
+        {
+          "name": "最新上架",
+          "value": "online_time"
+        },
+        {
+          "name": "最高热度",
+          "value": "hot_score"
+        },
+        {
+          "name": "最高收藏",
+          "value": "hot_collect"
+        }
+      ]
+    },
+    {
+      "key": "gender",
+      "name": "全部受众",
+      "options": [
+        {
+          "name": "男频",
+          "value": "1"
+        },
+        {
+          "name": "女频",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "key": "online_time",
+      "name": "全部时间",
+      "options": [
+        {
+          "name": "7天内上新",
+          "value": "days_7"
+        },
+        {
+          "name": "14天内上新",
+          "value": "days_14"
+        },
+        {
+          "name": "30天内上新",
+          "value": "days_30"
+        },
+        {
+          "name": "90天内上新",
+          "value": "days_90"
+        }
+      ]
+    }
+  ]
+}

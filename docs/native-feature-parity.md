@@ -5,15 +5,17 @@ of the current branch. `main` has no commits missing from this branch.
 The comparison covers `frontend/index.html`, `app.js`, `player-chrome.js`,
 `progressive-media.js`, `danmaku.js`, `ambient-glow.js`, and `internal/native`.
 
-Native browsing and settings use MyGo native views. The embedded document retains
-the existing recommendation and full-player controllers. Source
-negotiation, streaming, decryption, local library storage, and existing settings
-operations continue through the same exported services and MediaServer.
+Browsing, settings, recommendation playback and the full player now use native
+MyGo UI (v0.9.0). `internal/playback` owns playback state; `internal/avkit`
+provides AVPlayerView/PiP through a generated Swift module. Main creates no
+WebView or playback document. MediaServer and Go library/sync services remain
+in use. Native acceptance evidence and its limits are in
+[native-player-progress.md](native-player-progress.md).
 
 | Area | Preserved behavior | Implementation and verification evidence |
 | --- | --- | --- |
 | Navigation | Recommend, discover, search, ranks, new releases, history, favorites, likes, reservations, settings; actor/detail entry; menu and notification navigation; sidebar resizing and persistence | `view.go`, `features.go`, `preferences.go`, native navigation handler in `main.go`; sidebar click, persisted-width, navigation-history and all-pages control tests in `internal/uiapp` |
-| Recommend | Real channels, refresh, restored queue, vertical scroll/arrows, sound unlock, first-frame handoff, reversible navigation, adaptive preload and diagnostics; outgoing scenes stop hidden playback | Existing feed controller and media modules retained; `MediaHost.Recommend/Stop`; feed catalog, navigation, preload, feedback, playback and diagnostics JavaScript suites; native scene transition tests |
+| Recommend | Real channels, refresh, restored queue, vertical scroll/arrows, sound unlock, first-frame handoff, reversible navigation, adaptive preload and diagnostics; outgoing scenes stop hidden playback | `internal/playback/feed.go` and `controller.go`: restored cursor/queue, explicit fresh refresh, canceled scenes, reverse navigation, three resident decoders, actual buffered runway admission; controller regressions and native QA |
 | Search/discover | Submit/clear, debounced suggestions and keyboard selection, dynamic genre filters, pagination/deduplication/retry, authentic poster fallback, actor-card entry | `service.go`, `features.go`, `view.go`, `artwork.go`; input, suggestion, filter/provider, async artwork and cursor-cycle regressions. Filter rows scroll separately to leave results accessible at the minimum window size |
 | Rankings | Content and board tabs, ranks/promoted entries, metadata, pagination, actor links and explicit immediate playback | `feature_views.go`, `LoadRank`, `RankItemDTO.EpisodeCount`; ranking/actor and cursor-cycle tests. Pages deduplicate by content type and identity; changing boards discards obsolete results |
 | New releases | Hot releases, calendar dates, upcoming/online state, reserve/cancel | `LoadReleases` uses the original distinct board/calendar services; calendar test checks date, upcoming state and reservation controls. Reservation changes propagate to discover/search/new-release snapshots |
@@ -22,9 +24,9 @@ operations continue through the same exported services and MediaServer.
 | History | Authentic records, completed/incomplete/search filters, progress/badges/time, delete/confirmed clear, original episode and position on resume | Native library views and existing store/services; last-episode completion, episode metadata/progress, removal and confirmation tests; end-to-end JavaScript controller regression verifies that the history position is passed as seek position, while the selected quality remains unchanged |
 | Favorites/likes | Authentic records and counts, independent errors, removal and the correct liked episode | Separate library state/generations and per-episode removal; library provider/error and liked-episode removal tests. Mutations invalidate older reads; repeated pending actions cannot invert a local toggle twice |
 | Reservations | Online/pending counts, date ordering, cancellation confirmation, online-show entry | `renderLibrary`, `visibleLibrary`, `reservationBefore`, existing reservation service; mutation/cancellation tests. One cancellation action is rendered per reservation card |
-| Playback | Quality, speed, seek/buffer/time, volume/mute, playlist/current highlight, previous/next/next season, close/escape, fullscreen, PiP, orientation/fit and progress persistence | Original full player/control/media modules retained. Native host and player lifecycle suites cover scene routing, saved/explicit-zero/default resume positions, quality argument preservation and stale source callbacks. Native close callbacks carry a session so an old close cannot dismiss a newer player |
-| Media interactions | Existing favorite/like actions, comments/replies, danmaku and persisted appearance controls, ambient glow | Original controller/modules and controls retained; `LibraryChanged` invalidates native cached reads. No additional upstream interaction API or account workflow introduced |
-| Platform | Media keys/menu, Now Playing/artwork/rate, prevent display sleep, fullscreen/PiP events, notifications, confirmations and keyboard focus | Existing native implementations retained; scroll gestures and PiP now target the embedded Page; native callbacks route to the active scene. Sidebar/cards expose button roles and keyboard activation. Final live OS-interaction acceptance remains pending below |
+| Playback | Quality, speed, seek/buffer/time, volume/mute, playlist/current highlight, previous/next/next season, close/escape, fullscreen, PiP, orientation/fit and progress persistence | Native renderer/controller/AVKit cover saved/explicit-zero resume, quality/rate/volume/fit, HLS-to-full-file seek, last-episode replay/next drama, stale sources, shutdown draining and account ownership. System PiP enter/restore and switching drama on the same surface were exercised with actual decoded video |
+| Media interactions | Existing favorite/like actions, comments/replies, danmaku and persisted appearance controls, ambient glow | Native comments/replies with cursor-cycle protection, native timed danmaku with hover like/+1 and appearance migration, GPU ambient sampling. Fixture send/replies/pagination and native layout/input tests cover the controls; no live cloud messages were sent |
+| Platform | Media keys/menu, Now Playing/artwork/rate, prevent display sleep, fullscreen/PiP events, notifications, confirmations and keyboard focus | Existing native implementations retained; scroll gestures, menus and media commands now target the Go controller directly; native callbacks route to the active scene. Sidebar/cards expose button roles and keyboard activation. System PiP handoff and graceful quit were exercised; broader live OS/account acceptance limits are recorded in native-player-progress.md |
 | Settings | Account profile/session management, credential login, legacy account import, cache statistics/clear and device reset; no about section | `view.go` routes settings to native `renderSettings`; `settings.go` implements the actions through the settings IPC provider. Native tests verify WebView is absent, rendered actions, legacy import visibility, login validation and that about content is gone |
 | Runtime | SDK/MediaServer integration, authentic SQLite/WAL data and CGO-free builds | Main service/store/media initialization retained; unit tests use isolated fixtures and never populate the user's library. Required Go checks, race tests, vet and JavaScript suites are recorded below |
 
@@ -39,6 +41,10 @@ export with `MYGUO_NATIVE_SCREENSHOT_DIR`; these are test-fixture renders, not
 screenshots of the running application or user-library records.
 
 ## Verification and remaining acceptance
+
+The playback migration supersedes the historical November 6 results below. See
+[native-player-progress.md](native-player-progress.md) for the current commands,
+native runtime evidence and unverified live-account scenarios.
 
 Run from the repository root:
 

@@ -15,7 +15,7 @@ func TestCatalogValuesUsesSelectedFiltersAndDefaultsToGenre(t *testing.T) {
 		{Key: "status", Options: []FilterOption{{Value: ""}, {Value: "hot"}}},
 	}
 	got := catalogValues("short_play", rows, []int{0, 1})
-	if got["status"] != "hot" || got["genre"] != "" {
+	if got["status"] != "hot" || got["genre"] != "short_play" {
 		t.Fatalf("catalogValues = %v", got)
 	}
 	empty := catalogValues("comic_series", rows, nil)
@@ -24,7 +24,7 @@ func TestCatalogValuesUsesSelectedFiltersAndDefaultsToGenre(t *testing.T) {
 	}
 }
 
-func TestSelectGenreResetsCatalogAndTriggersAsyncLoad(t *testing.T) {
+func TestSelectGenreResetsCursorAndPreservesResultsUntilReplacement(t *testing.T) {
 	app := NewTestApp()
 	app.SetInvalidator(func() {})
 	host := &MediaHost{}
@@ -34,7 +34,7 @@ func TestSelectGenreResetsCatalogAndTriggersAsyncLoad(t *testing.T) {
 	app.catalog.HasMore = true
 
 	app.SelectGenre(1)
-	if app.catalog.GenreIndex != 1 || len(app.catalog.Items) != 0 || app.catalog.Cursor != "" || !app.catalog.HasMore {
+	if app.catalog.GenreIndex != 1 || len(app.catalog.Items) != 1 || app.catalog.Items[0].ID != "old" || app.catalog.Cursor != "" || !app.catalog.HasMore {
 		t.Fatalf("catalog was not reset: %+v", app.catalog)
 	}
 	if app.catalogGenre() != "comic_series" {

@@ -263,7 +263,7 @@ test('native quality and speed commands change the shared feed player', async ()
   assert.equal(h.runtime.state.feed.playbackSpeed, 1.5, 'out-of-range speed must be ignored');
   h.runtime.window.nativeMediaEvent({event: 'quality', value: '540p'});
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(JSON.parse(JSON.stringify(h.runtime.calls.find(([name]) => name === 'playFeedIndex'))), ['playFeedIndex', 0, 0]);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.runtime.calls.find(([name]) => name === 'playFeedIndex'))), ['playFeedIndex', 0, 0, 2, '710000000000102']);
   assert.equal(h.runtime.state.feed.quality, '540p');
 });
 
@@ -349,7 +349,7 @@ test('local quality menu opens and selection changes playback quality', async ()
   assert.equal(qualityBtn.attributes['aria-expanded'], 'false');
   assert.equal(h.runtime.state.feed.quality, '540p');
   assert.deepEqual(JSON.parse(JSON.stringify(h.runtime.calls.find(([name]) => name === 'playFeedIndex'))),
-    ['playFeedIndex', 0, 0]);
+    ['playFeedIndex', 0, 0, 2, '710000000000102']);
 });
 
 test('speed indicator keeps the selected menu text across all fixed formats', () => {
@@ -399,3 +399,73 @@ test('speed indicator keeps the selected menu text across all fixed formats', ()
   assert.equal(speedBtn.textContent, '1.0x');
   assert.equal(h.runtime.playerSpeedLabel(2.5), '2.5x');
 });
+
+test('quality switch retains the selected episode and its playback position', async () => {
+  const h = playerHarness();
+  const feed = h.runtime.state.feed;
+  feed.items = [{id: feed.seriesId, title: 'episode 7'}];
+  feed.episodeNum = 7;
+  feed.episodeId = 'e7';
+  h.video.currentTime = 42;
+  h.video.src = 'episode-7';
+  h.runtime.feedSlots[0].itemIndex = 0;
+  h.runtime.activateFeedDrama = () => {};
+  h.runtime.cancelScheduledFeedWarmup = () => {};
+  h.runtime.ensureFeedItemsAhead = () => {};
+  let prepared;
+  h.runtime.prepareFeedSlot = async (...args) => { prepared = args; };
+  loadFunction(h.runtime, 'playFeedIndex');
+  loadFunction(h.runtime, 'changeFeedPlaybackQuality');
+  await h.runtime.changeFeedPlaybackQuality('1080p');
+  assert.equal(prepared[3], 42);
+  assert.equal(prepared[6], 7);
+  assert.equal(prepared[7], 'e7');
+});
+
+test('B shortcut toggles feed danmaku without an undefined source', () => {
+  const h = playerHarness();
+  h.runtime.window.DanmakuController = class { constructor() { this.enabled = false; } };
+  h.runtime.DanmakuController = h.runtime.window.DanmakuController;
+  h.runtime.danmakuControllers = {};
+  h.runtime.bindDanmakuControls = () => {};
+  const changes = [];
+  h.runtime.setDanmakuEnabled = (...args) => changes.push(args);
+  h.runtime.document.getElementById = () => null;
+  loadFunction(h.runtime, 'initDanmaku');
+  h.runtime.initDanmaku();
+  h.runtime.document.handlers.keydown({key: 'b', target: null});
+  assert.equal(changes[0][0], 'feed');
+  assert.equal(changes[0][1], h.runtime.danmakuControllers.feed);
+  assert.equal(changes[0][2], true);
+});
+
+for (const staleFails of [false, true]) {
+  test(`slow earlier series ${staleFails ? 'failure' : 'response'} cannot replace the latest selection`, async () => {
+    const h = playerHarness();
+    h.runtime.feedPlayToken = 0;
+    h.runtime.state.feed.items = [];
+    h.runtime.clearCommentSceneLayout = () => {};
+    h.runtime.cancelScheduledFeedWarmup = () => {};
+    h.runtime.cancelPendingFeedSwitch = () => {};
+    h.runtime.pauseFeedPlayback = () => {};
+    let resolveB, rejectB;
+    h.runtime.apiCall = async (method, id) => {
+      if (id === 'B') return new Promise((resolve, reject) => { resolveB = resolve; rejectB = reject; });
+      return {id, title: id, episodes: []};
+    };
+    const played = [];
+    h.runtime.playFeedIndex = async (index, resume, episode) => {
+      h.runtime.state.feed.seriesId = h.runtime.state.feed.items[index].id;
+      h.runtime.state.feed.episodeNum = episode;
+      played.push(h.runtime.state.feed.seriesId);
+    };
+    loadFunction(h.runtime, 'enterSeriesPlayer');
+    const first = h.runtime.enterSeriesPlayer('B', 1);
+    assert.equal(await h.runtime.enterSeriesPlayer('C', 4), true);
+    if (staleFails) rejectB(new Error('old request failed'));
+    else resolveB({id: 'B', title: 'B', episodes: []});
+    assert.equal(await first, false);
+    assert.deepEqual(played, ['C']);
+    assert.deepEqual(Array.from(h.runtime.state.feed.items, item => item.id), ['C']);
+  });
+}

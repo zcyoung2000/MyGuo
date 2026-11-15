@@ -55,6 +55,8 @@ type NotificationArgs struct {
 var (
 	window             *mygo.Window
 	scrollPage         *mygo.Page
+	scrollHandlerMu    sync.RWMutex
+	scrollHandler      func(ScrollGesturePayload)
 	feedScrollCapture  atomic.Bool
 	scrollMonitorReady atomic.Bool
 	mediaCommandEvent  = mygo.NewEvent[MediaCommandPayload]("mediaCommand")
@@ -426,7 +428,19 @@ func TogglePictureInPicture() {
 func SetPictureInPictureHandler(fn func()) { pictureInPictureHandler = fn }
 
 func SetScrollPage(page *mygo.Page) { scrollPage = page }
+func SetScrollGestureHandler(handler func(ScrollGesturePayload)) {
+	scrollHandlerMu.Lock()
+	scrollHandler = handler
+	scrollHandlerMu.Unlock()
+}
 func emitScrollGesture(payload ScrollGesturePayload) {
+	scrollHandlerMu.RLock()
+	handler := scrollHandler
+	scrollHandlerMu.RUnlock()
+	if handler != nil {
+		handler(payload)
+		return
+	}
 	if scrollPage != nil {
 		_ = scrollGestureEvent.EmitPage(scrollPage, payload)
 	} else if window != nil {

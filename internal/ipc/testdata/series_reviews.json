@@ -1,0 +1,75 @@
+{
+  "code": 0,
+  "message": "请求成功",
+  "data": {
+    "common_list_info": {
+      "total": 911,
+      "has_more": true,
+      "cursor": "{\"session_id\":\"fixture\",\"offset\":10}"
+    },
+    "data_list": [
+      {
+        "comment": {
+          "comment_id": "7695938834640077593",
+          "common": {
+            "group_id": "7695330621513534489",
+            "status": 1,
+            "content": {
+              "text": "剧评内容，支持展开长文。"
+            },
+            "user_info": {
+              "base_info": {
+                "user_name": "观众0",
+                "user_avatar": "https://images.example/avatar.heic",
+                "expand_user_avatar": "https://images.example/avatar.jpg"
+              }
+            },
+            "create_timestamp": 1791854629
+          },
+          "expand": {
+            "book_id": "7695330621513534489",
+            "score": "10",
+            "score_suffix_text": "观看后点评"
+          },
+          "stat": {
+            "digg_count": 18,
+            "reply_count": 11
+          }
+        }
+      },
+      {
+        "comment": {
+          "comment_id": "7695938834640077594",
+          "common": {
+            "group_id": "7695330621513534489",
+            "status": 1,
+            "content": {
+              "text": "第二条剧评"
+            },
+            "user_info": {
+              "base_info": {
+                "user_name": "观众1",
+                "user_avatar": "https://images.example/avatar.heic",
+                "expand_user_avatar": "https://images.example/avatar.jpg"
+              }
+            },
+            "create_timestamp": 1791854629
+          },
+          "expand": {
+            "book_id": "7695330621513534489",
+            "score": "",
+            "score_suffix_text": "观看后点评"
+          },
+          "stat": {
+            "digg_count": 18,
+            "reply_count": 11
+          }
+        }
+      }
+    ],
+    "extra": {
+      "credibility_score": -1,
+      "credibility_score_count": -1
+    }
+  }
+}

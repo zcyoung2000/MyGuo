@@ -1,0 +1,252 @@
+// Native player QA uses the production renderer/controller/AVKit and a local
+// SQLite database. Catalog and social responses are fixtures; nothing is sent
+// to a cloud account. Supply a local file or a localhost media URL.
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+	"time"
+
+	"github.com/egoist/mygo"
+	_ "github.com/egoist/mygo/plugins/automation"
+	"github.com/egoist/mygo/ui"
+	"myguo/internal/avkit"
+	"myguo/internal/ipc"
+	"myguo/internal/media"
+	"myguo/internal/native"
+	"myguo/internal/playback"
+	"myguo/internal/store"
+	"myguo/internal/uiapp"
+)
+
+type fixtures struct {
+	playback.Backend
+	db              *store.Store
+	source          string
+	landscapeSource string
+	fallbackSource  string
+}
+
+func (b *fixtures) PlaybackScope() string { return "" }
+func (b *fixtures) FlushPendingProgress() {}
+func (b *fixtures) SaveProgress(ctx context.Context, id, ep, title, cover string, num, total int, pos, duration float64) error {
+	return b.SaveProgressForScope(ctx, "", id, ep, title, cover, num, total, pos, duration)
+}
+func (b *fixtures) SaveProgressForScope(ctx context.Context, scope, id, ep, title, cover string, num, total int, pos, duration float64) error {
+	_, err := b.db.SavePlaybackProgress(store.HistoryItem{SeriesID: id, Title: title, EpisodeNum: num, TotalEpisodes: total, PositionSec: pos, DurationSec: duration}, ep, scope)
+	return err
+}
+func (b *fixtures) PlayEpisode(ctx context.Context, id, ep string, num int, quality string, hls bool) (*ipc.PlaybackDTO, error) {
+	last := 0.
+	if h, ok := b.db.GetHistoryItem(id); ok && h.EpisodeNum == num {
+		last = h.PositionSec
+	}
+	source := b.source
+	if b.landscapeSource != "" && id == "710000000000002" {
+		source = b.landscapeSource
+	}
+	dto := &ipc.PlaybackDTO{SeriesID: id, EpisodeID: fmt.Sprintf("%s%02d", id, num), EpisodeNum: num, DurationSec: 90, LastPosition: last, Quality: quality, StreamURL: source, FullStreamURL: source, IsFullCached: true, Qualities: []ipc.QualityOptionDTO{{ID: "720p", Label: "720p", Available: true}, {ID: "1080p", Label: "1080p", Available: true}}}
+	if b.fallbackSource != "" {
+		dto.HLSStreamURL, dto.FullStreamURL, dto.IsFullCached = source, b.fallbackSource, false
+	}
+	return dto, nil
+}
+func (b *fixtures) GetSeriesDetail(ctx context.Context, id string) (*ipc.SeriesDetailDTO, error) {
+	episodes := []ipc.EpisodeDTO{}
+	for n := 1; n <= 5; n++ {
+		episodes = append(episodes, ipc.EpisodeDTO{Number: n, Playable: true})
+	}
+	return &ipc.SeriesDetailDTO{ID: id, Title: "原生验收 " + id[len(id)-3:], EpisodeCount: 5, Episodes: episodes}, nil
+}
+func (b *fixtures) GetNextSeason(context.Context, string) (*ipc.SeriesCard, error) { return nil, nil }
+func (b *fixtures) GetRecommendFeed(context.Context, string, string) (*ipc.RecommendFeedResult, error) {
+	return &ipc.RecommendFeedResult{Items: []ipc.SeriesCard{{ID: "710000000000001"}, {ID: "710000000000002"}, {ID: "710000000000003"}}}, nil
+}
+func (b *fixtures) RestoreRecommendFeed(context.Context, string) (*ipc.RecommendFeedResult, error) {
+	return &ipc.RecommendFeedResult{HasMore: true}, nil
+}
+func (b *fixtures) ConsumeRecommendFeedItem(context.Context, string, string) error { return nil }
+func (b *fixtures) UpdateFeedPreloadWindow(ctx context.Context, v int64, ep, q string, items []media.FeedPreloadItem) ([]media.FeedPreloadStatus, error) {
+	out := []media.FeedPreloadStatus{}
+	for _, i := range items {
+		out = append(out, media.FeedPreloadStatus{EpisodeID: i.EpisodeID, Quality: i.Quality, Complete: true, CachedSeconds: 90})
+	}
+	return out, nil
+}
+func (b *fixtures) GetProfile(context.Context) (ipc.UserProfile, error) {
+	return ipc.UserProfile{LoggedIn: true, UserID: "local-qa"}, nil
+}
+func (b *fixtures) IsFavorite(ctx context.Context, id string) (bool, error) {
+	return b.db.IsFavorite(id), nil
+}
+func (b *fixtures) ToggleFavorite(ctx context.Context, id, title, cover, desc string, total int) (bool, error) {
+	return b.db.ToggleFavorite(store.FavoriteItem{SeriesID: id, Title: title, TotalEpisodes: total}, "")
+}
+func (b *fixtures) ToggleLike(ctx context.Context, id, ep, title, cover string, num int) (bool, error) {
+	liked := !b.db.IsLiked(id, ep, num)
+	return liked, b.db.SetLike(store.LikeItem{SeriesID: id, EpisodeID: ep, EpisodeNum: num, Title: title}, liked, "")
+}
+func (b *fixtures) GetEpisodeComments(ctx context.Context, id, ep, cursor string) (*ipc.CommentPageDTO, error) {
+	if cursor != "" {
+		return &ipc.CommentPageDTO{Items: []ipc.CommentDTO{{ID: "second", Author: "本地剧友", Content: "第二页测试评论"}}, Total: 2}, nil
+	}
+	return &ipc.CommentPageDTO{Items: []ipc.CommentDTO{{ID: "first", Author: "本地剧友", Content: "这是隔离验收中的本地评论，支持展开回复。", ReplyCount: 1}}, HasMore: true, NextCursor: "page2", Total: 2}, nil
+}
+func (b *fixtures) GetEpisodeCommentReplies(context.Context, string, string, string, string) (*ipc.CommentPageDTO, error) {
+	return &ipc.CommentPageDTO{Items: []ipc.CommentDTO{{ID: "reply", Author: "回复者", Content: "本地回复测试"}}}, nil
+}
+func (b *fixtures) GetDanmaku(ctx context.Context, id, ep string, start, duration int64) (*ipc.DanmakuPage, error) {
+	p := &ipc.DanmakuPage{}
+	for offset := start; offset < start+duration; offset += 3000 {
+		p.Items = append(p.Items, ipc.Danmaku{ID: fmt.Sprint(offset), Text: fmt.Sprintf("原生弹幕互动 %d", offset/1000), TimeMs: offset, Color: "#ffffff", ShowDigg: true, ShowAddOne: true})
+	}
+	return p, nil
+}
+func (b *fixtures) SendDanmaku(ctx context.Context, id, ep, text string, at int64, reply string) (*ipc.DanmakuSendResult, error) {
+	return &ipc.DanmakuSendResult{ID: fmt.Sprint(time.Now().UnixNano()), UserID: "local-qa", Text: text, TimeMs: at}, nil
+}
+func (b *fixtures) LikeDanmaku(ctx context.Context, ep, id string, liked bool) (bool, error) {
+	return liked, nil
+}
+
+func main() {
+	source := flag.String("source", "http://127.0.0.1:18764/sample.mp4", "local test media")
+	landscapeSource := flag.String("landscape-source", "", "optional second feed item for aspect-ratio QA")
+	fallbackSource := flag.String("fallback-source", "", "optional complete source for HLS recovery QA")
+	trace := flag.Bool("trace", false, "log playback clock once per second")
+	root := flag.String("data", "/tmp/myguo-native-player/qa", "isolated test data")
+	exercisePIP := flag.Bool("exercise-pip", false, "verify native PiP handoff and restore")
+	quitAfter := flag.Duration("quit-after", 0, "exercise graceful quit after this duration")
+	flag.Parse()
+	if err := os.MkdirAll(*root, 0700); err != nil {
+		log.Fatal(err)
+	}
+	os.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	db, err := store.NewStore(*root)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	b := &fixtures{db: db, source: *source, landscapeSource: *landscapeSource, fallbackSource: *fallbackSource}
+	app := uiapp.NewTestApp()
+	path := filepath.Join(*root, "native-player.json")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		p := playback.DefaultPreferences()
+		p.Volume = .02
+		_ = playback.SavePreferences(path, p)
+	}
+	controller := playback.New(b, avkit.NewPlayer, path, playback.Hooks{Changed: app.PlaybackChanged, Fullscreen: native.ToggleWindowFullscreen, System: func(s playback.State) { native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "") }, LibraryChanged: func() {}})
+	defer controller.Close()
+	host := uiapp.NewNativeMediaHost(controller)
+	app.SetMediaHost(host)
+	mygo.Theme.SetSource(mygo.ThemeDark)
+	mygo.App.WhenReady(func() {
+		native.Init()
+		w := mygo.NewWindow(mygo.WindowOptions{Title: "原生播放器隔离验收", Width: 1280, Height: 820, MinWidth: 1000, MinHeight: 640, TitleBarStyle: mygo.TitleBarHiddenInset, Transparent: true, BackgroundColor: "transparent", Vibrancy: mygo.VibrancySidebar, Content: ui.View(app.Render)})
+		native.SetWindow(w)
+		native.SetMediaCommandHandler(app.MediaCommand)
+		native.SetPictureInPictureHandler(host.PictureInPicture)
+		native.SetScrollGestureHandler(func(p native.ScrollGesturePayload) {
+			cmd := "next"
+			if p.Direction == "up" {
+				cmd = "prev"
+			}
+			host.PlayerControl(cmd, nil)
+		})
+		native.StartScrollGestureMonitor()
+		app.SetInvalidator(w.Invalidate)
+		w.OnEnterFullScreen(func() { app.SetPlayerFullscreen(true) })
+		w.OnLeaveFullScreen(func() { app.SetPlayerFullscreen(false) })
+		var stopping, stopped atomic.Bool
+		finish := func() {
+			if !stopping.CompareAndSwap(false, true) {
+				return
+			}
+			go func() { controller.Close(); stopped.Store(true); mygo.RunOnMain(func() { mygo.App.Quit() }) }()
+		}
+		w.OnClose(func(e *mygo.CloseEvent) {
+			if !stopped.Load() {
+				e.PreventDefault()
+				finish()
+			}
+		})
+		mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+			if !stopped.Load() {
+				e.PreventDefault()
+				finish()
+			}
+		})
+		w.OnClosed(native.Cleanup)
+		w.Show()
+		w.Focus()
+		if *quitAfter > 0 {
+			time.AfterFunc(*quitAfter, func() { mygo.App.Quit() })
+		}
+		go app.OpenView("recommend")
+		if *trace {
+			go func() {
+				for range time.NewTicker(time.Second).C {
+					s := controller.Snapshot()
+					if s.Playback == nil {
+						continue
+					}
+					log.Printf("[qa-clock] episode=%d position=%.2f duration=%.2f buffered=%.2f paused=%t buffering=%t ended=%t error=%q", s.Playback.EpisodeNum, s.Status.Position, s.Status.Duration, s.Status.Buffered, s.Paused, s.Status.Buffering, s.Status.Ended, s.Error)
+				}
+			}()
+		}
+		if *exercisePIP {
+			go func() {
+				wait := func(label string, condition func(playback.State) bool) bool {
+					deadline := time.Now().Add(8 * time.Second)
+					for time.Now().Before(deadline) {
+						if condition(controller.Snapshot()) {
+							log.Printf("[qa] %s passed", label)
+							return true
+						}
+						time.Sleep(50 * time.Millisecond)
+					}
+					log.Printf("[qa] %s FAILED: %+v", label, controller.Snapshot().Status)
+					return false
+				}
+				if !wait("initial frame", func(s playback.State) bool { return s.Status.Ready && s.Status.Position > 1 }) {
+					return
+				}
+				original := controller.Snapshot().Engine
+				controller.Command("pip", nil)
+				if !wait("PiP enter", func(s playback.State) bool { return s.Status.PictureInPicture }) {
+					return
+				}
+				controller.Command("next", nil)
+				if !wait("PiP next drama", func(s playback.State) bool {
+					return s.Book.ID == "710000000000002" && s.Status.Ready && s.Status.PictureInPicture
+				}) {
+					return
+				}
+				if controller.Snapshot().Engine != original {
+					log.Print("[qa] same native surface FAILED")
+					return
+				}
+				log.Print("[qa] same native surface passed")
+				controller.Command("pip", nil)
+				if !wait("PiP restore", func(s playback.State) bool { return !s.Status.PictureInPicture && s.Status.Displayed }) {
+					return
+				}
+				controller.Command("pause", nil)
+				controller.Command("seek", 31.25)
+				wait("paused seek", func(s playback.State) bool {
+					return s.Paused && s.Status.Ready && s.Status.Position > 31.2 && s.Status.Position < 31.3
+				})
+			}()
+		}
+
+	})
+	if err := mygo.App.Run(); err != nil {
+		log.Fatal(err)
+	}
+}

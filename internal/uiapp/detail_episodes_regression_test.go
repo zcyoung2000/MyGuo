@@ -66,7 +66,7 @@ func TestDetailEpisodesRenderCompleteListWithoutExpansion(t *testing.T) {
 	if !firstOK {
 		t.Fatalf("detail episodes do not render every episode: %v", tt.Texts())
 	}
-	if first.W != 52 || first.H != 36 {
+	if first.W < 126 || first.H != 46 {
 		t.Fatalf("episode cell size changed: %+v", first)
 	}
 	app.detailEpisodesList.ScrollToEnd()

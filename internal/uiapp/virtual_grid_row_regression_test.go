@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -79,9 +80,14 @@ func TestPosterActionDoesNotOpenCard(t *testing.T) {
 		t.Fatalf("poster action was not clickable: %v", err)
 	}
 	tester.Frame()
-	if got := app.view; got != "favorites" {
+	// The real removal runs asynchronously; wait for its published result
+	// before checking the provider call or reading its protected log.
+	waitFor(time.Second, func() bool { return len(app.LibraryState().Favorites.Items) == 0 })
+	if got := app.View(); got != "favorites" {
 		t.Fatalf("poster action opened the card: view=%s", got)
 	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
 	if len(provider.calls) != 1 || provider.calls[0] != "favorite:favorite-1" {
 		t.Fatalf("poster action did not call removal exactly once: %+v", provider.calls)
 	}

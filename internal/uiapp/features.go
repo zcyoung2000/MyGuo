@@ -52,13 +52,18 @@ type ActorState struct {
 	Error            string
 	version          uint64
 	seenCursors      map[string]bool
+	emptyPages       int
 	requesting       bool
 }
 type DetailCollection struct {
-	Title   string
-	Items   []CatalogItem
-	Loading bool
-	Error   string
+	Title                string
+	Items                []CatalogItem
+	Loading              bool
+	Error                string
+	Cursor               string
+	HasMore, LoadingMore bool
+	seenCursors          map[string]bool
+	emptyPages           int
 }
 type navigationEntry struct {
 	View    string
@@ -145,6 +150,9 @@ func (a *App) LibraryChanged() {
 	a.mu.Unlock()
 }
 func (a *App) navigateLocked(entry navigationEntry, record bool) {
+	if entry.View != "settings" {
+		a.cancelSettingsLoginLocked()
+	}
 	if record {
 		if a.navIndex < 0 || len(a.navigation) == 0 {
 			a.navigation = []navigationEntry{entry}
@@ -159,7 +167,8 @@ func (a *App) navigateLocked(entry navigationEntry, record bool) {
 	switch entry.View {
 	case "detail":
 		a.resume = entry.Item
-		a.detail = Detail{ID: entry.Item.ID, Loading: true, RelatedLoading: true}
+		a.resumeFromPlayback = false
+		a.detail = Detail{ID: entry.Item.ID, Loading: true}
 		if !a.testMode {
 			go a.loadDetailAt(entry.Item.ID, a.generation)
 		}
@@ -173,7 +182,7 @@ func (a *App) navigateLocked(entry navigationEntry, record bool) {
 			a.media.RecommendChannel(a.feedChannel)
 		}
 	case "settings":
-		a.settings = Settings{Profile: a.settings.Profile, Loading: true, LoginOpen: a.settings.LoginOpen, LoginCookie: a.settings.LoginCookie, LoginToken: a.settings.LoginToken}
+		a.settings = Settings{Profile: a.settings.Profile, Loading: true}
 		hasSettingsService := a.settingsTestProvider != nil || a.service != nil
 		if !a.testMode && hasSettingsService {
 			loadSettings := a.LoadSettings
@@ -181,8 +190,8 @@ func (a *App) navigateLocked(entry navigationEntry, record bool) {
 		}
 	case "discover":
 		if !a.testMode {
-			go a.loadFilters()
-			go a.loadCatalog(false)
+			a.startCatalogFiltersLocked()
+			a.startCatalogResultsLocked()
 		}
 	case "rank":
 		if !a.testMode {
@@ -245,7 +254,7 @@ func (a *App) SelectRank(content, board string) {
 	a.rank.Content, a.rank.Board = content, board
 	a.rank.version++
 	a.rank.Loading = false
-	a.rank.Items, a.rank.Cursor, a.rank.Error = nil, "", ""
+	a.rank.Cursor, a.rank.Error = "", ""
 	a.rank.HasMore = false
 	a.mu.Unlock()
 	a.LoadRank(false)
@@ -286,6 +295,9 @@ func (a *App) LoadRank(more bool) {
 	}
 	a.rank.Contents, a.rank.Content, a.rank.Board = result.Contents, result.Content, result.Board
 	a.rank.Items, a.rank.Cursor, a.rank.HasMore, a.rank.Error = dedupeRankItems(items), result.Cursor, nextCursor(&a.rank.seenCursors, cursor, result.Cursor, result.HasMore, more), ""
+	if !more {
+		a.rankResultVersion++
+	}
 	a.invalidate()
 }
 func (a *App) SelectRelease(calendar bool, date string) {
@@ -339,6 +351,7 @@ func (a *App) LoadReleases() {
 		a.releases.Error = featureError("new releases", err)
 	} else {
 		a.releases.Items, a.releases.Dates, a.releases.Error = items, dates, ""
+		a.releaseResultVersion++
 		if a.releases.Date == "" {
 			a.releases.Date = selected
 		}
@@ -384,22 +397,45 @@ func (a *App) loadActor(more bool) {
 	if err != nil {
 		a.actor.Error = featureError("actor", err)
 	} else {
+		priorCount := 0
+		if more {
+			priorCount = len(a.actor.Works)
+		} else {
+			a.actor.emptyPages = 0
+		}
 		if more {
 			works = append(append([]CatalogItem(nil), a.actor.Works...), works...)
 		} else {
 			a.actor.Profile = profile
 		}
 		a.actor.Works, a.actor.Cursor, a.actor.HasMore, a.actor.Error = dedupeCards(works), next, nextCursor(&a.actor.seenCursors, cursor, next, hasMore, more), ""
+		if a.actor.HasMore && len(a.actor.Works) == priorCount {
+			a.actor.emptyPages++
+		} else {
+			a.actor.emptyPages = 0
+		}
+		if a.actor.emptyPages >= maxEmptyPages {
+			a.actor.Error = "暂时无法取得更多作品，请重试"
+		}
 	}
 	a.invalidate()
 }
-func (a *App) loadSupplement(seriesID string, generation uint64, adaptations bool) {
+func (a *App) loadSupplement(seriesID string, generation uint64, adaptations bool, loadMore ...bool) {
+	more := adaptations && len(loadMore) > 0 && loadMore[0]
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 	defer cancel()
 	a.mu.Lock()
 	if generation != a.generation || seriesID != a.detail.ID {
 		a.mu.Unlock()
 		return
+	}
+	if more && (!a.detail.Adaptations.HasMore || a.detail.Adaptations.LoadingMore || a.detail.Adaptations.Loading) {
+		a.mu.Unlock()
+		return
+	}
+	cursor := ""
+	if more {
+		cursor = a.detail.Adaptations.Cursor
 	}
 	source := a.detail.Source
 	seasonIDs := make([]string, 0, len(a.detail.Seasons.Items))
@@ -408,7 +444,7 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 	}
 	key := supplementKey(seriesID, source, seasonIDs)
 	// Loading is presentation state; only an active request may suppress a load.
-	loadKey := fmt.Sprintf("%d:%s:%t:%s", generation, seriesID, adaptations, adaptationSupplementKey(key))
+	loadKey := fmt.Sprintf("%d:%s:%t:%s", generation, seriesID, adaptations, adaptationSupplementKey(key)+":"+cursor)
 	if a.detailSupplementLoads[loadKey] {
 		a.mu.Unlock()
 		return
@@ -422,14 +458,18 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 			a.detailAdaptationKeys = make(map[string]string)
 		}
 		a.detailAdaptationKeys[seriesID] = adaptationSupplementKey(key)
-		a.detail.Adaptations.Loading, a.detail.Adaptations.Error = true, ""
+		if more {
+			a.detail.Adaptations.LoadingMore = true
+			a.detail.Adaptations.Error = ""
+		} else {
+			a.detail.Adaptations.Loading, a.detail.Adaptations.Error = true, ""
+		}
 	} else {
 		a.detail.Seasons.Loading, a.detail.Seasons.Error = true, ""
 	}
 	a.invalidate()
 	provider := a.featureProvider()
 	a.mu.Unlock()
-	defer func() { a.mu.Lock(); delete(a.detailSupplementLoads, loadKey); a.mu.Unlock() }()
 	var result *ipc.SeriesCollectionDTO
 	var err error
 	if adaptations {
@@ -437,25 +477,97 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 		if source != nil {
 			sourceID, title, cover = source.ID, source.Title, source.CoverURL
 		}
-		result, err = provider.GetSeriesAdaptations(ctx, seriesID, sourceID, title, cover, strings.Join(append([]string{seriesID}, seasonIDs...), ","))
+		if more {
+			paged, ok := provider.(interface {
+				GetSeriesAdaptationsPage(context.Context, string, string, string, string, string, string) (*ipc.SeriesCollectionDTO, error)
+			})
+			if ok {
+				result, err = paged.GetSeriesAdaptationsPage(ctx, seriesID, sourceID, title, cover, strings.Join(append([]string{seriesID}, seasonIDs...), ","), cursor)
+			} else {
+				err = fmt.Errorf("暂时无法加载更多改编版本")
+			}
+		} else {
+			result, err = provider.GetSeriesAdaptations(ctx, seriesID, sourceID, title, cover, strings.Join(append([]string{seriesID}, seasonIDs...), ","))
+		}
 	} else {
 		result, err = provider.GetSeriesSeasons(ctx, seriesID)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	delete(a.detailSupplementLoads, loadKey)
 	if generation != a.generation || seriesID != a.detail.ID {
 		return
 	}
 	if adaptations && adaptationSupplementKey(key) != a.detailAdaptationKeys[seriesID] {
 		return
 	}
+	if more && cursor != a.detail.Adaptations.Cursor {
+		return
+	}
+	if more && err != nil {
+		a.detail.Adaptations.LoadingMore = false
+		a.detail.Adaptations.Error = "改编版本加载失败，请重试"
+		a.invalidate()
+		return
+	}
 	value := DetailCollection{}
 	if err != nil {
-		value.Error = err.Error()
+		value.Error = "关联作品加载失败，请重试"
 	} else if result != nil {
 		value.Title, value.Items = result.Title, convertCards(result.Items)
+		if adaptations {
+			seen := a.detail.Adaptations.seenCursors
+			if !more {
+				seen = nil
+			}
+			value.Cursor = result.Cursor
+			value.HasMore = nextCursor(&seen, cursor, result.Cursor, result.HasMore, more)
+			value.seenCursors = seen
+			if more {
+				value.Items = dedupeCards(append(append([]CatalogItem(nil), a.detail.Adaptations.Items...), value.Items...))
+			}
+		}
 	}
 	if adaptations {
+		priorSeasonCount := len(a.detail.Seasons.Items)
+		a.detail.Seasons.Loading = false
+		if err == nil && result != nil && result.Seasons != nil {
+			seasons := convertCards(result.Seasons)
+			if more {
+				seasons = append(append([]CatalogItem(nil), a.detail.Seasons.Items...), seasons...)
+			}
+			otherSeasons := make([]CatalogItem, 0, len(seasons))
+			for _, item := range seasons {
+				if item.ID != "" && item.ID != seriesID {
+					otherSeasons = append(otherSeasons, item)
+				}
+			}
+			a.detail.Seasons = DetailCollection{Items: dedupeCards(otherSeasons), HasMore: result.HasMore}
+		}
+		excluded := map[string]bool{seriesID: true}
+		for _, id := range seasonIDs {
+			excluded[id] = true
+		}
+		for _, item := range a.detail.Seasons.Items {
+			excluded[item.ID] = true
+		}
+		filtered := value.Items[:0]
+		for _, item := range value.Items {
+			if !excluded[item.ID] {
+				filtered = append(filtered, item)
+			}
+		}
+		value.Items = filtered
+		seasonsAdded := len(a.detail.Seasons.Items) > priorSeasonCount
+		if value.HasMore && !seasonsAdded && ((!more && len(value.Items) == 0) || (more && len(value.Items) == len(a.detail.Adaptations.Items))) {
+			if more {
+				value.emptyPages = a.detail.Adaptations.emptyPages
+			}
+			value.emptyPages++
+			if value.emptyPages >= maxEmptyPages {
+				value.Error = "暂时无法取得更多改编版本，请重试"
+			}
+		}
 		a.detail.Adaptations = value
 	} else {
 		a.detail.Seasons = value
@@ -636,6 +748,19 @@ func (a *App) refreshVisibleLibraryLocked(tab LibraryTab) {
 		if a.libraryItemVisible(tab, it) {
 			items = append(items, it)
 		}
+	}
+	previous := a.libraryVisible[tab]
+	changed := len(previous) != len(items)
+	if !changed {
+		for i := range items {
+			if stableDramaKey(items[i], i) != stableDramaKey(previous[i], i) {
+				changed = true
+				break
+			}
+		}
+	}
+	if changed {
+		a.libraryResultVersion[tab]++
 	}
 	a.libraryVisible[tab] = items
 }
@@ -842,19 +967,6 @@ func (a *App) applyReservationLocked(id string, enabled bool) {
 	if a.detail.ID == id {
 		a.detail.Reserved = enabled
 	}
-}
-func (a *App) RetryRelated() {
-	a.mu.Lock()
-	id, generation := a.detail.ID, a.generation
-	if id == "" || a.detail.RelatedLoading {
-		a.mu.Unlock()
-		return
-	}
-	a.detail.RelatedLoading = true
-	a.detail.RelatedError = ""
-	a.invalidate()
-	a.mu.Unlock()
-	a.loadRelatedAt(id, generation)
 }
 
 func (a *App) bumpDetailRevisionLocked(key string) {

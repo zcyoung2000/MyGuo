@@ -27,6 +27,22 @@ import (
 
 func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
 	session := s.currentSyncSession()
+	return s.saveProgress(ctx, session, seriesID, episodeID, title, coverURL, episodeNum, totalEpisodes, positionSec, durationSec)
+}
+
+// PlaybackScope is an opaque identity for delayed local progress writes. It
+// contains no credential. Store rechecks it under its transaction lock.
+func (s *Service) PlaybackScope() string { return s.currentSyncSession().scope }
+
+func (s *Service) SaveProgressForScope(ctx context.Context, scope, seriesID, episodeID, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
+	session := s.currentSyncSession()
+	if session.scope != scope {
+		return errSyncSessionChanged
+	}
+	return s.saveProgress(ctx, session, seriesID, episodeID, title, coverURL, episodeNum, totalEpisodes, positionSec, durationSec)
+}
+
+func (s *Service) saveProgress(ctx context.Context, session syncSession, seriesID, episodeID, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
 	seriesID = strings.TrimSpace(seriesID)
 	episodeID = strings.TrimSpace(episodeID)
 	if strings.TrimSpace(title) == "" {
@@ -50,21 +66,14 @@ func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, 
 	if existing, ok := s.store.GetHistoryItem(seriesID); ok && existing.ContentType != 0 {
 		item.ContentType = existing.ContentType
 	}
-	if err := s.store.SaveHistory(item, session.scope); err != nil {
+	if _, err := s.store.SavePlaybackProgressContext(ctx, item, episodeID, session.scope); err != nil {
 		s.historyMu.Unlock()
 		return err
 	}
 	s.cachedHistory = nil
 	s.historyCachedAt = time.Time{}
 	s.historyGeneration++
-	stored, ok := s.store.GetHistoryItem(seriesID)
-	if !ok {
-		stored = item
-	}
-	if err := s.store.QueueHistoryUpload(stored, episodeID, session.scope); err != nil {
-		s.historyMu.Unlock()
-		return err
-	}
+
 	s.historyMu.Unlock()
 
 	s.touchHistoryMutation()
@@ -119,7 +128,11 @@ func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 	s.historyMu.Unlock()
 
 	// 3. Local store is empty (e.g. first app launch with an existing account) -> sync synchronously
-	s.syncRemoteHistory(ctx, s.currentHistoryGeneration())
+	if s.currentSyncSession().cookies != "" {
+		if err := s.syncRemoteHistory(ctx, s.currentHistoryGeneration()); err != nil {
+			return nil, err
+		}
+	}
 
 	s.historyMu.Lock()
 	defer s.historyMu.Unlock()
@@ -283,6 +296,10 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	if s.historyMutationSyncBusy() {
 		return nil
 	}
+	pendingIDs, err := s.store.PendingHistoryMutationIDs(session.scope)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -436,7 +453,7 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 			Intro:         intro,
 			ContentType:   contentType,
 		}
-		if hasLocal && exist.UpdatedAt >= updatedAt {
+		if hasLocal && (pendingIDs[id] || exist.UpdatedAt >= updatedAt) {
 			current = exist
 			// Metadata enrichment must not roll back a newer local position.
 			if current.EpisodeNum == epNum && current.DurationSec <= 0 {
@@ -464,7 +481,7 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	// is waiting for upstream visibility and every remote row can be
 	// represented without synthetic metadata. Otherwise merge now and let the
 	// next revalidation converge.
-	authoritative := processed == 0 && snapshotComplete && resolvedRemote == len(latestByID) && historySettled
+	authoritative := processed == 0 && len(pendingIDs) == 0 && snapshotComplete && resolvedRemote == len(latestByID) && historySettled
 	var storeErr error
 	if authoritative {
 		storeErr = s.store.ReplaceHistoryBatch(remoteSnapshot, session.scope)
@@ -491,7 +508,11 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 }
 
 func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error) {
-	session := s.currentSyncSession()
+	ctx = s.bindSyncSession(ctx)
+	session := ctx.Value(syncSessionContextKey{}).(syncSession)
+	if !s.syncSessionCurrent(session) {
+		return false, errSyncSessionChanged
+	}
 	seriesID = strings.TrimSpace(seriesID)
 	if !mediautil.ValidContentID(seriesID) {
 		return false, fmt.Errorf("收藏 ID 无效")
@@ -507,7 +528,7 @@ func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL,
 		CoverURL:      coverURL,
 		Description:   desc,
 		TotalEpisodes: totalEpisodes,
-	})
+	}, session.scope)
 	if err != nil {
 		return false, err
 	}
@@ -516,9 +537,6 @@ func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL,
 	s.favCachedAt = time.Time{}
 	s.favGeneration++
 	s.favMu.Unlock()
-	if err := s.store.QueueFavoriteOp(seriesID, wasAdded, session.scope); err != nil {
-		return wasAdded, err
-	}
 	s.touchFavoriteMutation()
 	s.triggerPendingFavoriteSync()
 	return wasAdded, nil
@@ -885,7 +903,7 @@ func (s *Service) ToggleLike(ctx context.Context, seriesID, episodeID, title, co
 		Title:      title,
 		CoverURL:   coverURL,
 		EpisodeNum: episodeNum,
-	}, liked)
+	}, liked, session.scope)
 	if err == nil {
 		s.cachedLikes = nil
 		s.likeCachedAt = time.Time{}
@@ -1056,9 +1074,9 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 		}
 
 		var res struct {
-			Code    int  `json:"code"`
+			Code    *int `json:"code"`
 			HasMore bool `json:"has_more"`
-			Data    struct {
+			Data    *struct {
 				HasMore       bool `json:"has_more"`
 				NextOffset    int  `json:"next_offset"`
 				MixedDataList []struct {
@@ -1088,8 +1106,8 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 		if err := json.Unmarshal(body, &res); err != nil {
 			return nil, err
 		}
-		if res.Code != 0 {
-			return nil, fmt.Errorf("点赞接口返回 code %d", res.Code)
+		if res.Code == nil || *res.Code != 0 || res.Data == nil || res.Data.MixedDataList == nil {
+			return nil, fmt.Errorf("点赞接口返回不完整或业务失败")
 		}
 
 		for _, row := range res.Data.MixedDataList {
@@ -1591,7 +1609,7 @@ func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]
 		if err != nil {
 			return nil, err
 		}
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		if err != nil {
 			return nil, err
@@ -1601,8 +1619,8 @@ func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]
 		}
 
 		var res struct {
-			Code int `json:"code"`
-			Data struct {
+			Code *int `json:"code"`
+			Data *struct {
 				HasMore    bool `json:"has_more"`
 				NextOffset int  `json:"next_offset"`
 				Items      []struct {
@@ -1626,8 +1644,8 @@ func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]
 		if err := json.Unmarshal(body, &res); err != nil {
 			return nil, err
 		}
-		if res.Code != 0 {
-			return nil, fmt.Errorf("reservation API code %d", res.Code)
+		if res.Code == nil || *res.Code != 0 || res.Data == nil || res.Data.Items == nil {
+			return nil, fmt.Errorf("预约接口返回不完整或业务失败")
 		}
 
 		for _, it := range res.Data.Items {
@@ -1685,8 +1703,11 @@ func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]
 			})
 		}
 
-		if !res.Data.HasMore || res.Data.NextOffset <= offset {
+		if !res.Data.HasMore {
 			return results, nil
+		}
+		if len(res.Data.Items) == 0 || res.Data.NextOffset <= offset {
+			return nil, fmt.Errorf("预约接口分页不完整")
 		}
 		offset = res.Data.NextOffset
 	}

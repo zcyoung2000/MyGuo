@@ -66,7 +66,7 @@ func TestResponsiveDramaGeometryMatchesAcrossNativePages(t *testing.T) {
 	}
 }
 
-func TestNativePagesShareHeaderRhythm(t *testing.T) {
+func TestNativePagesShareNavigationRhythm(t *testing.T) {
 	tests := []struct {
 		view    string
 		title   string
@@ -82,7 +82,7 @@ func TestNativePagesShareHeaderRhythm(t *testing.T) {
 			test.prepare(app)
 			app.OpenView(test.view)
 			tt := ui.NewTester(app.Render, 1200, 800)
-			header, headerOK := tt.AccessByRole(ui.RoleHeading, test.title)
+			header, headerOK := tt.AccessByRole(ui.RoleToolbar, "页面导航")
 			cardTitle := map[string]string{"rank": "榜单剧", "new": "新剧样本", "search": "搜索样本"}[test.view]
 			card, cardOK := tt.Find(cardTitle)
 			if !headerOK || !cardOK {
@@ -180,7 +180,7 @@ func TestDiscoverPageScrollAndCollapsedFilters(t *testing.T) {
 		}
 	}
 	collapsedPage, _ := tt.Find("discover-page-scroll")
-	if collapsedPage.H < 850 {
+	if collapsedPage.H < 1000-collapsedPage.Y-16 {
 		t.Fatalf("collapsed page scroll is too short: %.1f", collapsedPage.H)
 	}
 	secondCard, secondOK := tt.Find("找剧结果9")

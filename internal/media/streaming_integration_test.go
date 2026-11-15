@@ -344,12 +344,28 @@ func testAdaptivePreloadStreaming(t *testing.T, ms *MediaServer, release func())
 	if statuses[0].Complete || statuses[1].Complete || hlsPlaylistComplete(current.playlistPath) {
 		t.Fatal("upstream completed before the adaptive scheduling assertions")
 	}
-	// Promoting the next video must reuse its existing writer and cache. Old
-	// foreground and speculative work are canceled as the window moves/shrinks.
+	// A real decoder consumed the current prefix. Promotion must retain it
+	// briefly so a reverse swipe can reuse the same writer and cached bytes.
+	current.touchMediaRequest()
 	key := PrefetchTaskKey(PrefetchTask{EpisodeID: items[0].EpisodeID, Quality: "720p"})
 	ms.hlsMu.Lock()
 	promoted := ms.hlsStreams[key]
 	ms.hlsMu.Unlock()
+	version++
+	ms.SetFeedPreloadWindow(version, items[0].EpisodeID, "720p", items[1:2])
+	select {
+	case <-current.done:
+		t.Fatal("promotion canceled the recently played previous video")
+	default:
+	}
+	version++
+	ms.SetFeedPreloadWindow(version, "710000000000001", "720p", items[:1])
+	ms.hlsMu.Lock()
+	retained := ms.hlsStreams[current.key]
+	ms.hlsMu.Unlock()
+	if retained != current {
+		t.Fatal("reverse swipe restarted the previous writer")
+	}
 	version++
 	ms.SetFeedPreloadWindow(version, items[0].EpisodeID, "720p", items[1:2])
 	version++

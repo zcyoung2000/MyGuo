@@ -6,10 +6,23 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// posterRow is a row inside a native List, which retains its item anchor as
+// pages append and row heights are measured. Virtual rows do not animate their
+// layout positions: scrolling owns that motion (MyGo v0.9.1).
+func (a *App) posterRow(c *ui.Context, items []CatalogItem, width float32) {
+	cardWidth := dramaCardWidth(width)
+	height := a.collectionRowHeight(c, cardWidth, items) + cardWidth*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap
+	ui.Row(c).FillWidth().Gap(dramaCardGap).Height(height).Children(func() {
+		for _, item := range items {
+			a.fixedHeightCatalogCardSized(c, item, cardWidth, height)
+		}
+	})
+}
+
 // cardGrid gives posters the full column width and preserves their 3:4 ratio.
 // Read the host's last layout, just as GridView does when fitting its columns.
 func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, after func(CatalogItem)) ui.Element {
-	host := ui.Column(c.Key(key)).MinWidth(0).MinHeight(0)
+	host := ui.Column(c.Key(key)).MinWidth(0).MinHeight(0).Transition(resultTransition)
 	width := host.Bounds().W
 	baseTheme := *c.Theme()
 	gridTheme := baseTheme
@@ -23,7 +36,7 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 	host.Children(func() {
 		c.SetTheme(&gridTheme)
 		defer c.SetTheme(&baseTheme)
-		grid := ui.GridView(c, state, len(items), 160, height, func(index int) {
+		grid := ui.GridView(c.Key(fmt.Sprintf("result:%d", a.collectionVersion())), state, len(items), 160, height, func(index int) {
 			c.SetTheme(&baseTheme)
 			defer c.SetTheme(&gridTheme)
 			item := items[index]
@@ -32,7 +45,7 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 				after(item)
 			}
 		})
-		grid.Scrollbars(false)
+		grid.Scrollbars(false).Transition(resultTransition)
 		if scroll == nil {
 			grid.Grow(1)
 		} else {
@@ -40,6 +53,24 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 		}
 	})
 	return host
+}
+
+func (a *App) collectionVersion() uint64 {
+	switch a.view {
+	case "search":
+		return a.searchResultVersion
+	case "new":
+		return a.releaseResultVersion
+	case "history":
+		return a.libraryResultVersion[libraryHistory]
+	case "favorites":
+		return a.libraryResultVersion[libraryFavorites]
+	case "likes":
+		return a.libraryResultVersion[libraryLikes]
+	case "reservations":
+		return a.libraryResultVersion[libraryReservations]
+	}
+	return 0
 }
 
 const (

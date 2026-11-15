@@ -54,3 +54,23 @@ func (s *Service) sessionForRequest(ctx context.Context) (syncSession, error) {
 func (s *Service) syncSessionCurrent(session syncSession) bool {
 	return session.scope == s.currentSyncSession().scope
 }
+
+// BindPlaybackContext keeps delayed native interaction requests on the
+// identity that owned the scene, including requests not started yet.
+func (s *Service) BindPlaybackContext(ctx context.Context, scope string) context.Context {
+	session := s.currentSyncSession()
+	if session.scope != scope {
+		session = syncSession{scope: scope}
+	}
+	return context.WithValue(ctx, syncSessionContextKey{}, session)
+}
+func (s *Service) PlaybackCredentials(ctx context.Context) (string, string, error) {
+	session, ok := ctx.Value(syncSessionContextKey{}).(syncSession)
+	if !ok {
+		session = s.currentSyncSession()
+	}
+	if !s.syncSessionCurrent(session) {
+		return "", "", errSyncSessionChanged
+	}
+	return session.cookies, session.token, nil
+}

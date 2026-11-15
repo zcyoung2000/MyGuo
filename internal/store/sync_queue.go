@@ -70,6 +70,30 @@ func (s *Store) SetSyncScope(scope string) {
 	s.mu.Unlock()
 }
 
+// PendingHistoryMutationIDs includes intents waiting for retry as well as
+// immediately runnable ones. Neither may be removed by a remote snapshot.
+func (s *Store) PendingHistoryMutationIDs(scope string) (map[string]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT series_id FROM pending_history_uploads WHERE scope = ?
+		UNION SELECT series_id FROM pending_history_deletes WHERE scope = ?
+	`, scope, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
 // Caller holds s.mu. Explicit scopes let an in-flight task keep its original
 // identity even if another request changes the service's active credentials.
 func (s *Store) syncScopeLocked(scopes []string) string {

@@ -127,7 +127,7 @@ func TestShelfDeadlineDoesNotBlockOrDisguiseCoreDetail(t *testing.T) {
 	app.OpenDetail("123456")
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
-	if !tt.HasText("短剧详情") {
+	if !tt.HasText("详情内容") {
 		t.Fatalf("core detail loading state missing: %v", tt.Texts())
 	}
 
@@ -163,9 +163,14 @@ func TestShelfDeadlineDoesNotBlockOrDisguiseCoreDetail(t *testing.T) {
 	if !tt.HasText("播放 / 继续观看") {
 		t.Fatalf("core detail controls missing: %v", tt.Texts())
 	}
-	if !tt.HasText("正在加载...") && !tt.HasText("重试") {
-		t.Fatalf("wide detail did not render independent supplement state: %v", tt.Texts())
+	if err := tt.Click("相关作品"); err != nil {
+		t.Fatal(err)
 	}
+	tt.Frame()
+	if !tt.HasText("同一剧本改编") {
+		t.Fatalf("supplement region missing: %v", tt.Texts())
+	}
+	assertQuietLoading(t, tt)
 
 	screenshotDir := "/tmp/mygo-ui-bugs/regression"
 	if err := os.MkdirAll(screenshotDir, 0755); err != nil {

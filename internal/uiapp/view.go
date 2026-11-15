@@ -3,10 +3,8 @@ package uiapp
 import (
 	_ "embed"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -64,6 +62,16 @@ var (
 func (a *App) Render(c *ui.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// The framework also reads tracked scroll state after Render returns. Reset
+	// it on this UI thread, never from a background navigation request.
+	if a.detailScrollReset {
+		a.detailScroll = ui.ScrollState{}
+		a.detailScrollReset = false
+	}
+	if a.catalogScrollReset {
+		a.discoverPageScroll.Y = 0
+		a.catalogScrollReset = false
+	}
 	a.beginArtworkFrame()
 	theme := hongguoTheme(c)
 	c.SetTheme(&theme)
@@ -72,6 +80,10 @@ func (a *App) Render(c *ui.Context) {
 		width = defaultSidebarWidth
 	}
 	ui.Box(c.Key("app-shell")).Fill().Children(func() {
+		if a.playerFullscreen && a.hostedScene() {
+			a.renderBody(c)
+			return
+		}
 		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().Background(c.Theme().Background).OnChange(func() { a.SetSidebarWidth(width) })
 	})
 }
@@ -156,41 +168,9 @@ func (a *App) hostedScene() bool {
 	return a.media != nil && (a.mediaOn || a.view == "recommend")
 }
 
-// Shared MyGo motion primitives keep feedback under 160 ms, reserve longer
-// springs for surfaces, and animate only the channels that actually change.
-// ElementTransition itself honors the desktop Reduce Motion preference.
-var feedbackTransition = ui.ElementTransition{
-	Duration: 120 * time.Millisecond,
-	Colors:   true,
-}
-
-var selectionTransition = ui.ElementTransition{
-	Duration: 160 * time.Millisecond,
-	Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
-	Colors:   true,
-}
-
-var layoutTransition = ui.ElementTransition{
-	Duration: 180 * time.Millisecond,
-	Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
-	Position: true,
-	Size:     true,
-	Colors:   true,
-}
-
-// Match the frontend's feedback token: short, interruptible, and paint-only.
-var (
-	pageTransition = ui.ElementTransition{
-		Duration: 160 * time.Millisecond,
-		Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
-		Colors:   true,
-		Enter:    &ui.Motion{Opacity: 0},
-	}
-)
-
 func (a *App) renderBody(c *ui.Context) {
 	// Keep this parent stable, but give native pages and the media surface distinct
-	// identities. A removed WebView must not retain a hole over the next page.
+	// identities. Removing the native media surface reveals the next page.
 	ui.Column(c.Key("content-host")).Fill().MinWidth(0).MinHeight(0).Background(c.Theme().Background).Children(func() {
 		if a.playerFixture {
 			ui.Column(c.Key("fixture-frame")).Fill().Children(func() {
@@ -200,15 +180,16 @@ func (a *App) renderBody(c *ui.Context) {
 		}
 		if a.hostedScene() {
 			page := ui.Column(c.Key("hosted-page")).Fill().MinWidth(0).MinHeight(0)
-			page.Transition(pageTransition).Children(func() {
-				ui.WebView(c.Key("media-surface"), a.media.WebView()).Fill().MinWidth(0).MinHeight(0)
+			page.Transition(hostedPageTransition).Children(func() {
+				a.renderNativePlayer(c)
 			})
 			if a.view == "recommend" && !a.mediaOn {
 				a.renderFeedChannels(c)
 			}
 			return
 		}
-		page := ui.Column(c.Key("native-page:"+a.view+":"+a.seriesID)).Fill().MinWidth(0).MinHeight(0).Padding(42, 16, 12, 16).Gap(10)
+		a.renderPageNavigation(c)
+		page := ui.Column(c.Key("native-page:"+a.view+":"+a.seriesID)).Grow(1).FillWidth().MinWidth(0).MinHeight(0).Padding(8, 16, 12, 16).Gap(10)
 		page.Transition(pageTransition).Children(func() {
 			if a.error != "" {
 				ui.Text(c, a.error).TextColor(c.Theme().Danger)
@@ -286,13 +267,9 @@ func (a *App) pillChip(c *ui.Context, key, label string, selected bool, onClick 
 		Role(ui.RoleButton).Label(label).Focusable().AlignItems(ui.Center).Justify(ui.Center).
 		Transition(selectionTransition)
 	if selected {
-		chip.LinearGradient(ui.LinearGradient{
-			From:  ui.Hex("#d91b42"),
-			To:    ui.Hex("#b81235"),
-			Angle: 135,
-		}).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
+		chip.LinearGradient(selectionFill()).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
 	} else {
-		chip.Material(glass.Glass{Interactive: true}).Border(1, ui.RGBA(255, 255, 255, 0.08))
+		chip.Material(pageChromeMaterial()).Border(1, ui.RGBA(255, 255, 255, 0.08))
 		hoverBackground(chip, ui.Transparent, ui.Transparent)
 	}
 	if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
@@ -320,23 +297,29 @@ type slidingTabItem struct {
 }
 
 func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []slidingTabItem, selectedKey string, onSelect func(string)) {
-	track := ui.Row(c.Key(key)).AlignSelf(ui.Start).Padding(3).Gap(2).Radius(10).
-		Material(glass.Glass{}).
-		Border(1, ui.RGBA(255, 255, 255, 0.08)).
-		AlignItems(ui.Center)
+	selectedIndex := 0
+	for i, tab := range tabs {
+		if tab.Key == selectedKey {
+			selectedIndex = i
+		}
+	}
+	parts := ui.SegmentedBase(c.Key(key), &selectedIndex, len(tabs))
+	track := parts.Track.Label("列表筛选").AlignSelf(ui.Start).Padding(4, 6).Gap(4).Radius(24).
+		Material(pageChromeMaterial()).
+		Border(1, ui.RGBA(255, 255, 255, 0.12)).
+		AlignItems(ui.Center).OnChange(func() {
+		if onSelect != nil {
+			onSelect(tabs[selectedIndex].Key)
+		}
+	})
 	track.Children(func() {
-		for _, tab := range tabs {
+		for index, tab := range tabs {
 			tKey, tLabel := tab.Key, tab.Label
 			selected := selectedKey == tKey
-			chip := ui.Row(c.Key(key+":"+tKey)).Height(28).Padding(0, 16).Radius(7).
-				Role(ui.RoleButton).Label(tLabel).AlignItems(ui.Center).Justify(ui.Center)
+			chip := parts.Segment(index).Height(28).Padding(0, 16).Radius(18).
+				Label(tLabel).AlignItems(ui.Center).Justify(ui.Center)
 			if !selected {
 				hoverBackground(chip, ui.Transparent, ui.RGBA(255, 255, 255, 0.08))
-			}
-			if chip.Clicked() {
-				if onSelect != nil {
-					onSelect(tKey)
-				}
 			}
 			chip.Children(func() {
 				// 1. In-flow sizer: guarantees chip maintains its natural width without collapsing
@@ -345,15 +328,11 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 				})
 				// 2. Pure background sliding glider: slides across tabs without moving the text
 				if selected {
-					ui.Box(c.Key("sliding-pill:"+group)).Absolute().Fill().Radius(7).
-						LinearGradient(ui.LinearGradient{
-							From:  ui.Hex("#d91b42"),
-							To:    ui.Hex("#b81235"),
-							Angle: 135,
-						}).Shadow(0, 1, 4, 0, ui.RGBA(0, 0, 0, 0.35)).
+					ui.Box(c.Key("sliding-pill:"+group)).Absolute().Fill().Radius(18).
+						LinearGradient(selectionFill()).Shadow(0, 1, 4, 0, ui.RGBA(0, 0, 0, 0.35)).
 						Transition(ui.ElementTransition{
-							Duration: drawerTransition.Duration,
-							Ease:     drawerTransition.Ease,
+							Duration: selectionTransition.Duration,
+							Ease:     selectionTransition.Ease,
 							Match:    slidingTabMatch{group: group},
 						})
 				}
@@ -361,7 +340,7 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 				ui.Row(c.Key("tab-label:" + group + ":" + tKey)).Absolute().Fill().
 					AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 					txt := ui.Text(c, tLabel).FontSize(12).SingleLine().
-						Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Colors: true})
+						Transition(selectionTransition).ContentTransition(textChange)
 					if selected {
 						txt.Bold().TextColor(ui.Hex("#ffffff"))
 					} else {
@@ -373,121 +352,6 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 	})
 }
 
-func (a *App) renderCatalog(c *ui.Context) {
-	catalog := a.catalog
-	a.updateDiscoverFiltersOnScroll(a.discoverPageScroll.Y)
-	_, viewportHeight := c.Size()
-	if catalog.HasMore && !catalog.Loading && !catalog.LoadingMore && catalog.Error == "" &&
-		a.discoverPageScroll.MaxY-a.discoverPageScroll.Y <= max(viewportHeight, 800) {
-		go a.LoadMoreCatalog()
-	}
-
-	a.renderCatalogHeader(c)
-	scroll := ui.Scroll(c.Key("discover-page-scroll")).Scrollbars(false).Grow(1).Gap(10).
-		Role(ui.RoleGroup).Label("discover-page-scroll").TrackScroll(&a.discoverPageScroll)
-	scroll.Children(func() {
-		a.renderCatalogControls(c, catalog)
-		if catalog.Loading && len(catalog.Items) == 0 {
-			ui.Column(c.Key("discover-loading")).Grow(1).Gap(14).Children(func() {
-				ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
-				a.filterSkeleton(c)
-				a.gridSkeleton(c, 12, a.gridContentWidth(c))
-			})
-			return
-		}
-		if catalog.Error != "" {
-			a.errorView(c, catalog.Error, func() { go a.loadCatalog(len(catalog.Items) > 0) })
-			if len(catalog.Items) > 0 {
-				return
-			}
-		}
-		if len(catalog.Items) == 0 {
-			a.emptyView(c, "暂无短剧", "换个筛选条件试试")
-			return
-		}
-		if a.catalogGrid == nil {
-			a.catalogGrid = &ui.GridState{}
-		}
-		configureDramaGrid(a.catalogGrid, catalog.Items)
-		width := a.gridContentWidth(c)
-		columns := dramaColumns(width)
-		cardWidth := dramaCardWidth(width)
-		sampleItems := catalog.Items
-		if len(sampleItems) > 60 {
-			sampleItems = sampleItems[:60]
-		}
-		rowHeight := a.collectionRowHeight(c, cardWidth, sampleItems) + cardWidth*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap
-		totalRows := (len(catalog.Items) + columns - 1) / columns
-
-		filterOffset := float32(420)
-		if a.discoverFilterState == discoverCollapsed {
-			filterOffset = 54
-		}
-		gridTopOffset := filterOffset + 10
-
-		relY := a.discoverPageScroll.Y - gridTopOffset
-		if relY < 0 {
-			relY = 0
-		}
-		startRow := int(relY / rowHeight)
-		if startRow > 2 {
-			startRow -= 2
-		} else {
-			startRow = 0
-		}
-		if startRow >= totalRows {
-			startRow = max(0, totalRows-1)
-		}
-
-		_, winH := c.Size()
-		if winH <= 0 {
-			winH = 800
-		}
-		visibleRows := int((winH + rowHeight - 1) / rowHeight)
-		endRow := startRow + visibleRows + 4
-		if endRow > totalRows {
-			endRow = totalRows
-		}
-
-		startIdx := startRow * columns
-		if startIdx > len(catalog.Items) {
-			startIdx = len(catalog.Items)
-		}
-		endIdx := endRow * columns
-		if endIdx > len(catalog.Items) {
-			endIdx = len(catalog.Items)
-		}
-		displayItems := catalog.Items[startIdx:endIdx]
-
-		topSpacerHeight := float32(startRow) * rowHeight
-		bottomSpacerHeight := float32(totalRows-endRow) * rowHeight
-
-		if topSpacerHeight > 0 {
-			ui.Box(c.Key("catalog-grid-top-spacer")).Height(topSpacerHeight)
-		}
-		// The page owns scrolling; a nested GridView would consume wheel input
-		// before the page can reach its pagination threshold.
-		ui.Column(c.Key("catalog-grid")).Gap(0).Children(func() {
-			for first := 0; first < len(displayItems); first += columns {
-				ui.Row(c.Key(displayItems[first].ID)).Gap(dramaCardGap).Height(rowHeight).Children(func() {
-					for index := first; index < min(first+columns, len(displayItems)); index++ {
-						a.catalogCardSized(c, displayItems[index], cardWidth)
-					}
-				})
-			}
-		})
-		if bottomSpacerHeight > 0 {
-			ui.Box(c.Key("catalog-grid-bottom-spacer")).Height(bottomSpacerHeight)
-		}
-		a.scrollLoading(c, catalog.LoadingMore)
-	})
-}
-
-func (a *App) renderCatalogHeader(c *ui.Context) {
-	pageHeader(c, "发现短剧")
-	a.renderSearchBar(c)
-}
-
 func (a *App) catalogSectionHeight(c *ui.Context, items []CatalogItem, width float32) float32 {
 	columns := dramaColumns(width)
 	cardWidth := dramaCardWidth(width)
@@ -497,136 +361,6 @@ func (a *App) catalogSectionHeight(c *ui.Context, items []CatalogItem, width flo
 
 func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, after func(CatalogItem)) ui.Element {
 	return a.sharedCardGrid(c, key, state, scroll, items, extra, after)
-}
-
-func (a *App) catalogFilterSummary(catalog Catalog) string {
-	var selected []string
-	if catalog.GenreIndex >= 0 && catalog.GenreIndex < len(catalog.Genre) {
-		selected = append(selected, catalog.Genre[catalog.GenreIndex])
-	}
-	for rowIndex, row := range catalog.Filters {
-		if rowIndex >= len(catalog.Selection) {
-			continue
-		}
-		optionIndex := catalog.Selection[rowIndex]
-		if optionIndex <= 0 || optionIndex >= len(row.Options) {
-			continue
-		}
-		selected = append(selected, row.Options[optionIndex].Label)
-	}
-	if len(selected) == 0 {
-		return "筛选"
-	}
-	return "筛选 · " + strings.Join(selected, " · ")
-}
-
-const (
-	discoverFilterCollapseThreshold float32 = 48
-	discoverFilterExpandThreshold   float32 = 4
-)
-
-func (a *App) updateDiscoverFiltersOnScroll(y float32) {
-	if y > discoverFilterCollapseThreshold {
-		a.discoverFilterState = discoverCollapsed
-	} else if y <= discoverFilterExpandThreshold {
-		a.discoverFilterState = discoverExpanded
-	}
-}
-
-func (a *App) toggleCatalogFilters() {
-	if a.discoverFilterState == discoverExpanded {
-		a.discoverFilterState = discoverCollapsed
-	} else {
-		a.discoverFilterState = discoverExpanded
-	}
-	a.invalidate()
-}
-
-func (a *App) renderCatalogFilterHeader(c *ui.Context, catalog Catalog) {
-	summary := a.catalogFilterSummary(catalog)
-	header := ui.Row(c.Key("catalog-filter-header")).Height(34).Padding(0, 10).Radius(8).
-		AlignItems(ui.Center).Gap(8).Transition(layoutTransition)
-	header.Children(func() {
-		ui.Text(c, summary).FontSize(13).Bold().TextColor(ui.RGBA(255, 255, 255, 0.9))
-	})
-}
-
-func (a *App) renderCatalogControls(c *ui.Context, catalog Catalog) {
-	collapsed := a.discoverFilterState == discoverCollapsed
-	card := ui.Column(c.Key("catalog-filter-card")).Padding(10, 14).Radius(14).
-		Material(glass.Glass{Clarity: 0.15}).
-		Border(1, ui.RGBA(255, 255, 255, 0.08)).
-		Transition(ui.ElementTransition{
-			Duration: 260 * time.Millisecond,
-			Ease:     ui.CubicBezier(0.22, 1, 0.36, 1),
-			Position: true,
-			Size:     true,
-			Colors:   true,
-			Enter:    &ui.Motion{Opacity: 0},
-			Exit:     &ui.Motion{Opacity: 0},
-		})
-	card.Children(func() {
-		a.renderCatalogFilterHeader(c, catalog)
-		if collapsed {
-			return
-		}
-		ui.Column(c.Key("catalog-filter-content")).Padding(4, 0, 0, 0).Gap(10).Children(func() {
-			a.renderFilterRows(c, catalog)
-		})
-	})
-}
-
-func (a *App) renderFilterRows(c *ui.Context, catalog Catalog) {
-	ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
-		ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-		ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-			for index, genre := range catalog.Genre {
-				gIndex := index
-				selected := gIndex == catalog.GenreIndex
-				a.pillChip(c, "genre:"+genre, genre, selected, func() {
-					go a.SelectGenre(gIndex)
-				})
-			}
-		})
-	})
-	for rowIndex, row := range catalog.Filters {
-		rIdx := rowIndex
-		rTitle := row.Title
-		rOptions := row.Options
-		selected := 0
-		if rIdx < len(catalog.Selection) {
-			selected = catalog.Selection[rIdx]
-		}
-		ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
-			ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-			ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-				for optIndex, opt := range rOptions {
-					oIdx := optIndex
-					oLabel := opt.Label
-					a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
-						go a.SelectFilter(rIdx, oIdx)
-					})
-				}
-			})
-		})
-	}
-}
-
-func (a *App) maybeLoadMore(y, maxY float32, hasMore, loading bool, load func()) {
-	if maxY <= 0 || y < maxY*0.85 || !hasMore || loading {
-		return
-	}
-	go load()
-}
-
-func (a *App) scrollLoading(c *ui.Context, loading bool) {
-	if !loading {
-		return
-	}
-	ui.Row(c).Padding(8).Justify(ui.Center).Children(func() {
-		ui.Spinner(c)
-		ui.Text(c, "正在加载...").TextColor(c.Theme().TextMuted)
-	})
 }
 
 func formatRelativeTime(ts int64) string {
@@ -705,21 +439,21 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 			a.image(c, item.CoverURL, width, width*4/3)
 			if topLeftBadge != "" {
 				ui.Row(c.Key("badge-tl")).Absolute().Top(6).Left(6).
-					Padding(2, 6).Radius(4).Material(darkGlassMaterial(false)).
+					Padding(2, 6).Radius(4).Material(artworkMaterial()).
 					Children(func() {
 						ui.Text(c, topLeftBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
 			}
 			if bottomRightBadge != "" {
 				ui.Row(c.Key("badge-br")).Absolute().Bottom(6).Right(6).
-					Padding(2, 6).Radius(4).Material(darkGlassMaterial(false)).
+					Padding(2, 6).Radius(4).Material(artworkMaterial()).
 					Children(func() {
 						ui.Text(c, bottomRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
 			}
 			if topRightBadge != "" {
 				ui.Row(c.Key("badge-tr")).Absolute().Top(catalogOverlayInset).Right(catalogOverlayInset).
-					Padding(2, 6).Radius(4).Material(darkGlassMaterial(false)).
+					Padding(2, 6).Radius(4).Material(artworkMaterial()).
 					Children(func() {
 						ui.Text(c, topRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
@@ -731,7 +465,7 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 					Height(catalogOverlayHeight).Padding(0, 12).Radius(catalogOverlayHeight/2).
 					Shadow(0, 3, 8, 0, ui.RGBA(0, 0, 0, 0.22)).
 					AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label).
-					Material(darkGlassMaterial(true))
+					Material(artworkMaterial())
 				if overlay.Clicked() {
 					libraryTab := libraryHistory
 					switch a.view {
@@ -745,7 +479,7 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 					go a.RemoveLibraryItem(libraryTab, item)
 				}
 				overlay.Children(func() {
-					ui.Text(c, label).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.92))
+					ui.Text(c, label).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.92)).ContentTransition(textChange)
 				})
 			}
 		})
@@ -817,12 +551,12 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 func (a *App) renderSearchBar(c *ui.Context) {
 	query := a.query
 	bar := ui.Row(c.Key("search-bar-wrap")).Height(38).Radius(19).
-		Background(ui.RGBA(29, 31, 43, 255)).
+		Material(pageChromeMaterial()).
 		Border(1, ui.RGBA(255, 255, 255, 0.08)).
 		Padding(0, 14).AlignItems(ui.Center).Gap(10)
 	bar.Children(func() {
 		ui.Icon(c, searchIcon).Size(16, 16).TextColor(ui.RGBA(255, 255, 255, 0.50))
-		ui.TextInputBase(c.Key("search-query"), &query).Grow(1).
+		ui.TextInputBase(c.Key("search-query"), &query).Search().Grow(1).
 			Placeholder("搜索短剧、角色、演员...").
 			Label("搜索短剧").
 			OnTextKey(a.searchTextKey).
@@ -867,21 +601,22 @@ func (a *App) renderSearchBar(c *ui.Context) {
 }
 
 func (a *App) renderSearch(c *ui.Context) {
-	pageHeader(c, "搜索")
 	a.renderSearchBar(c)
 	search := a.search
 	if a.query == "" && len(search.Items) == 0 && !search.Loading && search.Error == "" {
 		a.emptyView(c, "搜索短剧", "输入剧名、角色或演员，发现想看的短剧")
 		return
 	}
-	if search.Loading {
-		ui.Text(c, "正在搜索...").TextColor(c.Theme().TextMuted)
+	if search.Loading && len(search.Items) == 0 {
 		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 	if search.Error != "" {
-		a.errorView(c, search.Error, func() { go a.SearchSubmitted() })
-		return
+		if len(search.Items) == 0 {
+			a.errorView(c, search.Error, func() { go a.SearchSubmitted() })
+			return
+		}
+		inlineError(c, search.Error, func() { go a.SearchSubmitted() })
 	}
 	if len(search.Items) == 0 {
 		a.emptyView(c, "暂无搜索结果", "请尝试其他关键词")
@@ -906,17 +641,6 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		library, grid = state.Reserved, 3
 	}
 
-	switch tab {
-	case libraryHistory:
-		pageHeader(c, "观看历史")
-	case libraryFavorites:
-		pageHeader(c, "我的收藏")
-	case libraryLikes:
-		pageHeader(c, "我的点赞")
-	case libraryReservations:
-		pageHeader(c, "我的预约")
-	}
-
 	if tab == libraryHistory {
 		ui.Row(c.Key("history-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
@@ -933,12 +657,12 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				query := a.historyQuery
 				sWrap := ui.Row(c.Key("hist-search")).Height(32).Width(200).Radius(16).
-					Background(ui.RGBA(24, 25, 36, 255)).
+					Material(pageChromeMaterial()).
 					Border(1, ui.RGBA(255, 255, 255, 0.08)).
 					Padding(0, 10).AlignItems(ui.Center).Gap(6)
 				sWrap.Children(func() {
 					ui.Icon(c, searchIcon).Size(14, 14).TextColor(ui.RGBA(255, 255, 255, 0.50))
-					ui.TextInputBase(c.Key("hist-search-input"), &query).Grow(1).
+					ui.TextInputBase(c.Key("hist-search-input"), &query).Search().Grow(1).
 						Placeholder("搜索历史剧名...").Label("搜索历史").
 						OnChange(func() { a.SetHistoryQuery(query) })
 					if query != "" {
@@ -999,7 +723,6 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		})
 	}
 	if library.Loading && len(library.Items) == 0 {
-		ui.Text(c, "正在加载本地数据...").TextColor(c.Theme().TextMuted)
 		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
@@ -1054,406 +777,12 @@ func reservationCounts(items []CatalogItem) (int, int) {
 	return online, pending
 }
 
-func (a *App) renderDetail(c *ui.Context) {
-	detail := a.detail
-	if detail.Loading && detail.Title == "" {
-		a.detailSkeleton(c)
-		return
-	}
-	if detail.Error != "" && detail.Title == "" {
-		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
-		return
-	}
-	pageHeader(c, "短剧详情")
-	wide := detailTwoColumn(c.Size())
-	content := ui.Box(c.Key("detail-content"))
-	if wide {
-		content.Fill()
-	} else {
-		content.Grow(1)
-	}
-	content.Children(func() {
-		scroll := ui.Scroll(c.Key("detail-page-scroll")).Scrollbars(false).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
-		if wide {
-			scroll.Role(ui.RoleGroup).Label("detail-page-scroll")
-		}
-		scroll.Children(func() {
-			ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
-				backBtn := ui.Row(c.Key("detail-nav-back")).Height(30).Padding(0, 14).Radius(7).
-					Material(glass.Glass{Interactive: true}).
-					Border(1, ui.RGBA(255, 255, 255, 0.12)).
-					AlignItems(ui.Center).Role(ui.RoleButton).Label("返回短剧列表").Focusable()
-				hoverBackground(backBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.10))
-				if backBtn.Clicked() || backBtn.Shortcut(0, ui.KeyEnter) || backBtn.Shortcut(0, ui.KeySpace) {
-					go a.NavigateHistory(-1)
-				}
-				backBtn.Children(func() {
-					ui.Text(c, "← 返回").FontSize(13).TextColor(ui.Hex("#ffffff")).Bold()
-				})
-			})
-
-			layout := ui.Row(c.Key("detail-layout")).Gap(28).AlignItems(ui.Start)
-			if wide {
-				layout.FillWidth()
-			}
-			layout.Children(func() {
-				left := ui.Column(c.Key("detail-left")).Gap(16)
-				right := ui.Column(c.Key("detail-right")).Gap(16)
-				if wide {
-					left = ui.Scroll(c).Scrollbars(false)
-					left.TrackScroll(&a.detailLeftScroll)
-					left.Gap(16).Label("detail-left-scroll").WidthPercent(48).MinWidth(340).Height(760)
-					right = ui.Scroll(c).Scrollbars(false)
-					right.TrackScroll(&a.detailEpisodesScroll)
-					right.Gap(16).Label("detail-right-scroll").WidthPercent(52).MinWidth(380).Height(700)
-				} else {
-					left.FillWidth()
-					right.FillWidth()
-				}
-				left.Children(func() {
-					ui.Row(c.Key("detail-hero-row")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
-						a.image(c, detail.CoverURL, 160, 220)
-						header := ui.Column(c.Key("detail-hero-info")).Grow(1).Gap(8)
-						header.Children(func() {
-							ui.Text(c, detail.Title).FontSize(24).Bold().TextColor(ui.Hex("#ffffff"))
-							if len(detail.Tags) > 0 {
-								ui.Text(c, strings.Join(detail.Tags, " · ")).FontSize(13).TextColor(c.Theme().TextMuted)
-							}
-							stats := detailProgressPieces(detail.Heat, formatCountText(detail.FollowCount)+"人在追", formatCountText(detail.LikeCount)+"赞")
-							if len(stats) > 0 {
-								ui.Text(c, strings.Join(stats, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
-							}
-							if detail.PublishText != "" {
-								ui.Text(c, detail.PublishText).FontSize(12).TextColor(c.Theme().TextMuted)
-							}
-							if detail.Description != "" {
-								ui.Text(c.Key("detail-description"), detail.Description).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.82))
-							}
-							playStats := detailProgressPieces(detail.StatusText, fmt.Sprintf("%d次播放", detail.PlayCount))
-							if len(playStats) > 0 {
-								ui.Text(c, strings.Join(playStats, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
-							}
-							ui.Row(c.Key("detail-actions")).Gap(10).AlignItems(ui.Center).Padding(6, 0, 0, 0).Children(func() {
-								if detail.Upcoming {
-									ui.Row(c).Padding(8, 14).Radius(8).Background(ui.RGBA(255, 255, 255, 0.06)).
-										Border(1, ui.RGBA(255, 255, 255, 0.10)).Children(func() {
-										ui.Text(c, "该剧尚未上线，上线后可继续观看").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
-									})
-								} else {
-									playLabel := "播放 / 继续观看"
-									if a.resume.ResumeEpisode > 1 {
-										playLabel = fmt.Sprintf("继续观看第 %d 集", a.resume.ResumeEpisode)
-									}
-									playBtn := ui.Row(c.Key("detail-hero-play")).Height(36).Padding(0, 20).Radius(8).
-										MinWidth(158).
-										LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 180}).
-										Border(1, ui.RGBA(255, 255, 255, 0.22)).
-										Shadow(0, 3, 10, 0, ui.RGBA(0, 0, 0, 0.35)).
-										AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(playLabel)
-									hoverBackground(playBtn, ui.RGB(209, 27, 66), ui.RGB(229, 36, 75))
-									if playBtn.Clicked() {
-										go a.PlayDetail()
-									}
-									playBtn.Children(func() {
-										ui.Text(c, playLabel).FontSize(13).Bold().TextColor(ui.Hex("#ffffff"))
-									})
-								}
-								favLabel := "收藏"
-								if detail.Favorite {
-									favLabel = "已收藏"
-								}
-								favBtn := ui.Row(c.Key("detail-hero-fav")).Height(36).Padding(0, 16).Radius(8).
-									Material(glass.Glass{Interactive: true}).
-									Border(1, ui.RGBA(255, 255, 255, 0.12)).
-									AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(favLabel)
-								if detail.Favorite {
-									favBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
-								} else {
-									hoverBackground(favBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
-								}
-								if favBtn.Clicked() {
-									go a.ToggleDetailFavorite()
-								}
-								favBtn.Children(func() {
-									txt := ui.Text(c, favLabel).FontSize(13)
-									if detail.Favorite {
-										txt.Bold().TextColor(ui.Hex("#ff3358"))
-									} else {
-										txt.TextColor(ui.Hex("#ffffff"))
-									}
-								})
-								if detail.Upcoming || detail.Reserved {
-									resLabel := "预约"
-									if detail.Reserved {
-										resLabel = "已预约"
-									}
-									resBtn := ui.Row(c.Key("detail-hero-res")).Height(36).Padding(0, 16).Radius(8).
-										Material(glass.Glass{Interactive: true}).
-										Border(1, ui.RGBA(255, 255, 255, 0.12)).
-										AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(resLabel)
-									if detail.Reserved {
-										resBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
-									} else {
-										hoverBackground(resBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
-									}
-									if resBtn.Clicked() {
-										go a.ToggleDetailReservation()
-									}
-									resBtn.Children(func() {
-										txt := ui.Text(c, resLabel).FontSize(13)
-										if detail.Reserved {
-											txt.Bold().TextColor(ui.Hex("#ff3358"))
-										} else {
-											txt.TextColor(ui.Hex("#ffffff"))
-										}
-									})
-								}
-							})
-						})
-					})
-					if detail.Source != nil {
-						ui.Row(c.Key("detail-source-card")).Padding(c.Theme().Space(2), c.Theme().Space(4)).Radius(10).
-							Background(ui.RGBA(255, 255, 255, 0.04)).
-							Border(1, ui.RGBA(255, 255, 255, 0.08)).
-							Gap(c.Theme().Space(3)).AlignItems(ui.Center).Children(func() {
-							a.image(c, detail.Source.CoverURL, 54, 72)
-							ui.Column(c).Gap(4).Grow(1).Children(func() {
-								ui.Text(c, "原著小说").FontSize(11).TextColor(ui.Hex("#ff3358"))
-								ui.Text(c, detail.Source.Title).FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
-								if len(detail.Source.Tags) > 0 {
-									ui.Text(c, strings.Join(detail.Source.Tags, " · ")).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
-								}
-							})
-						})
-					}
-					if len(detail.Actors) > 0 {
-						ui.Column(c.Key("detail-actors-card")).Gap(c.Theme().Space(2)).Children(func() {
-							ui.Text(c, "演员阵容").FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
-							ui.Row(c.Key("detail-actors-flow")).Wrap().Gap(8).Children(func() {
-								for _, actor := range detail.Actors {
-									act := actor
-									chip := ui.Row(c.Key("actor:"+act.Name)).Padding(4, 10).Radius(6).
-										Background(ui.RGBA(255, 255, 255, 0.06)).
-										Border(1, ui.RGBA(255, 255, 255, 0.08)).
-										AlignItems(ui.Center).Gap(6)
-									actorID := act.UserID
-									if actorID == "" {
-										actorID = act.ActorID
-									}
-									if actorID != "" {
-										chip.Role(ui.RoleButton).Label("演员主页：" + act.Name).Focusable()
-										hoverBackground(chip, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
-										if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
-											go a.OpenActor(actorID)
-										}
-									}
-									chip.Children(func() {
-										ui.Text(c, act.Name).FontSize(12).Bold().TextColor(ui.Hex("#ffffff"))
-										if act.Role != "" {
-											ui.Text(c, act.Role).FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.60))
-										}
-									})
-								}
-							})
-						})
-					}
-					a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
-					a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
-				})
-				right.Children(func() {
-					a.renderDetailEpisodes(c, detail.Episodes)
-				})
-			})
-		})
-	})
-}
-
-func detailTwoColumn(size float32, height float32) bool {
-	return size >= 1200
-}
-
-func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
-	ui.Row(c.Key("detail-episodes-header")).AlignItems(ui.Baseline).Gap(10).Children(func() {
-		ui.Text(c, "选集").FontSize(17).Bold().TextColor(ui.Hex("#ffffff"))
-		if len(episodes) > 0 {
-			ui.Textf(c, "共 %d 集", len(episodes)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
-		}
-	})
-	if len(episodes) == 0 {
-		ui.Text(c, "暂无可播放选集").TextColor(c.Theme().TextMuted)
-		return
-	}
-	buttonWidth, buttonHeight := float32(54), float32(36)
-	if detailTwoColumn(c.Size()) {
-		buttonWidth, buttonHeight = float32(52), float32(36)
-	}
-	host := ui.Column(c.Key("detail-episodes-host")).Height(1000).MinWidth(0).MinHeight(0).FillWidth()
-	gap := c.Theme().Space(3)
-	buttonStride := buttonWidth + gap
-	width, pageHeight := c.Size()
-	width -= defaultSidebarWidth + 100
-	if detailTwoColumn(width, pageHeight) {
-		width = max(380, (width-28)*0.52)
-	}
-	hostW := host.Bounds().W
-	if hostW > 0 && hostW < width {
-		width = hostW
-	}
-	columns := max(1, int(width/buttonStride))
-	rowCount := (len(episodes) + columns - 1) / columns
-	listState := &a.detailEpisodesList
-	listState.Key = func(row int) any { return fmt.Sprintf("episodes:%d:%d", columns, row) }
-	listState.Label = func(row int) string {
-		start := row*columns + 1
-		end := min((row+1)*columns, len(episodes))
-		if start == end {
-			return fmt.Sprintf("第%d集", start)
-		}
-		return fmt.Sprintf("第%d集至第%d集", start, end)
-	}
-	host.Children(func() {
-		ui.Column(c).MinWidth(0).FillWidth().Children(func() {
-			ui.List(c, listState, rowCount, func(row int) {
-				ui.Row(c.Key(fmt.Sprintf("episode-row:%d", row))).Height(buttonHeight + gap).MinWidth(0).Clip().Gap(gap).Children(func() {
-					for index := row * columns; index < min(len(episodes), (row+1)*columns); index++ {
-						episode := episodes[index]
-						isActive := a.resume.ResumeEpisode == episode.EpisodeCount
-						epBtn := ui.Row(c.Key(fmt.Sprintf("ep-%d", episode.EpisodeCount))).
-							Width(buttonWidth).Height(buttonHeight).Radius(10).
-							AlignItems(ui.Center).Justify(ui.Center).
-							Role(ui.RoleButton).Label(fmt.Sprintf("第%d集", episode.EpisodeCount))
-						if isActive {
-							epBtn.LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 135}).
-								Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.35))
-						} else {
-							hoverBackground(epBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
-							epBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
-						}
-						if epBtn.Clicked() {
-							go a.ChooseEpisode(episode.EpisodeCount)
-						}
-						epBtn.Children(func() {
-							txt := ui.Text(c, fmt.Sprintf("%d", episode.EpisodeCount)).FontSize(12)
-							if isActive {
-								txt.Bold().TextColor(ui.Hex("#ffffff"))
-							} else {
-								txt.TextColor(ui.RGBA(255, 255, 255, 0.85))
-							}
-						})
-					}
-				})
-			})
-		})
-	})
-}
-
-func (a *App) detailSkeleton(c *ui.Context) {
-	pageHeader(c, "短剧详情")
-	skeleton := pageShimmer(c)
-	wide := detailTwoColumn(c.Size())
-	scroll := ui.Scroll(c.Key("detail-page-scroll-skeleton")).Scrollbars(false).Grow(1).Gap(c.Theme().Space(2) + 2)
-	scroll.Children(func() {
-		ui.Row(c.Key("detail-top-bar-skeleton")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).
-			Children(func() {
-				skeleton.bone(c.Key("detail-nav-back-skeleton"), 7).Height(30).Width(78)
-			})
-		layout := ui.Row(c.Key("detail-layout-skeleton")).Gap(28).AlignItems(ui.Start)
-		if wide {
-			layout.FillWidth()
-		}
-		layout.Children(func() {
-			left := ui.Column(c.Key("detail-left-skeleton")).Gap(16)
-			right := ui.Column(c.Key("detail-right-skeleton")).Gap(16)
-			if wide {
-				left.WidthPercent(48).MinWidth(340)
-				right.WidthPercent(52).MinWidth(380)
-			} else {
-				left.FillWidth()
-				right.FillWidth()
-			}
-			left.Children(func() {
-				ui.Row(c.Key("detail-hero-skeleton")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
-					skeleton.bone(c.Key("poster"), 12).Size(160, 220)
-					ui.Column(c.Key("detail-copy")).Grow(1).Gap(12).Children(func() {
-						skeleton.text(c.Key("title"), 24, 1.2).WidthPercent(48)
-						ui.Row(c.Key("tags")).Gap(10).Children(func() {
-							for index := range 4 {
-								skeleton.bone(c.Key(index), 10).Size(66, 20)
-							}
-						})
-						ui.Row(c.Key("metadata")).Gap(8).Children(func() {
-							for index := range 4 {
-								skeleton.bone(c.Key(index), 12).Size(58, 24)
-							}
-						})
-						ui.Column(c.Key("description")).Gap(8).Children(func() {
-							skeleton.text(c.Key("line-0"), 13, 1.45).WidthPercent(100)
-							skeleton.text(c.Key("line-1"), 13, 1.45).WidthPercent(100)
-							skeleton.text(c.Key("line-2"), 13, 1.45).Width(190)
-						})
-						ui.Row(c.Key("actions")).Gap(10).Children(func() {
-							skeleton.bone(c.Key("primary"), 19).Size(140, 38)
-							skeleton.bone(c.Key("secondary"), 19).Size(88, 38)
-						})
-					})
-				})
-				ui.Row(c.Key("source-skeleton")).Gap(16).Padding(16, 20).Radius(10).Children(func() {
-					skeleton.bone(c.Key("cover"), 10).Size(54, 72)
-					ui.Column(c.Key("copy")).Grow(1).Gap(8).Children(func() {
-						skeleton.text(c.Key("label"), 11, 1.2).Width(64)
-						skeleton.text(c.Key("title"), 14, 1.3).WidthPercent(70)
-					})
-				})
-				ui.Column(c.Key("actors-skeleton")).Gap(10).Children(func() {
-					skeleton.text(c.Key("title"), 15, 1.3).Width(82)
-					ui.Row(c.Key("chips")).Gap(8).Children(func() {
-						for index := range 5 {
-							skeleton.bone(c.Key(index), 12).Size(86, 28)
-						}
-					})
-				})
-			})
-			right.Children(func() {
-				for _, collection := range []struct {
-					key, title string
-				}{
-					{"seasons", "同系列短剧"}, {"adaptations", "同一剧本改编"},
-				} {
-					ui.Column(c.Key(collection.key + "-skeleton")).Gap(8).Children(func() {
-						ui.Text(c, collection.title).FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
-						ui.Row(c.Key("cards")).Gap(c.Theme().Space(3)).Children(func() {
-							skeleton.bone(c.Key("poster"), 8).Size(150, 200)
-							skeleton.text(c.Key("title"), 13, 1.3).Width(150)
-						})
-					})
-				}
-				ui.Column(c.Key("episodes-skeleton")).Gap(12).Children(func() {
-					ui.Row(c.Key("header")).Gap(12).AlignItems(ui.Center).Children(func() {
-						skeleton.text(c.Key("title"), 17, 1.3).Width(52)
-						skeleton.text(c.Key("count"), 12, 1.3).Width(44)
-					})
-					ui.Row(c.Key("episodes")).Wrap().Gap(10).Children(func() {
-						size := float32(68)
-						height := float32(44)
-						if wide {
-							size, height = 88, 48
-						}
-						for index := range 12 {
-							skeleton.bone(c.Key(index), 10).Size(size, height)
-						}
-					})
-				})
-			})
-		})
-	})
-}
-
 func (a *App) gridSkeleton(c *ui.Context, count int, width float32) {
 	dramaSkeleton(c, count, width)
 }
 
 func (a *App) filterSkeleton(c *ui.Context) {
-	skeleton := pageShimmer(c)
+	skeleton := pagePlaceholder(c)
 	ui.Column(c.Key("filter-skeleton")).Padding(16, 20).Gap(14).Radius(12).Border(1, c.Theme().Border).Background(c.Theme().Surface).Children(func() {
 		a.filterSkeletonRow(c.Key("genre"), skeleton, 3)
 		a.filterSkeletonRow(c.Key("topic"), skeleton, 5)
@@ -1461,7 +790,7 @@ func (a *App) filterSkeleton(c *ui.Context) {
 	})
 }
 
-func (a *App) filterSkeletonRow(c *ui.Context, skeleton shimmer, chips int) {
+func (a *App) filterSkeletonRow(c *ui.Context, skeleton placeholder, chips int) {
 	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 		skeleton.text(c.Key("label"), 12, 1.3).Width(40)
 		ui.Row(c.Key("chips")).Gap(8).Children(func() {
@@ -1473,7 +802,7 @@ func (a *App) filterSkeletonRow(c *ui.Context, skeleton shimmer, chips int) {
 }
 
 func (a *App) rankSkeleton(c *ui.Context) {
-	skeleton := pageShimmer(c)
+	skeleton := pagePlaceholder(c)
 	ui.Column(c.Key("rank-skeleton")).Grow(1).Gap(10).Children(func() {
 		for index := range 8 {
 			ui.Row(c.Key(index)).Gap(16).AlignItems(ui.Center).Padding(12, 18).Radius(12).Border(1, c.Theme().Border).Background(c.Theme().Surface).Children(func() {
@@ -1520,16 +849,20 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 		bounds.X+bounds.W < 0 || bounds.X > windowWidth {
 		return
 	}
-	var bitmap ui.ImageSource
-	bitmap = a.Artwork(source)
-	if bitmap != nil {
-		host.Children(func() {
-			loaded := host.AnimateTo("artwork", 1, artworkFade)
-			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10).Opacity(loaded)
-		})
-	} else {
-		host.AnimateTo("artwork", 0, artworkFade)
+	bitmap := a.Artwork(source)
+	loading := a.artwork != nil && a.artwork.isLoading(source)
+	if loading {
+		skeleton := pagePlaceholder(c)
+		host.Draw(func(p *ui.Painter, r ui.Rect) { skeleton.paint(p, r, 10) })
 	}
+	host.Children(func() {
+		pose := ui.Pose{}
+		if bitmap == nil {
+			pose.Fade = 1
+		}
+		ui.Image(c.Key("artwork-image"), bitmap).Size(width, height).Fit(ui.Cover).Radius(10).
+			AnimatePose(pose, artworkFade).ContentTransition(ui.ContentTransition{Animation: &artworkFade})
+	})
 }
 
 func formatEpisode(number int) string {
@@ -1545,14 +878,6 @@ func historyEpisodeBadge(item CatalogItem) string {
 		return fmt.Sprintf("共%d集", item.EpisodeCount)
 	}
 	return ""
-}
-
-func darkGlassMaterial(interactive bool) glass.Glass {
-	return glass.Glass{
-		Style:       glass.Clear,
-		Tint:        ui.RGBA(0, 0, 0, 82),
-		Interactive: interactive,
-	}
 }
 
 func formatPublishDate(value string) string {

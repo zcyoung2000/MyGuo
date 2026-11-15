@@ -187,3 +187,38 @@ test('native channel visibility follows comments, clear screen and fullscreen wi
 
 test('the 812 episode drawer keeps the complete collection and never substitutes the current episode', () => {
 });
+
+for (const staleFails of [false, true]) {
+  test(`old native play ${staleFails ? 'failure' : 'completion'} cannot seek or close a newer session`, async () => {
+    const h = host();
+    let resolveOld, rejectOld;
+    const video = {duration: 100, currentTime: 0};
+    h.context.getFeedVideo = () => video;
+    h.context.enterSeriesPlayer = id => id === 'old'
+      ? new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; })
+      : Promise.resolve(true);
+    h.send({event: 'play', seriesId: 'old', session: 1, resumeAt: 11});
+    h.send({event: 'play', seriesId: 'new', session: 2, resumeAt: 22});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(video.currentTime, 22);
+    if (staleFails) rejectOld(new Error('old failed'));
+    else resolveOld(true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(video.currentTime, 22);
+    assert.equal(h.calls.some(call => call[0] === 'NativeShell.ClosePlayer'), false);
+    assert.equal(h.calls.some(call => call[0] === 'error'), false);
+  });
+}
+
+test('native play completion after stopping cannot seek the hidden player', async () => {
+  const h = host();
+  let complete;
+  const video = {duration: 100, currentTime: 0};
+  h.context.getFeedVideo = () => video;
+  h.context.enterSeriesPlayer = () => new Promise(resolve => { complete = resolve; });
+  h.send({event: 'play', seriesId: 'old', session: 1, resumeAt: 11});
+  h.send({event: 'stop'});
+  complete(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(video.currentTime, 0);
+});

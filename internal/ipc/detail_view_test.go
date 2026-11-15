@@ -1,10 +1,10 @@
 package ipc
 
 import (
-	"context"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
@@ -102,70 +102,6 @@ func TestSeasonsToCardsAddsMissingSeasonNumbers(t *testing.T) {
 		if card.Title != want[i] {
 			t.Fatalf("cards[%d].Title = %q, want %q", i, card.Title, want[i])
 		}
-	}
-}
-
-func TestAdaptationsForSourceFiltersSourceAndKeepsFreshCoverFallback(t *testing.T) {
-	store, err := NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore err = %v", err)
-	}
-	defer store.Close()
-
-	batch := map[string]*model.Series{
-		"wanted": {
-			SeriesSummary: model.SeriesSummary{
-				ID: "wanted", Title: "同一剧本",
-			},
-			RelatedNovelBookID: "book-1",
-		},
-	}
-	service := &HongguoService{
-		store: store,
-		media: &MediaServer{},
-		seriesBatch: func(context.Context, []string) ([]model.SeriesDetail, error) {
-			details := make([]model.SeriesDetail, 0, len(batch))
-			for _, detail := range batch {
-				details = append(details, model.SeriesDetail{Series: detail})
-			}
-			return details, nil
-		},
-	}
-	source := &SourceNovelDTO{ID: "book-1", Title: "原著小说"}
-	candidates := []model.SeriesSummary{
-		{ID: "source-1", Title: "同一剧本", CoverURL: "https://example.com/source-candidate.jpg"},
-		{ID: "wanted", Title: "同一剧本", CoverURL: "https://example.com/search.jpg"},
-	}
-	excludes := map[string]bool{"different": true}
-
-	cards := service.adaptationsForSource(context.Background(), "current", source, candidates, excludes)
-	if len(cards) != 1 || cards[0].ID != "wanted" {
-		t.Fatalf("cards = %+v, want only the adapted candidate", cards)
-	}
-	if service.media.ImageURL("https://example.com/search.jpg") != cards[0].CoverURL {
-		t.Fatalf("empty batch cover did not use fresh search cover through MediaServer: %q", cards[0].CoverURL)
-	}
-
-	batch["wanted"].CoverURL = "https://images.example/batch.jpg"
-	cards = service.adaptationsForSource(context.Background(), "current", source, candidates, excludes)
-	if len(cards) != 1 || service.media.ImageURL("https://images.example/batch.jpg") != cards[0].CoverURL {
-		t.Fatalf("present batch cover was not preferred: %+v", cards)
-	}
-}
-
-func TestSameSourceNovelRequiresBookID(t *testing.T) {
-	source := &SourceNovelDTO{ID: "book-1", Title: "原著小说"}
-	if isSameSourceNovel(nil, source) {
-		t.Fatal("nil series matched source")
-	}
-	if isSameSourceNovel(&model.Series{SeriesSummary: model.SeriesSummary{ID: "video-2", Title: "原著小说"}}, source) {
-		t.Fatal("title-only series matched source")
-	}
-	if !isSameSourceNovel(&model.Series{
-		SeriesSummary:      model.SeriesSummary{ID: "video-2"},
-		RelatedNovelBookID: "book-1",
-	}, source) {
-		t.Fatal("related book ID did not match source")
 	}
 }
 
@@ -331,5 +267,21 @@ func TestNewSeriesDetailPageUpcomingAndFinishedStatus(t *testing.T) {
 	}
 	if upPage.Status != "upcoming" {
 		t.Errorf("upPage.Status = %q, want 'upcoming'", upPage.Status)
+	}
+}
+
+func TestSeriesDetailPagePreservesEpisodeDurations(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service := &HongguoService{store: store, media: &MediaServer{}}
+	page := service.newSeriesDetailPage(model.SeriesDetail{
+		Series:   &model.Series{SeriesSummary: model.SeriesSummary{ID: "100", Title: "时长测试"}},
+		Episodes: []model.Episode{{ID: "episode-1", Number: 1, Duration: 129 * time.Second}, {ID: "episode-2", Number: 2}},
+	}, "100")
+	if len(page.Episodes) != 2 || page.Episodes[0].DurationSec != 129 || page.Episodes[1].DurationSec != 0 {
+		t.Fatalf("episode durations lost: %+v", page.Episodes)
 	}
 }

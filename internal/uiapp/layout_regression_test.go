@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
@@ -77,25 +76,27 @@ func TestDiscoverSearchEntryAndCompactFilters(t *testing.T) {
 func TestMediaSurfaceFillsContentAndIsRemovedForDetail(t *testing.T) {
 	for _, size := range [][2]int{{1000, 640}, {1600, 1000}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			view := &mygo.WebView{}
+			player := newNativeUIPlayer()
 			app := NewTestApp()
 			app.sidebarWidth = 210
-			app.SetMediaHost(&MediaHost{view: view})
+			app.SetMediaHost(&MediaHost{controller: player})
 			app.OpenView("recommend")
 			tt := ui.NewTester(app.Render, size[0], size[1])
 			assertFull := func() {
 				t.Helper()
-				for _, point := range [][2]float32{{220, 1}, {float32(size[0] - 1), 1}, {220, float32(size[1] - 1)}, {float32(size[0] - 1), float32(size[1] - 1)}} {
-					if tt.WebViewAt(point[0], point[1]) != view {
-						t.Fatalf("media leaves a gutter at %v", point)
-					}
+				frame, ok := tt.Find("原生播放器")
+				if !ok || frame.X > 212 || frame.Y > 1 || frame.X+frame.W < float32(size[0]-1) || frame.Y+frame.H < float32(size[1]-1) {
+					t.Fatalf("native player leaves a gutter: %+v", frame)
+				}
+				if !tt.HasText("播放画面") {
+					t.Fatal("native video controls missing")
 				}
 			}
 			assertFull()
 			app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "真实详情标题", EpisodeCount: 1}}}
 			app.OpenDetail("123456")
 			tt.Frame()
-			if !tt.HasText("短剧详情") || tt.WebViewAt(600, 300) != nil {
+			if !tt.HasText("详情内容") || tt.WebViewAt(600, 300) != nil {
 				t.Fatal("opening detail leaves the idle media layer over the loading page")
 			}
 			app.loadDetail("123456")
@@ -114,21 +115,6 @@ func TestMediaSurfaceFillsContentAndIsRemovedForDetail(t *testing.T) {
 				t.Fatal("closing playback leaves a black media layer over detail")
 			}
 		})
-	}
-}
-
-func TestMediaReadyKeepsLatestSceneAndDoesNotReplayItTwice(t *testing.T) {
-	host := &MediaHost{}
-	host.Recommend()
-	host.StopNow()
-	host.Play("123456", 2, -1, 7)
-	if host.ready || len(host.queue) != 0 {
-		t.Fatal("commands dispatched before the JavaScript scene handler was ready")
-	}
-	host.markReady()
-	host.markReady()
-	if len(host.queue) != 1 || host.queue[0].payload["event"] != "play" || host.queue[0].payload["session"] != int64(7) {
-		t.Fatalf("readiness lost or replayed the latest scene: %+v", host.queue)
 	}
 }
 
@@ -246,18 +232,10 @@ func TestHistoryEpisodeBadgeMergesProgressWithFallback(t *testing.T) {
 	}
 }
 
-func TestCollectionGlassAddsDarkTintAndKeepsInteraction(t *testing.T) {
-	badge := darkGlassMaterial(false)
-	action := darkGlassMaterial(true)
-	for name, material := range map[string]glass.Glass{"badge": badge, "action": action} {
-		t.Run(name, func(t *testing.T) {
-			if material.Style != glass.Clear || material.Tint != ui.RGBA(0, 0, 0, 82) {
-				t.Fatalf("dark glass changed: %+v", material)
-			}
-		})
-	}
-	if !action.Interactive {
-		t.Fatal("action overlay lost interactive glass feedback")
+func TestCollectionGlassSamplesArtworkAndKeepsDarkContrast(t *testing.T) {
+	material := artworkMaterial()
+	if material.Native || material.Style != glass.Clear || material.Tint.A < 120 {
+		t.Fatalf("artwork badges must sample the painted poster with a dark tint: %+v", material)
 	}
 }
 

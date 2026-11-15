@@ -25,6 +25,7 @@ type CatalogItem struct {
 	PublishAt                     string
 	UpdatedAt                     int64
 	Progress                      float64
+	DurationSec                   int64
 	ResumeEpisode                 int
 	ResumePosition                float64
 	ID                            string
@@ -54,8 +55,8 @@ type Detail struct {
 	FollowCount          int64
 	LikeCount            int64
 	PublishText          string
-	RelatedError         string
 	Seasons, Adaptations DetailCollection
+	Reviews              DetailReviews
 	ID                   string
 	Title                string
 	Description          string
@@ -68,9 +69,6 @@ type Detail struct {
 	Episodes             []CatalogItem
 	Favorite             bool
 	Reserved             bool
-	Related              []CatalogItem
-	RelatedTitle         string
-	RelatedLoading       bool
 	Loading              bool
 	Error                string
 }
@@ -97,17 +95,23 @@ type Library struct {
 }
 
 type Catalog struct {
-	GenreIndex  int
-	Genre       []string
-	Filters     []FilterRow
-	Selection   []int
-	Loading     bool
-	LoadingMore bool
-	Error       string
-	HasMore     bool
-	Cursor      string
-	seenCursors map[string]bool
-	Items       []CatalogItem
+	FiltersLoading bool
+	FiltersLoaded  bool
+	FilterError    string
+	resultsCurrent bool
+	resultGenre    string
+	GenreIndex     int
+	Genre          []string
+	Filters        []FilterRow
+	Selection      []int
+	Loading        bool
+	LoadingMore    bool
+	Error          string
+	HasMore        bool
+	Cursor         string
+	seenCursors    map[string]bool
+	emptyPages     int
+	Items          []CatalogItem
 }
 
 type discoverSection int
@@ -148,8 +152,7 @@ type Settings struct {
 	HasLegacy      bool
 	Loading        bool
 	LoginOpen      bool
-	LoginCookie    string
-	LoginToken     string
+	QR             QRLoginState
 	SpareDevices   *ipc.SpareDeviceStateDTO
 	SpareDeviceDid string
 	SpareDeviceIid string
@@ -160,6 +163,16 @@ type Settings struct {
 
 // App state and all render snapshots are protected by mu. Network work never holds it.
 type App struct {
+	playerSentSequence          uint64
+	playerFullscreen            bool
+	playerDraft                 string
+	playerEpisodesList          ui.ListState
+	playerCommentsList          ui.ListState
+	playerDanmakuList           ui.ListState
+	playerDanmaku               danmakuLayout
+	playerDanmakuHover          danmakuHover
+	playerFrameKey              string
+	playerTransitionBitmap      *ui.Bitmap
 	ambientActive               bool
 	ambientLeft                 ui.Color
 	ambientTop                  ui.Color
@@ -171,10 +184,14 @@ type App struct {
 	rankScroll                  ui.ScrollState
 	actorScroll                 ui.ScrollState
 	playerFixture               bool
-	detailEpisodesList          ui.ListState
-	detailEpisodesScroll        ui.ScrollState
+	detailEpisodesList          *ui.ListState
+	detailTab                   int
+	detailDescriptionOpen       bool
+	detailDescriptionLayout     descriptionLayout
+	detailJumpEpisode           int
 	detailScroll                ui.ScrollState
-	detailLeftScroll            ui.ScrollState
+	detailScrollReset           bool
+	catalogScrollReset          bool
 	sidebarWidth                float32
 	preferencesPath             string
 	preferencesLoaded           bool
@@ -184,6 +201,7 @@ type App struct {
 	mediaOn                     bool
 	mediaSession                int64
 	featuresSource              featureProvider
+	reviewsSource               detailReviewProvider
 	libraryMutations            libraryMutations
 	confirm                     func(string) bool
 	mutations                   map[string]bool
@@ -197,10 +215,18 @@ type App struct {
 	actor                       ActorState
 	libraryVisible              [4][]CatalogItem
 	searchGrid                  *ui.GridState
-	catalogGrid                 *ui.GridState
+	pageLayouts                 map[string]pageFillVersion
+	catalogList                 *ui.ListState
 	discoverFilterState         discoverSection
+	discoverFilterManual        bool
+	expandedFilters             map[string]bool
+	catalogResultVersion        uint64
+	searchResultVersion         uint64
+	rankResultVersion           uint64
+	releaseResultVersion        uint64
+	libraryResultVersion        [4]uint64
 	releaseGrid                 *ui.GridState
-	actorWorksGrid              *ui.GridState
+	actorWorksList              *ui.ListState
 	suggestions                 []string
 	suggestionVersion           uint64
 	suggestionIndex             int
@@ -210,10 +236,13 @@ type App struct {
 	navIndex                    int
 	mu                          sync.Mutex
 	generation                  uint64
+	catalogFilterGeneration     uint64
+	catalogFacets               map[string]catalogFacet
 	catalogGeneration           uint64
 	libraryGeneration           [4]uint64
 	started                     bool
 	resume                      CatalogItem
+	resumeFromPlayback          bool
 	service                     *ipc.HongguoService
 	artwork                     *artworkLoader
 	invalidateFn                func()
@@ -234,6 +263,9 @@ type App struct {
 	libraryData          libraryProvider
 	settingsTestProvider settingsProvider
 	library              LibraryView
+	loginCancel          context.CancelFunc
+	loginVersion         uint64
+	qrPollInterval       time.Duration
 	settings             Settings
 	playerOn             bool
 }
@@ -263,7 +295,6 @@ type favoriteProvider interface {
 
 type detailProvider interface {
 	GetSeriesPage(ctx context.Context, seriesID string) (*ipc.SeriesDetailPageDTO, error)
-	GetSeriesRelated(ctx context.Context, seriesID string) (*ipc.SeriesCollectionDTO, error)
 	GetFilterPanel(ctx context.Context, genre string) ([]ipc.FilterRowDTO, error)
 	GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (ipc.DiscoverResponse, error)
 }
@@ -316,67 +347,6 @@ func (a *App) DetailState() Detail       { a.mu.Lock(); defer a.mu.Unlock(); ret
 func (a *App) SettingsState() Settings   { a.mu.Lock(); defer a.mu.Unlock(); return a.settings }
 func (a *App) SeriesID() string          { a.mu.Lock(); defer a.mu.Unlock(); return a.seriesID }
 
-// Called under mu, including by Render. Published slices are replaced, never edited.
-func (a *App) catalogGenre() string {
-	if a.catalog.GenreIndex < 0 || a.catalog.GenreIndex >= len(a.catalog.Genre) {
-		return "short_play"
-	}
-	return []string{"short_play", "comic_series", "ai_series"}[a.catalog.GenreIndex]
-}
-func catalogValues(genre string, rows []FilterRow, selected []int) map[string]string {
-	values := map[string]string{}
-	for index, row := range rows {
-		if index < len(selected) && selected[index] > 0 && selected[index] < len(row.Options) {
-			values[row.Key] = row.Options[selected[index]].Value
-		}
-	}
-	if len(values) == 0 {
-		values["genre"] = genre
-	}
-	return values
-}
-func (a *App) SelectGenre(next int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if next == a.catalog.GenreIndex || next < 0 || next >= len(a.catalog.Genre) {
-		return
-	}
-	a.catalog.GenreIndex = next
-	a.catalog.Filters, a.catalog.Selection = nil, nil
-	a.resetCatalog()
-	if !a.testMode {
-		go a.loadFilters()
-		go a.loadCatalog(false)
-	}
-}
-func (a *App) resetCatalog() {
-	a.catalogGeneration++
-	a.catalog.Items, a.catalog.Cursor, a.catalog.Error = nil, "", ""
-	a.catalog.HasMore, a.catalog.Loading, a.catalog.LoadingMore = true, false, false
-	a.catalog.seenCursors = nil
-	a.discoverPageScroll.Y = 0
-	a.invalidate()
-}
-func (a *App) SelectFilter(rowIndex, optionIndex int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if rowIndex < 0 || rowIndex >= len(a.catalog.Filters) || optionIndex < 0 || optionIndex >= len(a.catalog.Filters[rowIndex].Options) {
-		return
-	}
-	selected := append([]int(nil), a.catalog.Selection...)
-	for len(selected) < len(a.catalog.Filters) {
-		selected = append(selected, 0)
-	}
-	if selected[rowIndex] == optionIndex {
-		return
-	}
-	selected[rowIndex] = optionIndex
-	a.catalog.Selection = selected
-	a.resetCatalog()
-	if !a.testMode {
-		go a.loadCatalog(false)
-	}
-}
 func (a *App) SearchSubmitted() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -387,7 +357,7 @@ func (a *App) SearchSubmitted() bool {
 	a.navigateLocked(navigationEntry{View: "search"}, true)
 	a.suggestions = nil
 	a.suggestionVersion++
-	a.search = CatalogPage{Loading: true}
+	a.search.Loading, a.search.Error = true, ""
 	generation := a.generation
 	if !a.testMode {
 		go func() {
@@ -399,9 +369,12 @@ func (a *App) SearchSubmitted() bool {
 			if a.generation != generation {
 				return
 			}
-			a.search = CatalogPage{Items: removeSearchPageCardLabels(convertCards(items))}
+			a.search.Loading = false
 			if err != nil {
 				a.search.Error = "搜索失败：" + err.Error()
+			} else {
+				a.search = CatalogPage{Items: removeSearchPageCardLabels(convertCards(items))}
+				a.searchResultVersion++
 			}
 			a.invalidate()
 		}()
@@ -505,7 +478,7 @@ func (a *App) ChooseEpisode(num int) {
 	a.mu.Lock()
 	loaded := num > 0 && a.media != nil && !a.detail.Loading && a.detail.ID != "" && !a.detail.Upcoming
 	if loaded {
-		a.detailScroll.Y = 0
+		a.detailScrollReset = true
 	}
 	a.mu.Unlock()
 	if !loaded {
@@ -534,67 +507,6 @@ func (a *App) PlayerPrevious() { a.MediaCommand(native.MediaCommandPayload{Comma
 func (a *App) PlayerNext() { a.MediaCommand(native.MediaCommandPayload{Command: "next"}) }
 func (a *App) PlayerPictureInPicture() {
 	a.MediaCommand(native.MediaCommandPayload{Command: "pip"})
-}
-func (a *App) loadFilters() {
-	a.mu.Lock()
-	genre, generation, provider := a.catalogGenre(), a.catalogGeneration, a.detailProvider()
-	a.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
-	defer cancel()
-	rows, err := provider.GetFilterPanel(ctx, genre)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if generation != a.catalogGeneration {
-		return
-	}
-	if err != nil {
-		a.fail("筛选加载失败：", err)
-		return
-	}
-	a.catalog.Filters = convertFilters(rows)
-	a.error = ""
-	a.invalidate()
-}
-func (a *App) loadCatalog(more bool) {
-	a.mu.Lock()
-	if a.catalog.Loading || a.catalog.LoadingMore || (more && !a.catalog.HasMore) {
-		a.mu.Unlock()
-		return
-	}
-	genre, generation, provider := a.catalogGenre(), a.catalogGeneration, a.detailProvider()
-	if provider == nil {
-		a.mu.Unlock()
-		return
-	}
-	a.catalog.Loading, a.catalog.LoadingMore = !more, more
-	values := catalogValues(genre, a.catalog.Filters, a.catalog.Selection)
-	cursor := ""
-	if more {
-		cursor = a.catalog.Cursor
-	}
-	a.invalidate()
-	a.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
-	defer cancel()
-	page, err := provider.GetDiscover(ctx, genre, values, cursor)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if generation != a.catalogGeneration {
-		return
-	}
-	a.catalog.Loading, a.catalog.LoadingMore = false, false
-	if err != nil {
-		a.catalog.Error = "目录加载失败，请稍后重试"
-		a.fail("目录加载失败：", err)
-		return
-	}
-	items := convertCards(page.Items)
-	if more {
-		items = append(append([]CatalogItem(nil), a.catalog.Items...), items...)
-	}
-	a.error = ""
-	a.catalog.Items, a.catalog.Cursor, a.catalog.HasMore, a.catalog.Error = dedupeCards(items), page.Cursor, nextCursor(&a.catalog.seenCursors, cursor, page.Cursor, page.HasMore, more), ""
-	a.invalidate()
 }
 func (a *App) loadDetail(seriesID string) {
 	a.mu.Lock()
@@ -625,37 +537,23 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 		a.mu.Unlock()
 		return
 	}
+	// Metadata can arrive after the user has already opened the reviews tab.
+	// Keep that independent request and its expanded replies across a refresh.
+	reviews := DetailReviews{}
+	if a.detail.ID == seriesID {
+		reviews = a.detail.Reviews
+	}
 	a.detail = convertDetail(seriesID, page)
-	a.detail.RelatedLoading = true
-	if a.resume.ID != seriesID && page.ResumeEpisode > 0 {
+	a.detail.Reviews = reviews
+	if page.ResumeEpisode > 0 && (a.resume.ID != seriesID || !a.resumeFromPlayback) {
 		a.resume = CatalogItem{ID: seriesID, ResumeEpisode: page.ResumeEpisode, ResumePosition: page.ResumePosition}
 	}
 	a.invalidate()
 	a.mu.Unlock()
 	if a.featuresSource != nil || a.service != nil {
-		go a.loadSupplement(seriesID, generation, false)
+		go a.loadSupplement(seriesID, generation, true)
 	}
-	a.loadRelatedAt(seriesID, generation)
 }
-func (a *App) loadRelatedAt(seriesID string, generation uint64) {
-	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
-	defer cancel()
-	collection, err := a.detailProvider().GetSeriesRelated(ctx, seriesID)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if generation != a.generation {
-		return
-	}
-	a.detail.RelatedLoading = false
-	a.detail.RelatedError = ""
-	if err != nil || collection == nil {
-		a.detail.RelatedError = "相关推荐加载失败"
-	} else {
-		a.detail.Related, a.detail.RelatedTitle = clearRelatedCollectionCardFields(convertCards(collection.Items)), collection.Title
-	}
-	a.invalidate()
-}
-
 func removeSearchPageCardLabels(items []CatalogItem) []CatalogItem {
 	for index := range items {
 		items[index].BadgeText = ""
@@ -664,13 +562,6 @@ func removeSearchPageCardLabels(items []CatalogItem) []CatalogItem {
 	return items
 }
 
-func clearRelatedCollectionCardFields(items []CatalogItem) []CatalogItem {
-	for i := range items {
-		items[i].BadgeText = ""
-		items[i].Category = ""
-	}
-	return items
-}
 func (a *App) detailProvider() detailProvider {
 	if a.detailSource != nil {
 		return a.detailSource
@@ -805,6 +696,10 @@ func (a *App) open(view, seriesID string) {
 		a.media.Stop()
 	}
 	a.detail = Detail{}
+	a.detailTab, a.detailJumpEpisode = 0, 0
+	a.detailDescriptionOpen = false
+	a.detailEpisodesList = nil
+	a.detailScrollReset = true
 	a.invalidate()
 }
 func (a *App) fail(prefix string, err error) { a.error = prefix + err.Error(); a.invalidate() }
@@ -824,21 +719,6 @@ func convertCards(cards []ipc.SeriesCard) []CatalogItem {
 		})
 	}
 	return items
-}
-
-func convertFilters(rows []ipc.FilterRowDTO) []FilterRow {
-	out := make([]FilterRow, 0, len(rows))
-	for _, row := range rows {
-		if row.Key == "genre" || len(row.Options) == 0 {
-			continue
-		}
-		options := []FilterOption{{Label: "全部", Value: ""}}
-		for _, option := range row.Options {
-			options = append(options, FilterOption{Label: option.Name, Value: option.Value})
-		}
-		out = append(out, FilterRow{Title: strings.TrimPrefix(row.Name, "全部"), Key: row.Key, Options: options})
-	}
-	return out
 }
 
 func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
@@ -925,6 +805,7 @@ func convertDetail(seriesID string, page *ipc.SeriesDetailPageDTO) Detail {
 		episodes = append(episodes, CatalogItem{
 			ID: episode.ID, Title: episode.Title, CoverURL: episode.PosterURL,
 			EpisodeCount: episode.Number, Rank: episode.Number,
+			DurationSec: episode.DurationSec,
 		})
 	}
 	return Detail{
@@ -932,7 +813,6 @@ func convertDetail(seriesID string, page *ipc.SeriesDetailPageDTO) Detail {
 		Source: page.Source, Actors: page.Actors, Upcoming: page.Upcoming || page.EpisodeCount == 0, Heat: page.Heat, FollowCount: page.FollowCount, LikeCount: page.LikeCount, PublishText: page.PublishText, Seasons: DetailCollection{Loading: true}, Adaptations: DetailCollection{Loading: true},
 		Tags: page.Tags, StatusText: page.StatusText, Category: page.Category, PlayCount: page.PlayCount,
 		EpisodeCount: page.EpisodeCount, Episodes: episodes, Favorite: page.IsFavorite, Reserved: page.Reserved,
-		RelatedTitle: "相关推荐",
 	}
 }
 
@@ -954,4 +834,48 @@ func actorCardID(card ipc.SeriesCard) string {
 		return card.ID
 	}
 	return ""
+}
+
+// Invalidate may be called by the playback event loop without holding App.mu.
+func (a *App) Invalidate() {
+	a.mu.Lock()
+	fn := a.invalidateFn
+	a.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+func (a *App) SetPlayerFullscreen(value bool) {
+	a.mu.Lock()
+	a.playerFullscreen = value
+	a.invalidate()
+	a.mu.Unlock()
+}
+
+func (a *App) PlaybackChanged() {
+	a.mu.Lock()
+	host := a.media
+	fn := a.invalidateFn
+	a.mu.Unlock()
+	if host != nil {
+		s := host.Snapshot()
+		left, top := [3]uint8{}, [3]uint8{}
+		active := s.Mode != "idle" && s.Status.Ready && len(s.Status.AmbientLeft) == 3 && len(s.Status.AmbientTop) == 3
+		if active {
+			for i := range 3 {
+				left[i] = uint8(s.Status.AmbientLeft[i])
+				top[i] = uint8(s.Status.AmbientTop[i])
+			}
+		}
+		a.mu.Lock()
+		a.ambientActive = active
+		if active {
+			a.ambientLeft = ui.RGB(left[0], left[1], left[2])
+			a.ambientTop = ui.RGB(top[0], top[1], top[2])
+		}
+		a.mu.Unlock()
+	}
+	if fn != nil {
+		fn()
+	}
 }

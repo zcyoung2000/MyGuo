@@ -167,3 +167,56 @@ func TestQueueMigrationKeepsLegacyDataUnownedAndRevisionSurvivesRestart(t *testi
 		t.Fatalf("restart reused acknowledged revision: %v, %v", newer, err)
 	}
 }
+
+func TestNativeProgressAndSyncIntentCommitTogether(t *testing.T) {
+	s := newQueueStore(t)
+	s.SetSyncScope("A")
+	item := HistoryItem{SeriesID: "710000000000001", EpisodeNum: 1, PositionSec: 10, DurationSec: 200, Title: "preserved"}
+	if _, err := s.SavePlaybackProgress(item, "710000000000101", "A"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an outbox write failure after the visible clock update.
+	if _, err := s.db.Exec(`CREATE TRIGGER fail_native_upload BEFORE INSERT ON pending_history_uploads BEGIN SELECT RAISE(ABORT,'fixture failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	item.PositionSec = 99
+	if _, err := s.SavePlaybackProgress(item, "710000000000101", "A"); err == nil {
+		t.Fatal("outbox failure was ignored")
+	}
+	stored, _ := s.GetHistoryItem(item.SeriesID)
+	pending, _ := s.PendingHistoryUploads(10, "A")
+	if stored.PositionSec != 10 || len(pending) != 1 || pending[0].PositionSec != 10 {
+		t.Fatalf("partial write: local=%+v pending=%+v", stored, pending)
+	}
+}
+func TestNativeMutationsRejectOldOwnerUnderStoreLock(t *testing.T) {
+	s := newQueueStore(t)
+	s.SetSyncScope("B")
+	const id = "710000000000001"
+	if _, err := s.SavePlaybackProgress(HistoryItem{SeriesID: id, PositionSec: 80}, "710000000000101", "A"); err == nil {
+		t.Fatal("stale progress accepted")
+	}
+	if _, err := s.ToggleFavorite(FavoriteItem{SeriesID: id}, "A"); err == nil {
+		t.Fatal("stale favorite accepted")
+	}
+	if err := s.SetLike(LikeItem{SeriesID: id, EpisodeID: "710000000000101"}, true, "A"); err == nil {
+		t.Fatal("stale like accepted")
+	}
+	if _, ok := s.GetHistoryItem(id); ok || s.IsFavorite(id) || s.IsLiked(id, "710000000000101", 1) {
+		t.Fatal("old mutation appeared in current account")
+	}
+}
+func TestNativeFavoriteAndIntentRollbackTogether(t *testing.T) {
+	s := newQueueStore(t)
+	s.SetSyncScope("A")
+	if _, err := s.db.Exec(`CREATE TRIGGER fail_native_favorite BEFORE INSERT ON pending_favorite_ops BEGIN SELECT RAISE(ABORT,'fixture failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	const id = "710000000000001"
+	if _, err := s.ToggleFavorite(FavoriteItem{SeriesID: id}, "A"); err == nil {
+		t.Fatal("favorite intent failure ignored")
+	}
+	if s.IsFavorite(id) {
+		t.Fatal("local favorite committed without its sync intent")
+	}
+}
