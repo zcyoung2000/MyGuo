@@ -165,7 +165,6 @@ type Settings struct {
 type App struct {
 	playerSentSequence          uint64
 	playerFullscreen            bool
-	playerInput                 playerInputState
 	playerDraft                 string
 	playerEpisodesList          ui.ListState
 	playerCommentsList          ui.ListState
