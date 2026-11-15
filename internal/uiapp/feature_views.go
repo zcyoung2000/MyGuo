@@ -260,7 +260,7 @@ func (a *App) renderReleases(c *ui.Context) {
 		inlineError(c, value.Error, func() { go a.LoadReleases() })
 	}
 	if value.Loading && len(value.Items) == 0 {
-		a.gridSkeleton(c, 12, a.gridContentWidth(c))
+		a.releaseSkeleton(c, value)
 		return
 	}
 	if len(value.Items) == 0 {
@@ -287,6 +287,35 @@ func (a *App) releaseCardGrid(c *ui.Context, items []CatalogItem) {
 			}
 		})
 	})
+}
+
+func (a *App) releaseSkeleton(c *ui.Context, value ReleaseState) {
+	if value.Calendar {
+		_, windowHeight := c.Size()
+		posterWidth := newReleasePosterWidth(float32(windowHeight))
+		posterHeight := posterWidth * posterAspectRatio
+		skeleton := pagePlaceholder(c)
+		ui.Column(c.Key("releases-sparse-content")).FillWidth().Children(func() {
+			ui.Column(c.Key("release-skeleton")).FillWidth().Gap(18).Children(func() {
+				for range min(3, max(1, len(value.Dates))) {
+					ui.Row(c).FillWidth().Gap(18).AlignItems(ui.Stretch).MinHeight(posterHeight).Children(func() {
+						skeleton.bone(c.Key("poster"), 10).Width(posterWidth).Height(posterHeight).
+							Role(ui.RoleImage).Label("加载海报占位")
+						ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(18, 20).Gap(12).
+							Background(ui.RGBA(20, 21, 28, 255)).
+							Border(1, ui.RGBA(255, 255, 255, 0.08)).Radius(12).Children(func() {
+							skeleton.text(c.Key("title"), 22, 1.2).WidthPercent(52)
+							skeleton.text(c.Key("date"), 13, 1.3).WidthPercent(28)
+							skeleton.text(c.Key("category"), 13, 1.3).WidthPercent(20)
+							skeleton.bone(c.Key("action"), 9).Size(92, 38)
+						})
+					})
+				}
+			})
+		})
+		return
+	}
+	posterGridSkeleton(c, 12, a.gridContentWidth(c), nil)
 }
 
 func (a *App) releaseFeatureRow(c *ui.Context, item CatalogItem, posterWidth float32) {

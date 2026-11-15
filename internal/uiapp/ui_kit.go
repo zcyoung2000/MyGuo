@@ -84,19 +84,32 @@ func (a *App) gridContentWidth(c *ui.Context) float32 {
 	return max(320, width-sidebarWidth-32)
 }
 
-// dramaSkeleton mirrors the real card geometry before any content arrives,
-// so skeletons and loaded grids cannot shift the page.
+// dramaSkeleton mirrors the card grid geometry before any content arrives.
 func dramaSkeleton(c *ui.Context, count int, width float32) {
+	posterGridSkeleton(c, count, width, nil)
+}
+
+func posterGridSkeleton(c *ui.Context, count int, width float32, contentHeight func(cardWidth float32) float32) {
 	skeleton := pagePlaceholder(c)
 	cardWidth := dramaCardWidth(width)
+	cardHeight := cardWidth*posterAspectRatio + catalogTextLineHeight*2 + catalogRowGap*2
+	if contentHeight != nil {
+		cardHeight = contentHeight(cardWidth)
+	}
 	posterHeight := cardWidth * posterAspectRatio
-	ui.Row(c.Key("drama-skeleton")).Wrap().Gap(dramaCardGap).Children(func() {
-		for index := range count {
-			ui.Column(c.Key(index)).Width(cardWidth).Gap(6).Children(func() {
-				skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(posterHeight).
-					AspectRatio(posterAspectRatio).Role(ui.RoleImage).Label("加载海报占位")
-				skeleton.text(c.Key("title"), 13, 1.3).WidthPercent(92)
-				skeleton.text(c.Key("metadata"), 12, 1.3).WidthPercent(boneWidth(index))
+	columns := dramaColumns(width)
+	ui.Column(c.Key("drama-skeleton")).Gap(cardGridVerticalGap).Children(func() {
+		for offset := 0; offset < count; offset += columns {
+			rowIndex := offset
+			ui.Row(c.Key(rowIndex)).Gap(dramaCardGap).Children(func() {
+				for index := offset; index < min(offset+columns, count); index++ {
+					ui.Column(c.Key(index)).Width(cardWidth).Height(cardHeight).Gap(catalogRowGap).Children(func() {
+						skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(posterHeight).
+							AspectRatio(posterAspectRatio).Role(ui.RoleImage).Label("加载海报占位")
+						skeleton.text(c.Key("title"), 13, catalogTextLineHeight/13).WidthPercent(92)
+						skeleton.text(c.Key("metadata"), 12, catalogTextLineHeight/12).WidthPercent(boneWidth(index))
+					})
+				}
 			})
 		}
 	})

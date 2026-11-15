@@ -126,3 +126,60 @@ func TestSkeletonGeometryMatchesReadyContent(t *testing.T) {
 		t.Fatalf("skeleton bone does not use the visible grid width: bone=%+.2f card=%+.2f", skeleton.Bounds.W, content.W)
 	}
 }
+
+func TestDiscoverAndNewSkeletonsMatchTheirReadyShapes(t *testing.T) {
+	width, height := 1600, 1000
+
+	discoverLoading := NewTestApp()
+	discoverLoading.view = "discover"
+	discoverLoading.catalog.Loading = true
+	discoverTester := ui.NewTester(discoverLoading.Render, width, height)
+	discoverTester.Frame()
+	discoverBone, discoverBoneOK := discoverTester.AccessByRole(ui.RoleImage, "加载海报占位")
+	if !discoverBoneOK {
+		t.Fatal("discover skeleton poster missing")
+	}
+	discoverLoading.catalog.Loading = false
+	discoverLoading.catalog.Items = []CatalogItem{{ID: "discover-skeleton", Title: "找剧真实卡片"}}
+	discoverTester.Frame()
+	discoverReady, discoverReadyOK := discoverTester.Find("找剧真实卡片")
+	if !discoverReadyOK {
+		t.Fatal("discover ready card missing")
+	}
+	if absDiff(float64(discoverBone.Bounds.X), float64(discoverReady.X)) > 2 ||
+		absDiff(float64(discoverBone.Bounds.W), float64(discoverReady.W)) > 2 ||
+		absDiff(float64(discoverBone.Bounds.H), float64(discoverReady.W*posterAspectRatio)) > 2 {
+		t.Fatalf("discover skeleton does not preserve the poster row geometry: bone=%+v card=%+v", discoverBone.Bounds, discoverReady)
+	}
+
+	newLoading := NewTestApp()
+	newLoading.view = "new"
+	newLoading.releases.Loading = true
+	newLoading.releases.Calendar = true
+	newLoading.releases.Dates = []string{"20261106", "20261107"}
+	newTester := ui.NewTester(newLoading.Render, width, height)
+	newTester.Frame()
+	var newBones []ui.AccessInfo
+	for _, access := range newTester.AccessAll() {
+		if access.Role == ui.RoleImage && access.Name == "加载海报占位" {
+			newBones = append(newBones, access)
+		}
+	}
+	if len(newBones) != 2 {
+		t.Fatalf("calendar skeleton does not mirror the number of results: %d", len(newBones))
+	}
+	newLoading.releases.Loading = false
+	newLoading.releases.Items = []CatalogItem{
+		{ID: "new-one", Title: "新剧真实卡片一", Upcoming: true, PublishAt: "2026-11-06"},
+		{ID: "new-two", Title: "新剧真实卡片二", Upcoming: true, PublishAt: "2026-11-07"},
+	}
+	newTester.Frame()
+	newReady, newReadyOK := newTester.AccessByRole(ui.RoleImage, "poster:new-one|")
+	if !newReadyOK {
+		t.Fatal("calendar ready poster missing")
+	}
+	if absDiff(float64(newBones[0].Bounds.X), float64(newReady.Bounds.X)) > 2 ||
+		absDiff(float64(newBones[0].Bounds.W), float64(newReady.Bounds.W)) > 2 {
+		t.Fatalf("calendar skeleton does not preserve the feature row geometry: bone=%+v title=%+v", newBones[0].Bounds, newReady)
+	}
+}

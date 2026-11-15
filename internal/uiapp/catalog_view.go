@@ -49,7 +49,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 			inlineError(c, catalog.Error, func() { go a.loadCatalog(catalog.Cursor != "") })
 		} else if len(catalog.Items) == 0 {
 			if catalog.Loading {
-				a.gridSkeleton(c, 12, width)
+				a.discoverSkeleton(c, width)
 			} else if !catalog.HasMore {
 				a.emptyView(c, "暂无短剧", "换个筛选条件试试")
 			}
@@ -97,6 +97,12 @@ func (a *App) catalogFilterSummary(catalog Catalog) string {
 		return "筛选"
 	}
 	return "筛选 · " + strings.Join(selected, " · ")
+}
+
+func (a *App) discoverSkeleton(c *ui.Context, width float32) {
+	rowHeight := a.collectionRowHeight(c, dramaCardWidth(width), []CatalogItem{{}}) +
+		dramaCardWidth(width)*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap
+	posterGridSkeleton(c, 12, width, func(float32) float32 { return rowHeight })
 }
 
 const (
