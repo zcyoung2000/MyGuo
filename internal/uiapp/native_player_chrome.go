@@ -31,15 +31,6 @@ func (a *App) renderNativePlayerHeading(c *ui.Context, s playback.State, bottom,
 			ui.Text(c, label).FontSize(12).TextColor(ui.RGBA(255, 255, 255, .8)).TextShadow(0, 1, 3, ui.RGBA(0, 0, 0, .8)).PassThrough()
 		}
 	})
-	top := float32(18)
-	if s.Mode == playback.Feed && available < 1080 {
-		top = 76
-	}
-	ui.Row(c.Key("player-header")).Absolute().Top(top).Right(18).Gap(8).PassThrough().Transition(playerChromeTransition).Children(func() {
-		if s.Mode == playback.Feed {
-			playerAction(c, "player-refresh", "刷新", func() { command("refresh", nil) })
-		}
-	})
 	if s.Mode == playback.Series || a.navIndex > 0 {
 		ui.Toolbar(c.Key("player-navigation"), func() {
 			navigationBack(c, "player-back", true, func() {

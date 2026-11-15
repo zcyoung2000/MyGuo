@@ -188,7 +188,6 @@ type App struct {
 	detailTab                   int
 	detailDescriptionOpen       bool
 	detailDescriptionLayout     descriptionLayout
-	detailJumpEpisode           int
 	detailScroll                ui.ScrollState
 	detailScrollReset           bool
 	catalogScrollReset          bool
@@ -696,7 +695,7 @@ func (a *App) open(view, seriesID string) {
 		a.media.Stop()
 	}
 	a.detail = Detail{}
-	a.detailTab, a.detailJumpEpisode = 0, 0
+	a.detailTab = 0
 	a.detailDescriptionOpen = false
 	a.detailEpisodesList = nil
 	a.detailScrollReset = true

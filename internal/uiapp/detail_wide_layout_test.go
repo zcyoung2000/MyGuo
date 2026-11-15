@@ -3,7 +3,6 @@ package uiapp
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -177,7 +176,7 @@ func TestDetailShowsAdaptationsAndOtherSeasons(t *testing.T) {
 	}
 }
 
-func TestDetailDurationAndResumeJump(t *testing.T) {
+func TestDetailDurationWithoutEpisodeTools(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = convertDetail("123456", &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "时长详情", EpisodeCount: 812, Episodes: []ipc.EpisodeDTO{{ID: "episode-1", Number: 1, DurationSec: 129}}}})
@@ -188,12 +187,7 @@ func TestDetailDurationAndResumeJump(t *testing.T) {
 	app.detail = longDetailEpisodesFixture(812)
 	app.resume = CatalogItem{ID: app.detail.ID, ResumeEpisode: 731}
 	tt.Frame()
-	if err := tt.Click("定位第731集"); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(time.Second, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return app.detailJumpEpisode == 731 })
-	tt.Frame()
-	if !tt.HasText("第731集") {
-		t.Fatalf("resume jump failed: %v", tt.Texts())
+	if tt.HasText("定位第731集") || tt.HasText("跳转集数") {
+		t.Fatalf("episode tools should be removed: %v", tt.Texts())
 	}
 }
