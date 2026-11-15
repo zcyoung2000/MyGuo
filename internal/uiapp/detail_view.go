@@ -103,11 +103,6 @@ func (a *App) renderDetail(c *ui.Context) {
 		}
 		return ""
 	}
-	if a.detailJumpEpisode > 0 {
-		n := a.detailJumpEpisode
-		a.detailJumpEpisode = 0
-		state.ScrollTo(detailFirstEpisodeRow+(n-1)/columns, ui.Center)
-	}
 	host.Children(func() {
 		ui.List(c.Key("detail-page-list"), state, rows, func(row int) {
 			switch {
@@ -191,13 +186,7 @@ func (a *App) renderDetailHero(c *ui.Context, d Detail, width float32) {
 					a.renderDetailDescription(c, d.Description, max(float32(0), width-posterWidth-24))
 				}
 
-				if d.Source != nil {
-					a.renderDetailSource(c, d.Source)
-				}
-				a.renderDetailActions(c, d)
-				if d.PublishText != "" {
-					ui.Text(c, d.PublishText).FontSize(11).TextColor(ui.RGBA(255, 255, 255, .42))
-				}
+				a.renderDetailSummaryRow(c, d, max(float32(0), width-posterWidth-24))
 			})
 		})
 		if len(d.Actors) > 0 {
@@ -206,8 +195,27 @@ func (a *App) renderDetailHero(c *ui.Context, d Detail, width float32) {
 	})
 }
 
-func (a *App) renderDetailActions(c *ui.Context, d Detail) {
-	ui.Row(c.Key("detail-actions")).Wrap().Gap(10).AlignItems(ui.Center).Children(func() {
+// This row combines a source summary, actions and date rather than a window
+// toolbar (MyGo v0.9.1). Keep the existing PrimaryButton/Button semantics and
+// appearance; the source shrinks first, with complete titles in tooltips.
+func (a *App) renderDetailSummaryRow(c *ui.Context, d Detail, width float32) {
+	row := ui.Row(c.Key("detail-summary-row")).FillWidth().Gap(c.Theme().Space(3)).AlignItems(ui.Center)
+	if width < 560*max(float32(1), c.Preferences().TextScale) {
+		row.Wrap()
+	}
+	row.Children(func() {
+		if d.Source != nil {
+			a.renderDetailSource(c, d.Source).Shrink(1).MaxWidth(min(float32(420), width))
+		}
+		a.renderDetailActions(c, d).Shrink(0).MaxWidth(width)
+		if d.PublishText != "" {
+			ui.Text(c.Key("detail-publish-date"), d.PublishText).FontSize(11).SingleLine().Shrink(0).TextColor(ui.RGBA(255, 255, 255, .42))
+		}
+	})
+}
+
+func (a *App) renderDetailActions(c *ui.Context, d Detail) ui.Element {
+	return ui.Row(c.Key("detail-actions")).Wrap().Gap(10).AlignItems(ui.Center).Children(func() {
 		if !d.Upcoming {
 			label := "播放 / 继续观看"
 			if a.resume.ResumeEpisode > 1 {
@@ -285,33 +293,7 @@ func (a *App) renderDetailTabs(c *ui.Context, d Detail) {
 func (a *App) renderDetailEpisodeTools(c *ui.Context, d Detail) {
 	ui.Row(c.Key("detail-episode-tools")).FillWidth().Height(42).AlignItems(ui.Center).Gap(12).Children(func() {
 		ui.Textf(c, "共 %d 集", len(d.Episodes)).FontSize(11).TextColor(c.Theme().TextMuted)
-		ui.Spacer(c)
-		if a.resume.ResumeEpisode > 0 && a.resume.ResumeEpisode <= len(d.Episodes) {
-			n := a.resume.ResumeEpisode
-			ui.Button(c, fmt.Sprintf("定位第%d集", n)).FontSize(11).Padding(5, 9).OnClick(func() { go a.jumpDetailEpisode(n) })
-		}
-		if len(d.Episodes) > 80 {
-			ui.MenuButton(c, "跳转集数", func(m *ui.Menu) {
-				for start := 1; start <= len(d.Episodes); start += 100 {
-					n := start
-					if m.Item(fmt.Sprintf("第%d–%d集", n, min(n+99, len(d.Episodes)))).Chosen() {
-						go a.jumpDetailEpisode(n)
-					}
-				}
-			}).FontSize(11).Padding(5, 9)
-		}
 	})
-}
-
-func (a *App) jumpDetailEpisode(number int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.view != "detail" || number < 1 || number > len(a.detail.Episodes) {
-		return
-	}
-	a.detailJumpEpisode = number
-	a.detailTab = detailTabEpisodes
-	a.invalidate()
 }
 
 func (a *App) renderDetailEpisodeRow(c *ui.Context, episodes []CatalogItem, start, columns int, width float32) {
@@ -371,13 +353,13 @@ func (a *App) renderDetailRelated(c *ui.Context, d Detail, section string, width
 
 // A compact source summary belongs beside the introduction. Its maximum width
 // keeps a short novel title from stretching a bordered card across the window.
-func (a *App) renderDetailSource(c *ui.Context, source *ipc.SourceNovelDTO) {
-	ui.Row(c.Key("detail-source-card")).MaxWidth(420).MinWidth(0).AlignSelf(ui.Start).Gap(10).Padding(10, 12).Radius(10).
+func (a *App) renderDetailSource(c *ui.Context, source *ipc.SourceNovelDTO) ui.Element {
+	return ui.Row(c.Key("detail-source-card")).MaxWidth(420).MinWidth(0).Gap(10).Padding(10, 12).Radius(10).
 		Role(ui.RoleGroup).Label("原著信息").Background(ui.RGBA(255, 255, 255, .035)).Border(1, c.Theme().Border).Children(func() {
 		a.image(c, source.CoverURL, 36, 48)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 			ui.Text(c, "原著小说").FontSize(10).TextColor(c.Theme().Accent)
-			ui.Text(c, source.Title).FontSize(13).Bold().MaxLines(2).Tooltip(source.Title)
+			ui.Text(c, source.Title).FontSize(13).Bold().SingleLine().Tooltip(source.Title)
 			if len(source.Tags) > 0 {
 				ui.Text(c, strings.Join(source.Tags, " · ")).FontSize(11).SingleLine().TextColor(c.Theme().TextMuted)
 			}
@@ -410,7 +392,6 @@ func (a *App) renderDetailCollection(c *ui.Context, label string, value DetailCo
 		cardWidth := (width - float32(columns-1)*gap) / float32(columns)
 		ui.Grid(c).Columns(columns).FillWidth().GapX(gap).GapY(22).Children(func() {
 			for _, item := range value.Items {
-				item.Category = ""
 				a.catalogCardSized(c, item, cardWidth)
 			}
 		})
