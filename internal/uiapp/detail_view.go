@@ -410,6 +410,7 @@ func (a *App) renderDetailCollection(c *ui.Context, label string, value DetailCo
 		cardWidth := (width - float32(columns-1)*gap) / float32(columns)
 		ui.Grid(c).Columns(columns).FillWidth().GapX(gap).GapY(22).Children(func() {
 			for _, item := range value.Items {
+				item.Category = ""
 				a.catalogCardSized(c, item, cardWidth)
 			}
 		})
