@@ -78,7 +78,7 @@ func TestDetailCollectionErrorDistinguishesFromHiddenEmpty(t *testing.T) {
 	if tt.HasText("暂无同系列短剧") || tt.HasText("同系列短剧") {
 		t.Fatalf("empty collection rendered instead of hiding: texts=%v", tt.Texts())
 	}
-	if !tt.HasText("同一剧本改编") || tt.HasText("暂无同一剧本改编") {
+	if !tt.HasText("同系列作品") || tt.HasText("暂无同系列作品") {
 		t.Fatalf("empty state shown for failed collection")
 	}
 }

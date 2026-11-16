@@ -58,8 +58,8 @@ func TestDetailFullWidthEpisodesBelowHero(t *testing.T) {
 		if first.X >= hero.X || first.W < 126 || first.H != 46 {
 			t.Fatalf("episodes do not use full content width: hero=%v first=%v", hero, first)
 		}
-		if !tt.HasText("原著小说") {
-			t.Fatal("source summary missing from introduction")
+		if tt.HasText("原著小说") {
+			t.Fatal("source novel remains in introduction")
 		}
 	}
 }
@@ -90,7 +90,7 @@ func TestDetailOnePageScrollPinsTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tt.HasText("同一剧本改编") {
+	if !tt.HasText("同系列作品") {
 		t.Fatalf("related section unreachable after scrolling: %v", tt.Texts())
 	}
 	if err := tt.Click("选集 812"); err != nil {
@@ -166,7 +166,7 @@ func TestDetailShowsAdaptationsAndOtherSeasons(t *testing.T) {
 	if !ok || last.Y <= first.Y {
 		t.Fatalf("later adaptations hidden horizontally: first=%v last=%v", first, last)
 	}
-	if !tt.HasText("共 14 部") || !tt.HasText("同系列其他季") || tt.HasText("当前剧集") {
+	if !tt.HasText("共 15 部") || !tt.HasText("同系列其他季") || tt.HasText("当前剧集") {
 		t.Fatal("missing season section or wrong adaptation count")
 	}
 	app.detailEpisodesList.ScrollToEnd()

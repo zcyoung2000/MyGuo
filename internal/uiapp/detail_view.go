@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"myguo/internal/ipc"
 )
 
 const (
@@ -168,6 +167,9 @@ func (a *App) renderDetailHero(c *ui.Context, d Detail, width float32) {
 					if d.LikeCount > 0 {
 						ui.Text(c, formatCountText(d.LikeCount)+"赞").FontSize(12).TextColor(c.Theme().TextMuted)
 					}
+					if d.PublishText != "" {
+						ui.Text(c.Key("detail-publish-date"), d.PublishText).FontSize(11).SingleLine().TextColor(c.Theme().TextMuted)
+					}
 				})
 				ui.Row(c.Key("detail-tags")).Wrap().Gap(7).Children(func() {
 					labels := append(detailProgressPieces(d.StatusText), d.Tags...)
@@ -186,30 +188,11 @@ func (a *App) renderDetailHero(c *ui.Context, d Detail, width float32) {
 					a.renderDetailDescription(c, d.Description, max(float32(0), width-posterWidth-24))
 				}
 
-				a.renderDetailSummaryRow(c, d, max(float32(0), width-posterWidth-24))
+				a.renderDetailActions(c, d)
 			})
 		})
 		if len(d.Actors) > 0 {
 			a.renderDetailActors(c, d)
-		}
-	})
-}
-
-// This row combines a source summary, actions and date rather than a window
-// toolbar (MyGo v0.9.1). Keep the existing PrimaryButton/Button semantics and
-// appearance; the source shrinks first, with complete titles in tooltips.
-func (a *App) renderDetailSummaryRow(c *ui.Context, d Detail, width float32) {
-	row := ui.Row(c.Key("detail-summary-row")).FillWidth().Gap(c.Theme().Space(3)).AlignItems(ui.Center)
-	if width < 560*max(float32(1), c.Preferences().TextScale) {
-		row.Wrap()
-	}
-	row.Children(func() {
-		if d.Source != nil {
-			a.renderDetailSource(c, d.Source).Shrink(1).MaxWidth(min(float32(420), width))
-		}
-		a.renderDetailActions(c, d).Shrink(0).MaxWidth(width)
-		if d.PublishText != "" {
-			ui.Text(c.Key("detail-publish-date"), d.PublishText).FontSize(11).SingleLine().Shrink(0).TextColor(ui.RGBA(255, 255, 255, .42))
 		}
 	})
 }
@@ -319,13 +302,28 @@ func (a *App) renderDetailEpisodeRow(c *ui.Context, episodes []CatalogItem, star
 
 func detailRelatedSections(d Detail) []string {
 	sections := []string{}
+	if detailHasSource(d) || d.Adaptations.Loading || d.Adaptations.HasMore || d.Adaptations.Error != "" || len(d.Adaptations.Items) > 0 {
+		sections = append(sections, "adaptations")
+	}
 	if len(d.Seasons.Items) > 0 || d.Seasons.Error != "" {
 		sections = append(sections, "seasons")
 	}
-	if d.Adaptations.Loading || d.Adaptations.HasMore || d.Adaptations.Error != "" || len(d.Adaptations.Items) > 0 {
-		sections = append(sections, "adaptations")
-	}
 	return sections
+}
+
+func detailHasSource(d Detail) bool {
+	return d.Source != nil && strings.TrimSpace(d.Source.Title) != ""
+}
+
+// Source novels share the existing poster grid (MyGo v0.9.1). This view-only
+// item is read-only; neither its ID nor its position changes the API paging.
+func detailSeriesWorks(d Detail) DetailCollection {
+	value := d.Adaptations
+	value.Title = ""
+	if detailHasSource(d) {
+		value.Items = append([]CatalogItem{{ID: "source-novel:" + d.Source.ID, Kind: "source_novel", Title: d.Source.Title, CoverURL: d.Source.CoverURL, Heat: d.Source.Status}}, value.Items...)
+	}
+	return value
 }
 
 func (a *App) renderDetailRelated(c *ui.Context, d Detail, section string, width float32) {
@@ -335,7 +333,7 @@ func (a *App) renderDetailRelated(c *ui.Context, d Detail, section string, width
 		case "seasons":
 			a.renderDetailCollection(c, "同系列其他季", d.Seasons, width, func() { go a.RetrySupplement(false) })
 		case "adaptations":
-			a.renderDetailCollection(c, "同一剧本改编", d.Adaptations, width, func() {
+			a.renderDetailCollection(c, "同系列作品", detailSeriesWorks(d), width, func() {
 				if d.Adaptations.HasMore {
 					go a.loadSupplement(d.ID, generation, true, true)
 				} else {
@@ -348,22 +346,6 @@ func (a *App) renderDetailRelated(c *ui.Context, d Detail, section string, width
 
 		}
 
-	})
-}
-
-// A compact source summary belongs beside the introduction. Its maximum width
-// keeps a short novel title from stretching a bordered card across the window.
-func (a *App) renderDetailSource(c *ui.Context, source *ipc.SourceNovelDTO) ui.Element {
-	return ui.Row(c.Key("detail-source-card")).MaxWidth(420).MinWidth(0).Gap(10).Padding(10, 12).Radius(10).
-		Role(ui.RoleGroup).Label("原著信息").Background(ui.RGBA(255, 255, 255, .035)).Border(1, c.Theme().Border).Children(func() {
-		a.image(c, source.CoverURL, 36, 48)
-		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-			ui.Text(c, "原著小说").FontSize(10).TextColor(c.Theme().Accent)
-			ui.Text(c, source.Title).FontSize(13).Bold().SingleLine().Tooltip(source.Title)
-			if len(source.Tags) > 0 {
-				ui.Text(c, strings.Join(source.Tags, " · ")).FontSize(11).SingleLine().TextColor(c.Theme().TextMuted)
-			}
-		})
 	})
 }
 

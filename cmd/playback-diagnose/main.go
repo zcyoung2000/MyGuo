@@ -35,6 +35,7 @@ func (t inspect) Do(ctx context.Context, request *sdk.Request) (*sdk.Response, e
 }
 func run() error {
 	episode := flag.String("episode", "7694371347610209304", "episode to resolve")
+	series := flag.String("series", "", "compare episode-list and batch-detail endpoints for a series")
 	accountDB := flag.String("account-db", "", "optional account database, opened read-only; device state remains in memory")
 	flag.Parse()
 	transport := auth.New()
@@ -57,6 +58,22 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if *series != "" {
+		page, listErr := client.ListEpisodes(ctx, *series, sdk.EpisodeOptions{})
+		count := 0
+		if page != nil {
+			count = len(page.Items)
+		}
+		fmt.Printf("single episodes=%d error=%v\n", count, listErr)
+		details, batchErr := client.GetSeriesBatch(ctx, []string{*series})
+		fmt.Printf("batch series=%d error=%v\n", len(details), batchErr)
+		for _, d := range details {
+			if d.Series != nil {
+				fmt.Printf("batch title=%q episodes=%d declared=%d status=%v rightText=%q\n", d.Series.Title, len(d.Episodes), d.Series.EpisodeCount, d.Series.Status, d.Series.RightText)
+			}
+		}
+		return nil
+	}
 	playback, err := client.ResolvePlayback(ctx, *episode, sdk.PlaybackOptions{})
 	if playback == nil {
 		return err

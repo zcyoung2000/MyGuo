@@ -45,8 +45,8 @@ func TestOfficialRelatedPageRestoresOtherSeasonsAndCardNavigation(t *testing.T) 
 	if !ok {
 		t.Fatal("season group absent")
 	}
-	adaptation, ok := tt.Find("同一剧本改编")
-	if !ok || adaptation.Y <= season.Y {
+	adaptation, ok := tt.Find("同系列作品")
+	if !ok || adaptation.Y >= season.Y {
 		t.Fatal("groups missing or mixed")
 	}
 	if tt.HasText("重复第二季") || tt.HasText("不得混入改编") || tt.HasText("猜你喜欢") {
@@ -74,7 +74,7 @@ func TestOnlyOtherSeasonsDoesNotRequireAdaptations(t *testing.T) {
 	a.detail = Detail{ID: "current"}
 	a.loadSupplement("current", a.generation, true)
 	tt := scrollInputTester(a, 1000, 1000)
-	if !tt.HasText("独立续季") || tt.HasText("暂无相关作品") || tt.HasText("同一剧本改编") {
+	if !tt.HasText("独立续季") || tt.HasText("暂无相关作品") || tt.HasText("同系列作品") {
 		t.Fatal("season-only response hidden or misleading")
 	}
 }

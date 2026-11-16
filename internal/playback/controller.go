@@ -5,6 +5,7 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -143,6 +144,7 @@ type slot struct {
 	stallResumed   bool
 	ended          bool
 	err            string
+	unavailable    bool
 	sourceURL      string
 }
 
@@ -470,10 +472,14 @@ func (c *Controller) resolve(card ipc.SeriesCard, number int, resume float64, ep
 					err = fmt.Errorf("没有可用的播放地址")
 				}
 				s.err = fmt.Sprint(err)
+				s.unavailable = errors.Is(err, ipc.ErrNoPlayableEpisodes)
 				if c.desired == key {
 					c.state.Loading = false
 					log.Printf("[native-player] resolve/load series=%q: %s", s.seriesID, s.err)
-					c.state.Error = "视频加载失败，请检查网络后重试"
+					c.state.Error = sourceLoadMessage(s)
+					if s.unavailable && c.state.Mode == Feed {
+						c.skipUnavailableFeed(s)
+					}
 				}
 				return
 			}
@@ -510,8 +516,11 @@ func (c *Controller) applySlot(s *slot) {
 	if s.dto == nil {
 		if s.err != "" {
 			log.Printf("[native-player] resolve/load series=%q: %s", s.seriesID, s.err)
-			c.state.Error = "视频加载失败，请检查网络后重试"
+			c.state.Error = sourceLoadMessage(s)
 			c.state.Loading = false
+			if s.unavailable && c.state.Mode == Feed {
+				c.skipUnavailableFeed(s)
+			}
 		}
 		return
 	}

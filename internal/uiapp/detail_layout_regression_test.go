@@ -30,7 +30,7 @@ func TestDetailVerticalRhythmAndCollectionSpacing(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	adaptations, ok := tt.Find("同一剧本改编")
+	adaptations, ok := tt.Find("同系列作品")
 	if !ok || adaptations.Y <= 0 || !tt.HasText("同系列其他季") {
 		t.Fatalf("adaptation section missing or seasons mixed in: %v", tt.Texts())
 	}
@@ -41,7 +41,7 @@ func TestDetailVerticalRhythmAndCollectionSpacing(t *testing.T) {
 		t.Fatalf("related card titles missing: %v", tt.Texts())
 	}
 	source, ok := tt.AccessByRole(ui.RoleGroup, "原著信息")
-	if !ok || source.Bounds.Y >= adaptations.Y {
-		t.Fatal("source summary not moved into introduction")
+	if !ok || source.Bounds.Y <= adaptations.Y {
+		t.Fatal("source novel not in related collection")
 	}
 }

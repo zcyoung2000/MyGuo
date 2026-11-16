@@ -18,6 +18,7 @@ func (a *App) renderNativePlayer(c *ui.Context) {
 	a.renderNativePlayerState(c, s)
 }
 func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
+	a.playerNativeBackdrop = s.Engine != nil && s.Status.Ready && s.Status.Displayed && s.Error == "" && !s.Status.PictureInPicture
 	host := a.media
 	command := func(cmd string, value any) {
 		if host != nil {
@@ -145,8 +146,8 @@ func chooseText(value bool, yes, no string) string {
 	}
 	return no
 }
-func playerAction(c *ui.Context, key, label string, action func()) ui.Element {
-	return chromeButton(c, key, label).OnClick(action)
+func (a *App) playerAction(c *ui.Context, key, label string, action func()) ui.Element {
+	return a.chromeButton(c, key, label).OnClick(action)
 }
 func (a *App) nativeRailAction(c *ui.Context, key string, icon *ui.SVG, label string, active bool, action func()) {
 	b := ui.ButtonBase(c.Key(key)).Label(label).Focusable().FillWidth().Radius(10).Padding(8, 2).OnClick(action)
@@ -172,16 +173,16 @@ func (a *App) renderNativePlayerControls(c *ui.Context, s playback.State, comman
 		}
 		playerSlider(c, "player-seek", "播放进度", position, math.Max(1, duration), s.Status.Buffered, func(v float64) { command("seek", v) }).FillWidth()
 		ui.Row(c.Key("player-controls-row")).Wrap().Gap(6).AlignItems(ui.Center).PassThrough().Children(func() {
-			playerAction(c, "player-play", chooseText(s.Paused || s.Status.Ended, "播放", "暂停"), func() { command("toggle", nil) })
-			playerAction(c, "player-prev-episode", "上一集", func() { command("prevEpisode", nil) })
-			playerAction(c, "player-next-episode", "下一集", func() { command("nextEpisode", nil) })
+			a.playerAction(c, "player-play", chooseText(s.Paused || s.Status.Ended, "播放", "暂停"), func() { command("toggle", nil) })
+			a.playerAction(c, "player-prev-episode", "上一集", func() { command("prevEpisode", nil) })
+			a.playerAction(c, "player-next-episode", "下一集", func() { command("nextEpisode", nil) })
 			ui.Text(c.Key("player-time"), playerTime(position)+" / "+playerTime(duration)).FontSize(11).TextColor(ui.RGBA(255, 255, 255, .66)).SingleLine().PassThrough()
 			ui.Box(c).Grow(1).PassThrough()
 			quality := s.Preferences.Quality
 			if s.Playback != nil && s.Playback.Quality != "" {
 				quality = s.Playback.Quality
 			}
-			choiceMenu(c, "player-quality", quality, func(m *ui.Menu) {
+			a.choiceMenu(c, "player-quality", quality, func(m *ui.Menu) {
 				if s.Playback == nil || len(s.Playback.Qualities) == 0 {
 					m.Item("视频加载后可选择画质").Disabled(true)
 					return
@@ -196,21 +197,21 @@ func (a *App) renderNativePlayerControls(c *ui.Context, s playback.State, comman
 					}
 				}
 			})
-			choiceMenu(c, "player-rate", fmt.Sprintf("%g×", s.Preferences.Rate), func(m *ui.Menu) {
+			a.choiceMenu(c, "player-rate", fmt.Sprintf("%g×", s.Preferences.Rate), func(m *ui.Menu) {
 				for _, rate := range []float64{.75, 1, 1.25, 1.5, 2} {
 					if m.Item(fmt.Sprintf("%g×", rate)).Checked(rate == s.Preferences.Rate).Chosen() {
 						command("speed", rate)
 					}
 				}
 			})
-			playerAction(c, "player-pip", "画中画", func() { command("pip", nil) })
-			playerAction(c, "player-fullscreen", "全屏", func() { command("fullscreen", nil) })
-			playerAction(c, "player-settings", "设置", func() { command("panel", "settings") })
+			a.playerAction(c, "player-pip", "画中画", func() { command("pip", nil) })
+			a.playerAction(c, "player-fullscreen", "全屏", func() { command("fullscreen", nil) })
+			a.playerAction(c, "player-settings", "设置", func() { command("panel", "settings") })
 		})
 		ui.Row(c.Key("player-danmaku-row")).Gap(8).AlignItems(ui.Center).MinWidth(0).PassThrough().Children(func() {
-			playerAction(c, "player-danmaku-toggle", chooseText(s.Preferences.Danmaku.Enabled, "弹幕开", "弹幕关"), func() { command("danmaku", nil) })
+			a.playerAction(c, "player-danmaku-toggle", chooseText(s.Preferences.Danmaku.Enabled, "弹幕开", "弹幕关"), func() { command("danmaku", nil) })
 			draft := a.playerDraft
-			input := chromeSurface(ui.TextInput(c.Key("player-danmaku-input"), &draft).Grow(1).MinWidth(64).Height(32).Padding(6, 10).Radius(16)).Placeholder("发一条弹幕，一起看剧").Label("弹幕内容").Disabled(s.Sending).OnChange(func() { a.mu.Lock(); a.playerDraft = draft; a.mu.Unlock() })
+			input := a.chromeSurface(ui.TextInput(c.Key("player-danmaku-input"), &draft).Grow(1).MinWidth(64).Height(32).Padding(6, 10).Radius(16)).Placeholder("发一条弹幕，一起看剧").Label("弹幕内容").Disabled(s.Sending).OnChange(func() { a.mu.Lock(); a.playerDraft = draft; a.mu.Unlock() })
 			focused = input.FocusWithin()
 			send := func() {
 				if a.media != nil && a.media.controller != nil {
@@ -226,8 +227,8 @@ func (a *App) renderNativePlayerControls(c *ui.Context, s playback.State, comman
 				}
 				return true
 			})
-			playerAction(c, "player-danmaku-send", chooseText(s.Sending, "发送中", "发送"), send).Disabled(s.Sending)
-			playerAction(c, "player-danmaku-settings", "弹幕设置", func() { command("panel", "danmaku") })
+			a.playerAction(c, "player-danmaku-send", chooseText(s.Sending, "发送中", "发送"), send).Disabled(s.Sending)
+			a.playerAction(c, "player-danmaku-settings", "弹幕设置", func() { command("panel", "danmaku") })
 		})
 	})
 	return focused

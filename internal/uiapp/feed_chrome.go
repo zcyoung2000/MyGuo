@@ -71,7 +71,7 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 	ui.Row(c.Key("feed-channel-overlay")).Absolute().Top(14).Left(0).Right(a.feedChrome.RightInset).Justify(ui.Center).PassThrough().Transition(playerChromeTransition).Children(func() {
 		parts := ui.SegmentedBase(c.Key("feed-channels"), &selected, len(feedChannels))
 		track := parts.Track.Label("推荐频道").Padding(4, 6).Gap(4).Radius(24).
-			Material(chromeMaterial()).
+			Material(a.playerChromeMaterial()).
 			OnChange(func() { go a.SelectFeedChannel(feedChannels[selected].value) })
 
 		if a.ambientActive {

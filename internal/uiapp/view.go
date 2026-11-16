@@ -398,8 +398,13 @@ func (a *App) fixedHeightCatalogCardSized(c *ui.Context, item CatalogItem, width
 
 func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32) ui.Element {
 	t := c.Theme()
-	card := ui.Column(c.Key(item.ID + "|" + item.EpisodeID)).Role(ui.RoleButton).Label(item.Title).Focusable().
+	card := ui.Column(c.Key(item.ID + "|" + item.EpisodeID)).Role(ui.RoleButton).Label(item.Title).
 		Width(width).MinWidth(width).MaxWidth(width).Gap(6)
+	if item.Kind == "source_novel" {
+		card.Role(ui.RoleGroup).Label("原著信息")
+	} else {
+		card.Focusable()
+	}
 	shouldOpen := item.Kind != "source_novel" && (a.view != "reservations" || !item.Upcoming)
 	if shouldOpen {
 		hoverBackground(card, ui.Transparent, ui.RGBA(255, 255, 255, 0.04))
@@ -411,6 +416,9 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 	topLeftBadge := ""
 	topRightBadge := ""
 	bottomRightBadge := ""
+	if item.Kind == "source_novel" {
+		topLeftBadge = "原著小说"
+	}
 
 	if a.view == "new" {
 		if item.Completed {
@@ -438,11 +446,9 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 		posterBox.Children(func() {
 			a.image(c, item.CoverURL, width, width*4/3)
 			if topLeftBadge != "" {
-				ui.Row(c.Key("badge-tl")).Absolute().Top(6).Left(6).
-					Padding(2, 6).Radius(4).Material(artworkMaterial()).
-					Children(func() {
-						ui.Text(c, topLeftBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
-					})
+				ui.Badge(c.Key("badge-tl"), topLeftBadge).Absolute().Top(6).Left(6).
+					Padding(2, 6).Radius(4).Background(ui.Transparent).Material(artworkMaterial()).
+					Bold().TextColor(ui.Hex("#ffffff"))
 			}
 			if bottomRightBadge != "" {
 				ui.Row(c.Key("badge-br")).Absolute().Bottom(6).Right(6).
@@ -485,7 +491,10 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 		})
 
 		ui.Row(c.Key("title-row")).Width(width).Height(catalogTextLineHeight).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, item.Title).Bold().FontSize(13).TextColor(ui.Hex("#ffffff")).SingleLine().Grow(1).MinWidth(0).Label("single-line-title")
+			title := ui.Text(c, item.Title).Bold().FontSize(13).TextColor(ui.Hex("#ffffff")).SingleLine().Grow(1).MinWidth(0).Tooltip(item.Title)
+			if item.Kind != "source_novel" {
+				title.Label("single-line-title")
+			}
 		})
 
 		if a.view == "history" {
@@ -521,7 +530,7 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 			if a.view != "search" && !item.Upcoming && item.BadgeText != "" {
 				ui.Text(c, item.BadgeText).TextColor(t.TextMuted).Width(width)
 			}
-			if a.view != "search" && !item.Upcoming && item.Category != "" {
+			if a.view != "search" && a.view != "detail" && !item.Upcoming && item.Category != "" {
 				ui.Text(c, item.Category).TextColor(t.TextMuted).SingleLine().Width(width)
 			}
 			if !item.Upcoming && (item.Heat != "" || item.EpisodeCount > 0) {

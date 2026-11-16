@@ -45,7 +45,7 @@ func (a *App) renderNativePlayerHeading(c *ui.Context, s playback.State, bottom,
 }
 func (a *App) renderNativePlayerRail(c *ui.Context, s playback.State, command func(string, any)) {
 	ui.Column(c.Key("player-rail-position")).Absolute().Right(18).Top(114).Bottom(168).Width(64).Justify(ui.Center).PassThrough().Transition(playerChromeTransition).Children(func() {
-		chromeSurface(ui.Column(c.Key("player-rail")).FillWidth().Radius(28).Padding(7, 4).Gap(6).AlignItems(ui.Center)).Children(func() {
+		a.chromeSurface(ui.Column(c.Key("player-rail")).FillWidth().Radius(28).Padding(7, 4).Gap(6).AlignItems(ui.Center)).Children(func() {
 			liked := s.Playback != nil && s.Playback.IsLiked
 			a.nativeRailAction(c, "player-like", likeIcon, chooseText(liked, "已点赞", "点赞"), liked, func() {
 				if a.media != nil && a.media.controller != nil {

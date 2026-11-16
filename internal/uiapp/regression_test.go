@@ -167,7 +167,7 @@ func TestShelfDeadlineDoesNotBlockOrDisguiseCoreDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tt.HasText("同一剧本改编") {
+	if !tt.HasText("同系列作品") {
 		t.Fatalf("supplement region missing: %v", tt.Texts())
 	}
 	assertQuietLoading(t, tt)

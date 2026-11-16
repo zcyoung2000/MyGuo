@@ -72,8 +72,12 @@ func seriesCardFromDetail(card SeriesCard, detail *model.Series, imageURL func(s
 	if detail.CoverURL != "" && time.Now().Before(detail.CoverExpiresAt) {
 		card.CoverURL = imageURL(detail.CoverURL)
 	}
-	if detail.EpisodeCount > 0 {
+	if detail.EpisodeCount > 0 || isUpcomingRightText(detail.RightText) {
 		card.EpisodeCount = detail.EpisodeCount
+		card.Upcoming = isUpcomingSeries(detail.EpisodeCount, detail.RightText)
+		if card.Upcoming {
+			card.Status = "upcoming"
+		}
 	}
 	if detail.Heat > 0 {
 		card.Heat = formatHeatScore(detail.Heat)

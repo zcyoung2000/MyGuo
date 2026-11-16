@@ -172,6 +172,7 @@ type App struct {
 	playerDanmaku               danmakuLayout
 	playerDanmakuHover          danmakuHover
 	playerFrameKey              string
+	playerNativeBackdrop        bool
 	playerTransitionBitmap      *ui.Bitmap
 	ambientActive               bool
 	ambientLeft                 ui.Color

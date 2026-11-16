@@ -21,7 +21,7 @@ func TestDetailCollectionVerticalSpacingAudit(t *testing.T) {
 	tt := ui.NewTester(app.Render, 1000, 1100)
 	tt.Advance(loadingLayoutSettle)
 	tt.Frame()
-	heading, ok := tt.Find("同一剧本改编")
+	heading, ok := tt.Find("同系列作品")
 	poster, pOK := tt.Find("poster:adaptation-1|")
 	meta, mOK := tt.Find("80集 · 300万热度")
 	if !ok || !pOK || !mOK {

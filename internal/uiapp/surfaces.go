@@ -22,7 +22,7 @@ func selectionFill() ui.LinearGradient {
 func chromeMaterial() glass.Glass {
 	// Interactive Glass switches to a shader and cannot sample AVKit. Keep
 	// the native material; button hover/press feedback is a separate wash.
-	return glass.Glass{Native: true, Style: glass.Clear, Clarity: chromeClarity}
+	return glass.Glass{Native: true, Style: glass.Clear, Clarity: chromeClarity, Tint: ui.RGBA(0, 0, 0, .4)}
 }
 
 func artworkMaterial() glass.Glass {
@@ -43,8 +43,16 @@ func pageChromeMaterial() glass.Glass {
 	return m
 }
 
-func chromeSurface(e ui.Element) ui.Element {
-	return e.Material(chromeMaterial()).Border(1, ui.RGBA(255, 255, 255, .12))
+func (a *App) playerChromeMaterial() glass.Glass {
+	m := chromeMaterial()
+	// Until AVKit actually presents a frame, the poster is painted inside the
+	// UI surface. Native glass would sample the desktop instead of that poster.
+	m.Native = a.playerNativeBackdrop
+	return m
+}
+
+func (a *App) chromeSurface(e ui.Element) ui.Element {
+	return e.Material(a.playerChromeMaterial()).Border(1, ui.RGBA(255, 255, 255, .12))
 }
 
 type frostedContentMaterial struct{}
@@ -64,8 +72,8 @@ func contentSurface(e ui.Element) ui.Element {
 		Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, .3))
 }
 
-func chromeButton(c *ui.Context, key, label string) ui.Element {
-	b := chromeSurface(ui.ButtonBase(c.Key(key)).Label(label).Focusable().MinHeight(30).Padding(6, 10).Radius(15))
+func (a *App) chromeButton(c *ui.Context, key, label string) ui.Element {
+	b := a.chromeSurface(ui.ButtonBase(c.Key(key)).Label(label).Focusable().MinHeight(30).Padding(6, 10).Radius(15))
 	hoverBackground(b, ui.Transparent, ui.RGBA(255, 255, 255, .12))
 	b.Children(func() { ui.Text(c, label).FontSize(12).SingleLine().TextColor(ui.RGBA(255, 255, 255, .9)) })
 	return b
@@ -78,9 +86,9 @@ func panelAction(c *ui.Context, key, label string, action func()) ui.Element {
 	return b
 }
 
-func choiceMenu(c *ui.Context, key, label string, build func(*ui.Menu)) {
+func (a *App) choiceMenu(c *ui.Context, key, label string, build func(*ui.Menu)) {
 	// Let AppKit own placement, keyboard focus, checkmarks and dismissal.
 	// In particular, its modal tracking consumes the dismissing click instead
 	// of letting that click toggle the video underneath the menu.
-	chromeButton(c, key, label).Menu(func(m *ui.Menu) { m.MaxWidth(180); build(m) })
+	a.chromeButton(c, key, label).Menu(func(m *ui.Menu) { m.MaxWidth(180); build(m) })
 }

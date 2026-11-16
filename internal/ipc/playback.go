@@ -16,6 +16,8 @@ import (
 	"myguo/internal/sparedevice"
 )
 
+var ErrNoPlayableEpisodes = errors.New("该剧暂未提供可播放剧集")
+
 func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version int64, currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) ([]media.FeedPreloadStatus, error) {
 	return s.media.SetFeedPreloadWindow(version, currentEpisodeID, currentQuality, items), nil
 }
@@ -71,7 +73,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 			return nil, fmt.Errorf("获取分集失败: %w", err)
 		}
 		if len(pageItems(eps)) == 0 {
-			return nil, fmt.Errorf("暂无可播放分集")
+			return nil, ErrNoPlayableEpisodes
 		}
 		targetNum := episodeNum
 		found := false

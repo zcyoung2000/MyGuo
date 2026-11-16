@@ -31,6 +31,7 @@ type fixtures struct {
 	source          string
 	landscapeSource string
 	fallbackSource  string
+	resolveDelay    time.Duration
 }
 
 func (b *fixtures) PlaybackScope() string { return "" }
@@ -43,6 +44,15 @@ func (b *fixtures) SaveProgressForScope(ctx context.Context, scope, id, ep, titl
 	return err
 }
 func (b *fixtures) PlayEpisode(ctx context.Context, id, ep string, num int, quality string, hls bool) (*ipc.PlaybackDTO, error) {
+	if b.resolveDelay > 0 {
+		timer := time.NewTimer(b.resolveDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	last := 0.
 	if h, ok := b.db.GetHistoryItem(id); ok && h.EpisodeNum == num {
 		last = h.PositionSec
@@ -123,6 +133,7 @@ func main() {
 	root := flag.String("data", "/tmp/myguo-native-player/qa", "isolated test data")
 	exercisePIP := flag.Bool("exercise-pip", false, "verify native PiP handoff and restore")
 	quitAfter := flag.Duration("quit-after", 0, "exercise graceful quit after this duration")
+	resolveDelay := flag.Duration("resolve-delay", 0, "delay local source resolution for first-frame material QA")
 	flag.Parse()
 	if err := os.MkdirAll(*root, 0700); err != nil {
 		log.Fatal(err)
@@ -133,7 +144,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	b := &fixtures{db: db, source: *source, landscapeSource: *landscapeSource, fallbackSource: *fallbackSource}
+	b := &fixtures{db: db, source: *source, landscapeSource: *landscapeSource, fallbackSource: *fallbackSource, resolveDelay: *resolveDelay}
 	app := uiapp.NewTestApp()
 	path := filepath.Join(*root, "native-player.json")
 	if _, err := os.Stat(path); os.IsNotExist(err) {

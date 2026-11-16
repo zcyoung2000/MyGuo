@@ -619,6 +619,11 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		}
 		if len(cards) >= minRecommendFeedBatch {
 			cards = s.enrichSeriesCards(ctx, cards)
+			for _, card := range cards {
+				if card.Upcoming {
+					_ = s.store.ConsumeFeedQueue(feedKey, card.ID)
+				}
+			}
 			return sanitizeIPC(&RecommendFeedResult{
 				Items:   cards,
 				Cursor:  page.Cursor,
@@ -756,6 +761,27 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 	s.episodeMu.Unlock()
 
 	page, err := s.client.ListEpisodes(ctx, seriesID, sdk.EpisodeOptions{})
+	// The SDK also reports a successful zero-episode response as anonymous-
+	// limited. Verify through batch detail before resetting a device identity.
+	if ctx.Err() == nil && (errors.Is(err, sdk.ErrAnonymousLimited) || (err == nil && len(pageItems(page)) == 0)) {
+		batch := s.client.GetSeriesBatch
+		if s.seriesBatch != nil {
+			batch = s.seriesBatch
+		}
+		if details, batchErr := batch(ctx, []string{seriesID}); batchErr == nil {
+			for _, detail := range details {
+				if detail.Series == nil || detail.Series.ID != seriesID {
+					continue
+				}
+				if len(detail.Episodes) > 0 {
+					page, err = &sdk.Page[model.Episode]{Items: detail.Episodes}, nil
+				} else if detail.Series.EpisodeCount == 0 && (detail.Series.RightText == "全0集" || isUpcomingRightText(detail.Series.RightText)) {
+					page, err = nil, ErrNoPlayableEpisodes
+				}
+				break
+			}
+		}
+	}
 	fetchedAt := time.Now()
 	s.episodeMu.Lock()
 	delete(s.episodeLoads, seriesID)

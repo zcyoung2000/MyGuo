@@ -16,6 +16,41 @@ func (c *Controller) appendFeed(items []ipc.SeriesCard) {
 		}
 	}
 }
+func sourceLoadMessage(s *slot) string {
+	if s.unavailable {
+		return "该剧暂未提供可播放剧集"
+	}
+	return "视频暂时无法加载，请稍后重试"
+}
+
+// Persisted queues can contain zero-episode works. Remove only a confirmed
+// unavailable item; transport/auth errors must not silently skip a work.
+func (c *Controller) skipUnavailableFeed(s *slot) {
+	if c.current != s || c.state.Index < 0 || c.state.Index >= len(c.feed) || c.feed[c.state.Index].ID != s.seriesID {
+		return
+	}
+	index := c.state.Index
+	c.feed = append(c.feed[:index], c.feed[index+1:]...)
+	s.cancel()
+	delete(c.slots, s.key)
+	c.current = nil
+	c.state.Engine = nil
+	c.state.Playback = nil
+	c.state.Loading = true
+	c.state.Error = ""
+	channel, id, ctx := c.state.Channel, s.seriesID, c.root
+	go func() { _ = c.backend.ConsumeRecommendFeedItem(ctx, channel, id) }()
+	if index < len(c.feed) {
+		c.selectFeed(index)
+	} else if c.state.HasMore {
+		c.pendingIndex = index
+		c.fetchFeed()
+	} else {
+		c.state.Loading = false
+		c.state.Error = "暂无可播放的推荐，请切换频道"
+	}
+}
+
 func (c *Controller) fetchFeed() {
 	if c.feedLoading || !c.state.HasMore {
 		return
@@ -31,7 +66,7 @@ func (c *Controller) fetchFeed() {
 			c.feedLoading = false
 			if err != nil || page == nil {
 				c.state.Loading = false
-				if len(c.feed) == 0 {
+				if c.current == nil || len(c.feed) == 0 {
 					c.state.Error = "推荐加载失败，请重试"
 				} else {
 					c.state.Notice = "更多推荐加载失败，可稍后重试"
@@ -46,7 +81,7 @@ func (c *Controller) fetchFeed() {
 				c.feedCursors[page.Cursor] = true
 				c.cursor = page.Cursor
 			}
-			if c.current == nil && len(c.feed) > 0 {
+			if c.current == nil && c.pendingIndex < 0 && len(c.feed) > 0 {
 				c.selectFeed(0)
 			}
 			if len(c.feed) == 0 {
@@ -58,7 +93,16 @@ func (c *Controller) fetchFeed() {
 				c.pendingIndex = -1
 				c.selectFeed(target)
 			}
-			if !c.state.HasMore && c.pendingIndex >= len(c.feed) {
+			if c.pendingIndex >= len(c.feed) && c.current == nil {
+				if c.state.HasMore {
+					c.state.Loading = true
+					c.fetchFeed()
+				} else {
+					c.pendingIndex = -1
+					c.state.Loading = false
+					c.state.Error = "暂无可播放的推荐，请切换频道"
+				}
+			} else if !c.state.HasMore && c.pendingIndex >= len(c.feed) {
 				c.pendingIndex = -1
 				c.state.Notice = "已经看完当前推荐"
 			}
