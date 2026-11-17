@@ -35,22 +35,21 @@ func TestSettingsProfileFitsNarrowWindow(t *testing.T) {
 		app := NewTestApp()
 		app.view = "settings"
 		app.sidebarWidth = float32(entry.sidebar)
-		app.settings = Settings{Profile: ipc.UserProfile{UserID: "710000000000001", Nickname: entry.nickname, LoggedIn: true}, DeviceID: "7100000000000012345", LoginOpen: true, SpareDevices: &ipc.SpareDeviceStateDTO{}}
+		app.settings = Settings{Profile: ipc.UserProfile{UserID: "710000000000001", Nickname: entry.nickname, LoggedIn: true}, LoginOpen: true}
 		tt := ui.NewTester(app.Render, entry.width, 640)
 		tt.SetDark(true)
 		tt.Frame()
 		tt.Frame()
 		badge, badgeOK := tt.Find("已登录官方账号")
-		idLabel, idOK := tt.Find("账号 ID:")
 		refresh, refreshOK := tt.Find("刷新资料")
-		if !badgeOK || !idOK || !refreshOK {
+		if !badgeOK || !refreshOK {
 			t.Fatalf("%s: profile controls missing: %v", entry.name, tt.Texts())
 		}
-		if badge.H > 23 || idLabel.H > 20 || badge.X+badge.W > float32(entry.width) {
-			t.Fatalf("%s: status or ID label wraps/overflows: badge=%+v id=%+v", entry.name, badge, idLabel)
+		if badge.H > 23 || badge.X+badge.W > float32(entry.width) {
+			t.Fatalf("%s: status label wraps/overflows: badge=%+v", entry.name, badge)
 		}
-		if entry.sidebar == 420 && refresh.Y < idLabel.Y+idLabel.H {
-			t.Fatalf("narrow profile actions did not stack: action=%+v id=%+v", refresh, idLabel)
+		if entry.sidebar == 420 && refresh.Y < badge.Y+badge.H {
+			t.Fatalf("narrow profile actions did not stack: action=%+v status=%+v", refresh, badge)
 		}
 		exportAuditScreenshot(t, tt, entry.name)
 	}

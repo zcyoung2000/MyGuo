@@ -648,9 +648,6 @@ func TestNativePageScreens(t *testing.T) {
 			app.settings = Settings{
 				Profile:        ipc.UserProfile{UserID: "710000000000001", Nickname: "视觉审查账号", LoggedIn: true},
 				CacheSize:      5 << 20,
-				DeviceID:       "visual-device",
-				DeviceVersion:  "2.0.0",
-				DeviceArch:     "darwin-arm64",
 				LegacyNickname: "Old Account",
 				LoginOpen:      true,
 			}

@@ -55,7 +55,7 @@ func (a *App) failQRLogin(ctx context.Context, version uint64, err error) {
 	if !a.qrLoginCurrentLocked(ctx, version) {
 		return
 	}
-	a.settings.QR = QRLoginState{State: "error", Error: err.Error()}
+	a.settings.QR = QRLoginState{State: "error", Error: userFacingError(err)}
 	a.loginCancel = nil
 	a.invalidate()
 }

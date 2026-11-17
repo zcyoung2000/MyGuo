@@ -25,7 +25,7 @@ func userFacingError(err error) string {
 	case errors.Is(err, sdk.ErrRateLimited),
 		errors.Is(err, sdk.ErrAnonymousLimited), errors.Is(err, sdk.ErrDeviceRejected),
 		errors.Is(err, sdk.ErrChallengeRequired), errors.Is(err, sdk.ErrSignatureRejected):
-		return "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"
+		return "网络异常或访问受限，请稍后重试"
 	}
 
 	var apiErr *sdk.APIError

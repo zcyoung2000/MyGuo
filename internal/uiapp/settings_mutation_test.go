@@ -58,12 +58,6 @@ func (f *mutatingSettingsProvider) GetCacheSize(ctx context.Context) (int64, err
 	return f.settingsTestProvider.GetCacheSize(ctx)
 }
 
-func (f *mutatingSettingsProvider) GetDeviceInfo(ctx context.Context) (map[string]string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.settingsTestProvider.GetDeviceInfo(ctx)
-}
-
 func waitForSettingsMutation(t *testing.T, app *App) {
 	t.Helper()
 	deadline := time.After(time.Second)
@@ -156,7 +150,7 @@ func TestSettingsMutationFailureKeepsError(t *testing.T) {
 	if state.CacheSize != 5<<20 {
 		t.Fatalf("failed mutation changed cache size: %d", state.CacheSize)
 	}
-	if state.Success != "" || state.Error != "设置加载失败：cache unavailable" {
+	if state.Success != "" || state.Error != "设置暂时不可用，请稍后重试" {
 		t.Fatalf("failed mutation state = success=%q error=%q", state.Success, state.Error)
 	}
 }

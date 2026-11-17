@@ -144,19 +144,11 @@ type LibraryView struct {
 type Settings struct {
 	Profile        ipc.UserProfile
 	CacheSize      int64
-	DeviceID       string
-	DeviceVersion  string
-	DeviceArch     string
 	LegacyNickname string
-	LegacyUserID   string
 	HasLegacy      bool
 	Loading        bool
 	LoginOpen      bool
 	QR             QRLoginState
-	SpareDevices   *ipc.SpareDeviceStateDTO
-	SpareDeviceDid string
-	SpareDeviceIid string
-	SpareDeviceUid string
 	Success        string
 	Error          string
 }
@@ -371,7 +363,7 @@ func (a *App) SearchSubmitted() bool {
 			}
 			a.search.Loading = false
 			if err != nil {
-				a.search.Error = "搜索失败：" + err.Error()
+				a.search.Error = featureError("search", err)
 			} else {
 				a.search = CatalogPage{Items: removeSearchPageCardLabels(convertCards(items))}
 				a.searchResultVersion++
@@ -702,8 +694,11 @@ func (a *App) open(view, seriesID string) {
 	a.detailScrollReset = true
 	a.invalidate()
 }
-func (a *App) fail(prefix string, err error) { a.error = prefix + err.Error(); a.invalidate() }
-func (a *App) setNotice(message string)      { a.notice = message; a.invalidate() }
+func (a *App) fail(prefix string, err error) {
+	a.error = prefix + featureError("", err)
+	a.invalidate()
+}
+func (a *App) setNotice(message string) { a.notice = message; a.invalidate() }
 func (a *App) invalidate() {
 	if a.invalidateFn != nil {
 		a.invalidateFn()

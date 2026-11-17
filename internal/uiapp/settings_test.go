@@ -28,13 +28,6 @@ func (f *settingsTestProvider) GetCacheSize(context.Context) (int64, error) {
 	f.calls = append(f.calls, "GetCacheSize")
 	return f.cache, nil
 }
-func (f *settingsTestProvider) GetDeviceInfo(context.Context) (map[string]string, error) {
-	f.calls = append(f.calls, "GetDeviceInfo")
-	if f.device == nil {
-		return map[string]string{"deviceId": "device-id", "version": "2.0.0", "arch": "darwin-arm64"}, nil
-	}
-	return f.device, nil
-}
 func (f *settingsTestProvider) CheckExistingAccount(context.Context) (map[string]any, error) {
 	f.calls = append(f.calls, "CheckExistingAccount")
 	return f.legacy, nil
@@ -74,28 +67,6 @@ func (f *settingsTestProvider) ResetDevice(context.Context) error {
 	return nil
 }
 
-func (f *settingsTestProvider) GetSpareDeviceState(context.Context) (*ipc.SpareDeviceStateDTO, error) {
-	f.calls = append(f.calls, "GetSpareDeviceState")
-	return &ipc.SpareDeviceStateDTO{
-		Settings: ipc.SpareDeviceSettingsDTO{RegistrationDailyLimit: 1, RegistrationMinIntervalSec: 86400},
-	}, nil
-}
-
-func (f *settingsTestProvider) ImportSpareDevice(context.Context, string, string, string) (*ipc.SpareDeviceStateDTO, error) {
-	f.calls = append(f.calls, "ImportSpareDevice")
-	return f.GetSpareDeviceState(context.Background())
-}
-
-func (f *settingsTestProvider) DeleteSpareDevice(context.Context, string) (*ipc.SpareDeviceStateDTO, error) {
-	f.calls = append(f.calls, "DeleteSpareDevice")
-	return f.GetSpareDeviceState(context.Background())
-}
-
-func (f *settingsTestProvider) SetSpareDeviceRegistration(context.Context, bool) (*ipc.SpareDeviceStateDTO, error) {
-	f.calls = append(f.calls, "SetSpareDeviceRegistration")
-	return f.GetSpareDeviceState(context.Background())
-}
-
 func (f *settingsTestProvider) GetRankings(context.Context, string, string, string) (ipc.RankResponse, error) {
 	return ipc.RankResponse{}, nil
 }
@@ -130,8 +101,7 @@ func settingsFixture() (*App, *settingsTestProvider, *ui.Tester) {
 	app.settingsTestProvider = fake
 	app.view = "settings"
 	app.settings = Settings{
-		Profile: fake.profile, CacheSize: fake.cache, DeviceID: "device-id",
-		DeviceVersion: "2.0.0", DeviceArch: "darwin-arm64",
+		Profile: fake.profile, CacheSize: fake.cache,
 		LegacyNickname: "Old Account", HasLegacy: true, LoginOpen: true,
 	}
 	tt := ui.NewTester(app.Render, 1200, 800)
@@ -148,16 +118,15 @@ func TestSettingsRendersNativeSectionsAndActions(t *testing.T) {
 		t.Fatal("settings leaked a WebView surface")
 	}
 	for _, text := range []string{
-		"设置", "Henry", "已登录官方账号", "账号 ID:", "42", "刷新资料", "退出登录", "切换账号",
-		"设备与存储管理", "本地媒体缓存", "5.0 MB", "清理缓存", "匿名设备指纹", "device-id", "重置设备",
-		"播放备用设备池", "仅在播放受限时借用", "手动导入备用设备", "did (必填)", "导入备用设备",
+		"设置", "Henry", "已登录官方账号", "刷新资料", "退出登录", "切换账号",
+		"存储管理", "本地媒体缓存", "5.0 MB", "清理缓存",
 		"扫码登录", "打开手机红果 App，扫一扫后确认登录", "刷新二维码", "取消",
 	} {
 		if !tt.HasText(text) {
 			t.Fatalf("native settings missing %q: %v", text, tt.Texts())
 		}
 	}
-	for _, text := range []string{"关于", "客户端版本", "2.0.0", "运行平台", "darwin-arm64"} {
+	for _, text := range []string{"账号 ID", "42", "匿名设备指纹", "device-id", "重置设备", "播放备用设备池", "did", "iid"} {
 		if tt.HasText(text) {
 			t.Fatalf("native settings still shows %q", text)
 		}
@@ -173,10 +142,10 @@ func TestAnonymousSettingsShowsLegacyImportAndLogin(t *testing.T) {
 	fake := &settingsTestProvider{profile: ipc.UserProfile{}, cache: 1048576, legacy: map[string]any{"exists": true, "nickname": "Old Account", "userId": "710000000000001"}}
 	app.settingsTestProvider = fake
 	app.view = "settings"
-	app.settings = Settings{CacheSize: fake.cache, DeviceID: "device-id", DeviceVersion: "2.0.0", DeviceArch: "darwin-arm64", LegacyNickname: "Old Account", LegacyUserID: "710000000000001", HasLegacy: true}
+	app.settings = Settings{CacheSize: fake.cache, LegacyNickname: "Old Account", HasLegacy: true}
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
-	for _, text := range []string{"myguo用户", "匿名设备访问", "账号 ID:", "anonymous", "检测到本机旧版账号：Old Account", "一键同步登录", "立即登录"} {
+	for _, text := range []string{"myguo用户", "匿名设备访问", "检测到本机旧版账号：Old Account", "一键同步登录", "立即登录"} {
 		if !tt.HasText(text) {
 			t.Fatalf("anonymous settings missing %q: %v", text, tt.Texts())
 		}
@@ -216,10 +185,9 @@ func TestSettingsLoadAggregatesIPCError(t *testing.T) {
 	app.settings = Settings{Loading: true}
 	_, profileErr := fake.GetProfile(context.Background())
 	_, cacheErr := fake.GetCacheSize(context.Background())
-	_, deviceErr := fake.GetDeviceInfo(context.Background())
 	_, legacyErr := fake.CheckExistingAccount(context.Background())
 	app.mu.Lock()
-	app.settings.Error = settingsError(errors.Join(profileErr, cacheErr, deviceErr, legacyErr))
+	app.settings.Error = settingsError(errors.Join(profileErr, cacheErr, legacyErr))
 	app.mu.Unlock()
 	if app.SettingsState().Error == "" {
 		t.Fatal("aggregated settings load error missing")
