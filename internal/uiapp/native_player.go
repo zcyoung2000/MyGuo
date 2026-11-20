@@ -9,7 +9,7 @@ import (
 	"myguo/internal/playback"
 )
 
-// Widget decisions (MyGo v0.9.0): NativeView hosts AVKit; SliderBase owns
+// Widget decisions (MyGo v0.9.1): NativeView hosts AVKit; SliderBase owns
 // seek/volume semantics; ButtonBase owns actions; List virtualizes episodes
 // and comments. Danmaku is tier-3 painting because no widget assigns moving
 // timed text to collision-free lanes. Draw callbacks only paint snapshots.
@@ -18,6 +18,11 @@ func (a *App) renderNativePlayer(c *ui.Context) {
 	a.renderNativePlayerState(c, s)
 }
 func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
+	// Recommendation playback keeps its chrome visible; the surface gesture
+	// still routes through the controller so an open panel can close first.
+	if s.Mode == playback.Feed {
+		s.Preferences.Clear = false
+	}
 	a.playerNativeBackdrop = s.Engine != nil && s.Status.Ready && s.Status.Displayed && s.Error == "" && !s.Status.PictureInPicture
 	host := a.media
 	command := func(cmd string, value any) {
@@ -57,14 +62,8 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 			if s.Preferences.Danmaku.Enabled && s.Status.Ready {
 				a.renderNativeDanmaku(c, s)
 			}
-			if s.Error != "" {
-				ui.Column(c.Key("player-error")).Absolute().Fill().Padding(24).AlignItems(ui.Center).Justify(ui.Center).Gap(14).Children(func() {
-					contentSurface(ui.Column(c).Padding(22).Radius(18).Gap(14).AlignItems(ui.Center)).Children(func() {
-						ui.Text(c, s.Error).FontSize(14).TextColor(ui.RGB(255, 255, 255)).MaxWidth(360)
-						panelAction(c, "player-retry", "重新加载", func() { command("retry", nil) })
-					})
-				})
-			}
+			// Recovery stays in the controller/logs; failures never cover the
+			// picture with an error card or a reload button.
 		})
 		if !clear {
 			dock := ui.Column(c.Key("player-controls-overlay")).Absolute().Left(18).Right(18).Bottom(16).MinWidth(0).PassThrough().Transition(playerChromeTransition)
@@ -130,7 +129,10 @@ func playerSurfaceDescription(s playback.State) string {
 		return "点击收起面板"
 	}
 	if s.Error != "" {
-		return "请使用重新加载按钮重试"
+		return "点击继续播放"
+	}
+	if s.Mode == playback.Feed {
+		return "点击暂停"
 	}
 	if s.Paused || s.Status.Ended {
 		return "点击继续播放并收起控件"
@@ -173,7 +175,7 @@ func (a *App) renderNativePlayerControls(c *ui.Context, s playback.State, comman
 		}
 		playerSlider(c, "player-seek", "播放进度", position, math.Max(1, duration), s.Status.Buffered, func(v float64) { command("seek", v) }).FillWidth()
 		ui.Row(c.Key("player-controls-row")).Wrap().Gap(6).AlignItems(ui.Center).PassThrough().Children(func() {
-			a.playerAction(c, "player-play", chooseText(s.Paused || s.Status.Ended, "播放", "暂停"), func() { command("toggle", nil) })
+			a.playerAction(c, "player-play", chooseText(s.Paused || s.Status.Ended || s.Error != "", "播放", "暂停"), func() { command("toggle", nil) })
 			a.playerAction(c, "player-prev-episode", "上一集", func() { command("prevEpisode", nil) })
 			a.playerAction(c, "player-next-episode", "下一集", func() { command("nextEpisode", nil) })
 			ui.Text(c.Key("player-time"), playerTime(position)+" / "+playerTime(duration)).FontSize(11).TextColor(ui.RGBA(255, 255, 255, .66)).SingleLine().PassThrough()

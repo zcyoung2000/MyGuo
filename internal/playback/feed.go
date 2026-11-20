@@ -3,6 +3,8 @@ package playback
 import (
 	"context"
 	"fmt"
+	"log"
+	"myguo/internal/avkit"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 	"time"
@@ -20,7 +22,36 @@ func sourceLoadMessage(s *slot) string {
 	if s.unavailable {
 		return "该剧暂未提供可播放剧集"
 	}
+	if s.accessLimited {
+		return "播放信息访问受限，请稍后重试"
+	}
 	return "视频暂时无法加载，请稍后重试"
+}
+
+// Restored tails are checked by lookahead as they approach the selection.
+// Reject a confirmed unavailable successor before it can become the picture.
+// PlayEpisode already removes it from persistent queues using an exact delete.
+func (c *Controller) discardUnavailableCandidate(s *slot) {
+	if s.number != 1 || s == c.current {
+		return
+	}
+	for i := c.state.Index + 1; i < len(c.feed); i++ {
+		if c.feed[i].ID != s.seriesID {
+			continue
+		}
+		log.Printf("[native-player] reject unavailable lookahead series=%q title=%q", s.seriesID, s.card.Title)
+		c.feed = append(c.feed[:i], c.feed[i+1:]...)
+		s.cancel()
+		delete(c.slots, s.key)
+		if c.pendingIndex > i {
+			c.pendingIndex--
+		}
+		c.prepareNeighbors()
+		if len(c.feed)-c.state.Index <= 4 {
+			c.fetchFeed()
+		}
+		return
+	}
 }
 
 // Persisted queues can contain zero-episode works. Remove only a confirmed
@@ -30,12 +61,18 @@ func (c *Controller) skipUnavailableFeed(s *slot) {
 		return
 	}
 	index := c.state.Index
+	log.Printf("[native-player] skip unavailable recommendation series=%q title=%q", s.seriesID, s.card.Title)
 	c.feed = append(c.feed[:index], c.feed[index+1:]...)
 	s.cancel()
+	if s.engine != nil {
+		s.engine.Pause()
+		_ = s.engine.Close()
+	}
 	delete(c.slots, s.key)
 	c.current = nil
 	c.state.Engine = nil
 	c.state.Playback = nil
+	c.state.Status = avkit.Status{}
 	c.state.Loading = true
 	c.state.Error = ""
 	channel, id, ctx := c.state.Channel, s.seriesID, c.root
@@ -65,15 +102,16 @@ func (c *Controller) fetchFeed() {
 			}
 			c.feedLoading = false
 			if err != nil || page == nil {
-				c.state.Loading = false
+				log.Printf("[native-player] fetch recommendations channel=%q error=%v", channel, err)
 				if c.current == nil || len(c.feed) == 0 {
+					c.state.Loading = false
 					c.state.Error = "推荐加载失败，请重试"
-				} else {
-					c.state.Notice = "更多推荐加载失败，可稍后重试"
 				}
 				return
 			}
-			c.state.Error = ""
+			if c.current == nil {
+				c.state.Error = ""
+			}
 			old := len(c.feed)
 			c.appendFeed(page.Items)
 			c.state.HasMore = page.HasMore && page.Cursor != "" && page.Cursor != cursor && !c.feedCursors[page.Cursor]
@@ -93,15 +131,15 @@ func (c *Controller) fetchFeed() {
 				c.pendingIndex = -1
 				c.selectFeed(target)
 			}
-			if c.pendingIndex >= len(c.feed) && c.current == nil {
-				if c.state.HasMore {
+			if c.pendingIndex >= len(c.feed) && c.state.HasMore {
+				if c.current == nil {
 					c.state.Loading = true
-					c.fetchFeed()
-				} else {
-					c.pendingIndex = -1
-					c.state.Loading = false
-					c.state.Error = "暂无可播放的推荐，请切换频道"
 				}
+				c.fetchFeed()
+			} else if c.pendingIndex >= len(c.feed) && c.current == nil {
+				c.pendingIndex = -1
+				c.state.Loading = false
+				c.state.Error = "暂无可播放的推荐，请切换频道"
 			} else if !c.state.HasMore && c.pendingIndex >= len(c.feed) {
 				c.pendingIndex = -1
 				c.state.Notice = "已经看完当前推荐"
@@ -132,6 +170,9 @@ func (c *Controller) selectFeed(index int) {
 	}
 	c.pendingIndex = -1
 	direction := index - c.state.Index
+	// A feed selection starts a new video. Pause belongs to the outgoing
+	// item, unlike a rendition change or an episode selection within it.
+	c.state.Paused = false
 	c.state.Index = index
 	c.selectSlot(c.feed[index], 1, -1, direction)
 	if len(c.feed)-index <= 4 {
@@ -147,7 +188,7 @@ func (c *Controller) prepareNeighbors() {
 			c.resolve(c.feed[i], 1, -1, "")
 		}
 	}
-	if c.current != nil {
+	if c.current != nil && c.current.dto != nil {
 		n, total := c.current.number, c.state.Book.EpisodeCount
 		lookahead := 1
 		if c.state.Mode == Series {

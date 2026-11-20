@@ -539,6 +539,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 				Tags:         tags,
 			})
 		}
+		cards = s.validateRecommendCards(ctx, feedKey, cards)
 		if err := s.queueRecommendCards(feedKey, cards); err != nil {
 			return nil, fmt.Errorf("save recommend queue: %w", err)
 		}
@@ -618,12 +619,6 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 			cards = append(cards, newCards...)
 		}
 		if len(cards) >= minRecommendFeedBatch {
-			cards = s.enrichSeriesCards(ctx, cards)
-			for _, card := range cards {
-				if card.Upcoming {
-					_ = s.store.ConsumeFeedQueue(feedKey, card.ID)
-				}
-			}
 			return sanitizeIPC(&RecommendFeedResult{
 				Items:   cards,
 				Cursor:  page.Cursor,

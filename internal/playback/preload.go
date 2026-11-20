@@ -20,7 +20,7 @@ func remainingWallSeconds(s State) float64 {
 }
 
 func preloadAdmission(s State, admitted bool) bool {
-	if !s.Status.Ready || s.Status.Buffering || s.Error != "" {
+	if !s.Status.Ready || s.Status.Buffering || s.Error != "" || (s.Loading && !s.Paused) {
 		return false
 	}
 	ahead := math.Max(0, s.Status.Buffered-s.Status.Position) / math.Max(.25, s.Preferences.Rate)

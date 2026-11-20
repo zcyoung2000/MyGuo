@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"myguo/internal/avkit"
+	"myguo/internal/hgapi"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 )
@@ -117,35 +118,42 @@ type ReplyPage struct {
 }
 
 type slot struct {
-	key, seriesID  string
-	number         int
-	card           ipc.SeriesCard
-	detail         *ipc.SeriesDetailDTO
-	dto            *ipc.PlaybackDTO
-	engine         avkit.Player
-	ctx            context.Context
-	cancel         context.CancelFunc
-	loading        bool
-	resume         float64
-	seeked         bool
-	started        time.Time
-	used           time.Time
-	fallback       int
-	first          bool
-	sourceStarted  time.Time
-	seekPending    bool
-	seekTarget     float64
-	seekAt         time.Time
-	preroll        bool
-	warming        bool
-	bufferingSince time.Time
-	clockAdvanced  time.Time
-	clockPosition  float64
-	stallResumed   bool
-	ended          bool
-	err            string
-	unavailable    bool
-	sourceURL      string
+	key, seriesID   string
+	number          int
+	card            ipc.SeriesCard
+	detail          *ipc.SeriesDetailDTO
+	dto             *ipc.PlaybackDTO
+	engine          avkit.Player
+	ctx             context.Context
+	cancel          context.CancelFunc
+	loading         bool
+	resume          float64
+	seeked          bool
+	started         time.Time
+	used            time.Time
+	fallback        int
+	first           bool
+	sourceStarted   time.Time
+	seekPending     bool
+	seekTarget      float64
+	seekAt          time.Time
+	preroll         bool
+	warming         bool
+	bufferingSince  time.Time
+	clockAdvanced   time.Time
+	clockPosition   float64
+	stallResumed    bool
+	ended           bool
+	err             string
+	unavailable     bool
+	accessLimited   bool
+	sourceURL       string
+	resolveEpisode  string
+	resolveQuality  string
+	resolveAttempts int
+	retryAt         time.Time
+	playStarted     bool
+	startReloaded   bool
 }
 
 type Controller struct {
@@ -350,6 +358,8 @@ func (c *Controller) ShowFeed(channel string) {
 					if restored.Cursor != "" {
 						c.feedCursors[restored.Cursor] = true
 					}
+				} else if err != nil {
+					log.Printf("[native-player] restore recommendations channel=%q: %v", channel, err)
 				}
 				if len(c.feed) > 0 {
 					c.selectFeed(0)
@@ -434,6 +444,8 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 		existing.used = time.Now()
 		existing.started = time.Now()
 		existing.first = false
+		existing.playStarted = false
+		existing.startReloaded = false
 		existing.ended = false
 		if resume >= 0 {
 			existing.resume = resume
@@ -456,41 +468,12 @@ func (c *Controller) resolve(card ipc.SeriesCard, number int, resume float64, ep
 	if c.desired == key {
 		c.current = s
 	}
-	scene, quality := c.scene, c.state.Preferences.Quality
+	scene := c.scene
 	// Reuse an already resolved episode when changing rendition. Negotiating
 	// with an empty ID invokes offline bootstrap, which may choose a different
 	// cached quality instead of the requested rendition.
-	go func() {
-		dto, err := c.backend.PlayEpisode(ctx, card.ID, episodeID, number, quality, true)
-		c.post(func() {
-			if c.scene != scene || c.slots[key] != s || ctx.Err() != nil {
-				return
-			}
-			s.loading = false
-			if err != nil || dto == nil {
-				if err == nil {
-					err = fmt.Errorf("没有可用的播放地址")
-				}
-				s.err = fmt.Sprint(err)
-				s.unavailable = errors.Is(err, ipc.ErrNoPlayableEpisodes)
-				if c.desired == key {
-					c.state.Loading = false
-					log.Printf("[native-player] resolve/load series=%q: %s", s.seriesID, s.err)
-					c.state.Error = sourceLoadMessage(s)
-					if s.unavailable && c.state.Mode == Feed {
-						c.skipUnavailableFeed(s)
-					}
-				}
-				return
-			}
-			s.dto = dto
-			s.number = dto.EpisodeNum
-			if c.desired == key {
-				c.applySlot(s)
-			}
-			c.updatePreload()
-		})
-	}()
+	s.resolveEpisode, s.resolveQuality = episodeID, c.state.Preferences.Quality
+	c.resolveSource(s)
 	// Details must not block source negotiation / first frame.
 	go func() {
 		detail, err := c.backend.GetSeriesDetail(ctx, card.ID)
@@ -512,10 +495,59 @@ func (c *Controller) resolve(card ipc.SeriesCard, number int, resume float64, ep
 		})
 	}()
 }
+
+// Only the selected slot spends its retry budget. Prefetch failures remain
+// recoverable on promotion; navigating away or closing cancels scheduled work.
+func (c *Controller) resolveSource(s *slot) {
+	s.loading = true
+	s.retryAt = time.Time{}
+	s.resolveAttempts++
+	scene, ctx, key := c.scene, s.ctx, s.key
+	id, episode, number, quality := s.seriesID, s.resolveEpisode, s.number, s.resolveQuality
+	go func() {
+		dto, err := c.backend.PlayEpisode(ctx, id, episode, number, quality, true)
+		c.post(func() {
+			if c.scene != scene || c.slots[key] != s || ctx.Err() != nil {
+				return
+			}
+			s.loading = false
+			if err != nil || dto == nil {
+				if err == nil {
+					err = fmt.Errorf("没有可用的播放地址")
+				}
+				s.err = fmt.Sprint(err)
+				s.unavailable = errors.Is(err, ipc.ErrNoPlayableEpisodes) || errors.Is(err, hgapi.ErrContentUnavailable)
+				s.accessLimited = errors.Is(err, ipc.ErrPlaybackAccessLimited)
+				log.Printf("[native-player] resolve/load series=%q attempt=%d: %s", id, s.resolveAttempts, s.err)
+				if !s.unavailable && !errors.Is(err, hgapi.ErrAuthenticationRequired) && s.resolveAttempts < 3 {
+					s.retryAt = time.Now().Add(time.Duration(1<<(s.resolveAttempts-1)) * 500 * time.Millisecond)
+				}
+				if c.desired == key {
+					c.applySlot(s)
+				} else if s.unavailable && c.state.Mode == Feed {
+					c.discardUnavailableCandidate(s)
+				}
+				return
+			}
+			s.err = ""
+			s.dto = dto
+			s.number = dto.EpisodeNum
+			if c.desired == key {
+				c.state.Error = ""
+				c.applySlot(s)
+			}
+			c.updatePreload()
+		})
+	}()
+}
 func (c *Controller) applySlot(s *slot) {
 	if s.dto == nil {
 		if s.err != "" {
-			log.Printf("[native-player] resolve/load series=%q: %s", s.seriesID, s.err)
+			if !s.retryAt.IsZero() || s.loading {
+				c.state.Loading = true
+				c.state.Error = ""
+				return
+			}
 			c.state.Error = sourceLoadMessage(s)
 			c.state.Loading = false
 			if s.unavailable && c.state.Mode == Feed {
@@ -567,7 +599,7 @@ func (c *Controller) applySlot(s *slot) {
 		// Preroll has already decoded this position; an exact seek here would
 		// discard the prepared pipeline immediately before promotion.
 		status := s.engine.Snapshot()
-		if !s.preroll || !status.Ready || math.Abs(status.Position-math.Max(0, position)) > .1 {
+		if math.Abs(status.Position-math.Max(0, position)) > .1 || (position > 0 && !s.preroll && !status.Ready) {
 			c.seek(s, position)
 		}
 		s.seeked = true
@@ -641,7 +673,12 @@ func (c *Controller) tick(now time.Time) {
 		return
 	}
 	s := c.current
+	if s != nil && !s.retryAt.IsZero() && !s.loading && !now.Before(s.retryAt) {
+		log.Printf("[native-player] retry source series=%q attempt=%d", s.seriesID, s.resolveAttempts+1)
+		c.resolveSource(s)
+	}
 	if s != nil && s.engine != nil {
+		previousStatus := c.state.Status
 		status := playerStatus(s)
 		if s.seekPending && status.Seekable > 0 && s.seekTarget > status.Seekable+.25 && s.dto != nil && s.dto.FullStreamURL != "" && s.sourceURL != s.dto.FullStreamURL {
 			c.loadFullForSeek(s, s.seekTarget)
@@ -656,6 +693,11 @@ func (c *Controller) tick(now time.Time) {
 			}
 		}
 		c.state.Status = status
+		if !s.playStarted && status.Ready && status.Playing && status.Position > .05 {
+			s.playStarted = true
+			c.state.Loading = false
+			log.Printf("[native-player] clock-start episode=%q elapsedMs=%d position=%.2f ahead=%.2f", s.dto.EpisodeID, now.Sub(s.started).Milliseconds(), status.Position, math.Max(0, status.Buffered-status.Position))
+		}
 		if c.incompleteHLSEnd(s, status) {
 			// A growing playlist's current prefix can look like EOF to AVKit.
 			// It must not skip the rest of the episode or advance to the next one.
@@ -669,7 +711,12 @@ func (c *Controller) tick(now time.Time) {
 			c.publish()
 			return
 		}
-		if s.first && status.Ready && !status.Ended && !status.Buffering && c.state.Paused == status.Playing {
+		// Inline playback intent comes from our controls. A decoder's zero
+		// rate during loading, seek or starvation is not a user pause. Only
+		// AVKit's PiP controls can change intent outside the controller, and
+		// a native pause must follow an observed playing state.
+		if s.first && status.PictureInPicture && status.Ready && !status.Ended && !status.Buffering && !s.seekPending && c.state.Error == "" &&
+			c.state.Paused == status.Playing && (status.Playing || previousStatus.Playing) {
 			c.state.Paused = !status.Playing
 			if c.state.Paused {
 				c.state.Preferences.Clear = false
@@ -680,8 +727,10 @@ func (c *Controller) tick(now time.Time) {
 
 		if c.state.Error == "" && (status.Error != "" || (!s.first && !status.Ready && now.Sub(s.sourceStarted) > c.sourceTimeout(s))) {
 			c.fallback(s, status.Error)
+			c.publish()
+			return
 		}
-		if status.Ready && !s.first {
+		if status.Ready && status.Error == "" && c.state.Error == "" && !s.first {
 			s.first = true
 			if c.state.Mode == Feed {
 				channel, id, ctx := c.state.Channel, s.seriesID, c.root
@@ -691,12 +740,12 @@ func (c *Controller) tick(now time.Time) {
 					}
 				}()
 			}
-			c.state.Loading = false
+			c.state.Loading = !c.state.Paused && !s.playStarted
 			c.state.Error = ""
 			c.state.FirstFrameMS = max(0, now.Sub(s.started).Milliseconds())
 			log.Printf("[native-player] first-frame series=%q episode=%d elapsedMs=%d fallback=%d", s.seriesID, s.number, c.state.FirstFrameMS, s.fallback)
 		}
-		if status.Ended && !s.ended {
+		if status.Ended && c.state.Error == "" && !s.ended {
 			s.ended = true
 			c.saveCurrent()
 			c.nextEpisode(1)
@@ -743,6 +792,7 @@ func (c *Controller) fallback(s *slot, reason string) {
 		}
 		s.sourceURL = url
 		s.first = false
+		s.playStarted = false
 		c.state.Loading = true
 		c.state.Error = ""
 		s.sourceStarted = time.Now()
@@ -750,6 +800,7 @@ func (c *Controller) fallback(s *slot, reason string) {
 	}
 	c.state.Loading = false
 	c.state.Error = "视频暂时无法播放，请重试"
+	log.Printf("[native-player] playback exhausted episode=%q reason=%q", s.dto.EpisodeID, reason)
 	s.engine.Pause()
 }
 func (c *Controller) system() {
@@ -779,6 +830,10 @@ func (c *Controller) Command(command string, value any) {
 	c.post(func() {
 		s := c.current
 		switch command {
+		case "play", "pause", "toggle", "surface", "next", "prev", "channel":
+			log.Printf("[native-player] control command=%q paused=%t loading=%t", command, c.state.Paused, c.state.Loading)
+		}
+		switch command {
 		case "close":
 			if c.state.Panel != "" {
 				c.state.Panel = ""
@@ -794,20 +849,15 @@ func (c *Controller) Command(command string, value any) {
 				c.fetchFeed()
 			}
 		case "retry":
-			if s != nil {
-				card, n, p := s.card, s.number, c.state.Status.Position
-				s.cancel()
-				if s.engine != nil {
-					_ = s.engine.Close()
-				}
-				delete(c.slots, s.key)
-				c.selectSlot(card, n, p, 0)
-			} else if c.state.Mode == Feed {
-				c.fetchFeed()
-			}
+			c.retrySelection()
 		case "surface":
 			c.surfaceClick()
 		case "toggle", "play", "pause":
+			if c.state.Error != "" && command != "pause" {
+				c.state.Paused = false
+				c.retrySelection()
+				break
+			}
 			paused := command == "pause" || (command == "toggle" && !c.state.Paused)
 			if command == "toggle" && c.state.Status.Ended {
 				paused = false
@@ -989,7 +1039,10 @@ func (c *Controller) nextEpisode(delta int) {
 				}
 				c.state.Loading = false
 				if err != nil {
-					c.state.Notice = "下一季加载失败，请稍后重试"
+					log.Printf("[native-player] next season series=%q: %v", s.seriesID, err)
+					if c.state.Mode == Feed && c.state.Status.Ended {
+						c.selectFeed(c.state.Index + 1)
+					}
 					return
 				}
 				if next == nil || next.ID == "" {

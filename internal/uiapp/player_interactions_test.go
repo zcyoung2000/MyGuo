@@ -7,7 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-func TestNativePictureClickCycleAndEscapeRestoreControls(t *testing.T) {
+func TestNativeFeedPictureClickPausesAndKeepsControls(t *testing.T) {
 	p := newNativeUIPlayer()
 	a := NewTestApp()
 	a.SetMediaHost(&MediaHost{controller: p})
@@ -27,26 +27,17 @@ func TestNativePictureClickCycleAndEscapeRestoreControls(t *testing.T) {
 	tt.ClickAt(x, y)
 	tt.Frame()
 	tt.Advance(200 * time.Millisecond)
-	if !p.state.Preferences.Clear || p.state.Paused || tt.HasText("播放进度") || tt.HasText("推荐频道") {
+	if !p.state.Paused || p.state.Preferences.Clear || !tt.HasText("播放进度") || !tt.HasText("推荐频道") {
 		t.Fatalf("first tap: clear=%v paused=%v seek=%v channels=%v commands=%v stage=%+v", p.state.Preferences.Clear, p.state.Paused, tt.HasText("播放进度"), tt.HasText("推荐频道"), p.commands, stage)
 	}
 	tt.ClickAt(x, y)
 	tt.Frame()
 	tt.Advance(200 * time.Millisecond)
-	if !p.state.Paused || p.state.Preferences.Clear || !tt.HasText("播放进度") {
-		t.Fatal("clean picture tap did not pause and restore controls")
+	if !p.state.Paused || p.state.Preferences.Clear || !tt.HasText("播放进度") || !tt.HasText("推荐频道") {
+		t.Fatal("second feed picture tap changed the paused state or hid controls")
 	}
-	tt.ClickAt(x, y)
-	tt.Frame()
-	tt.Advance(200 * time.Millisecond)
-	if p.state.Paused || !p.state.Preferences.Clear {
-		t.Fatal("paused picture did not resume clean playback")
-	}
-	tt.Key(0, ui.KeyEscape)
-	tt.Frame()
-	tt.Advance(200 * time.Millisecond)
-	if p.state.Preferences.Clear || !tt.HasText("播放进度") || p.commands[len(p.commands)-1] != "clear" {
-		t.Fatal("Escape did not reveal controls before leaving playback")
+	if len(p.commands) < 2 || p.commands[len(p.commands)-1] != "surface" {
+		t.Fatalf("picture taps did not use the surface command: %v", p.commands)
 	}
 }
 
@@ -96,7 +87,7 @@ func TestNativeOverlayControlsDoNotTriggerPictureClick(t *testing.T) {
 	}
 }
 
-func TestSpaceStillPausesAfterClickingPicture(t *testing.T) {
+func TestSpaceStillTogglesAfterClickingPicture(t *testing.T) {
 	p := newNativeUIPlayer()
 	a := NewTestApp()
 	a.SetMediaHost(&MediaHost{controller: p})
@@ -110,8 +101,8 @@ func TestSpaceStillPausesAfterClickingPicture(t *testing.T) {
 	tt.Key(0, ui.KeySpace)
 	tt.Frame()
 	tt.Advance(200 * time.Millisecond)
-	if !p.state.Paused || p.state.Preferences.Clear || p.commands[len(p.commands)-1] != "toggle" {
-		t.Fatalf("Space changed picture mode instead of toggling playback: %v", p.commands)
+	if p.state.Paused || p.state.Preferences.Clear || p.commands[len(p.commands)-1] != "toggle" {
+		t.Fatalf("Space did not toggle playback after the picture click: %v", p.commands)
 	}
 }
 
@@ -139,8 +130,8 @@ func TestBlankOverlaySpacingStillClicksThePicture(t *testing.T) {
 			}
 			tt.ClickAt(x, y)
 			tt.Frame()
-			if !p.state.Preferences.Clear || p.state.Paused {
-				t.Fatalf("blank overlay spacing ate the click: commands=%v point=%g,%g", p.commands, x, y)
+			if !p.state.Paused || p.state.Preferences.Clear {
+				t.Fatalf("blank overlay spacing did not pause playback: commands=%v point=%g,%g", p.commands, x, y)
 			}
 		})
 	}

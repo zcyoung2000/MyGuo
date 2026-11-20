@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	userstore "myguo/internal/store"
 )
@@ -15,9 +16,9 @@ func feedChannelKey(channel string) string {
 	return channel
 }
 
-// RestoreRecommendFeed only reads local state. Playback URLs are resolved by
-// PlayEpisode against the current MediaServer, so restarts cannot reuse a dead
-// localhost port or an expired upstream playback URL.
+// RestoreRecommendFeed restores stable metadata and validates the immediate
+// lookahead. PlayEpisode checks the remaining restored tail before decoding;
+// restarts never reuse a dead localhost port or an expired playback URL.
 func (s *HongguoService) RestoreRecommendFeed(ctx context.Context, channel string) (*RecommendFeedResult, error) {
 	s.feedMu.Lock()
 	defer s.feedMu.Unlock()
@@ -33,8 +34,18 @@ func (s *HongguoService) RestoreRecommendFeed(ctx context.Context, channel strin
 		if err := json.Unmarshal(entry.Payload, &card); err != nil {
 			return nil, fmt.Errorf("restore recommend queue: %w", err)
 		}
-		card.CoverURL = s.media.ImageURL(card.CoverURL)
 		items = append(items, card)
+	}
+	// Validate the current item and immediate lookahead together. A large old
+	// queue can carry thousands of episode rows per work; validating its whole
+	// tail here would put an eight-second catalog request before a cached video.
+	head := min(3, len(items))
+	validationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	validated := s.validateRecommendCards(validationCtx, channel, items[:head])
+	cancel()
+	items = append(validated, items[head:]...)
+	for i := range items {
+		items[i].CoverURL = s.media.ImageURL(items[i].CoverURL)
 	}
 	return sanitizeIPC(&RecommendFeedResult{Items: items, Cursor: progress.Cursor, HasMore: true}), nil
 }

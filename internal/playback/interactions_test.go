@@ -52,6 +52,26 @@ func TestSurfaceClickHidesThenPausesAndResumesWithoutReload(t *testing.T) {
 	}
 }
 
+func TestFeedSurfaceClickPausesWithoutHidingControls(t *testing.T) {
+	c, _ := newControllerTest(t, &testBackend{})
+	c.ShowFeed("推荐")
+	waitSource(t, c, "A", 1)
+
+	c.Command("surface", nil)
+	barrier(t, c)
+	s := c.Snapshot()
+	if !s.Paused || s.Status.Playing || s.Preferences.Clear {
+		t.Fatalf("feed click did not pause with controls visible: %+v", s)
+	}
+
+	c.Command("surface", nil)
+	barrier(t, c)
+	s = c.Snapshot()
+	if !s.Paused || s.Preferences.Clear {
+		t.Fatalf("second feed click changed the paused state: %+v", s)
+	}
+}
+
 func TestSurfaceClickDismissesPanelBeforeChangingPlayback(t *testing.T) {
 	c, _ := newControllerTest(t, &testBackend{})
 	c.Play("A", 1, 27, 1)

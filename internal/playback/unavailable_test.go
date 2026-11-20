@@ -97,15 +97,28 @@ func TestUnavailableTailWaitsForNextPageWithoutReplayingOlderWork(t *testing.T) 
 			}
 			c, _ := newControllerTest(t, b)
 			c.ShowFeed("")
-			waitSource(t, c, "older", 1)
+			older := waitSource(t, c, "older", 1)
+			// The unavailable successor is now rejected during lookahead, so
+			// paging keeps the healthy current frame instead of selecting it.
+			eventually(t, func() bool { return c.Snapshot().FeedCount == 1 })
 			c.Command("next", nil)
-			eventually(t, func() bool {
-				s := c.Snapshot()
-				return s.Book.ID == "empty" && s.Engine == nil && s.Loading
-			})
+			barrier(t, c)
+			if s := c.Snapshot(); s.Book.ID != "older" || s.Engine != older.Engine || s.Error != "" {
+				t.Fatal("pending page discarded the healthy current video")
+			}
 			close(release)
 			if scenario == "exhausted" {
-				eventually(t, func() bool { s := c.Snapshot(); return !s.Loading && s.Error != "" && s.Engine == nil })
+				eventually(t, func() bool { return !c.Snapshot().HasMore })
+				if c.Snapshot().Engine != older.Engine {
+					t.Fatal("exhausted page replayed a different old video")
+				}
+				e := older.Engine.(*testEngine)
+				e.mu.Lock()
+				loads := len(e.loads)
+				e.mu.Unlock()
+				if loads != 1 {
+					t.Fatalf("page exhaustion replayed the current work %d times", loads)
+				}
 			} else {
 				waitSource(t, c, "newer", 1)
 			}

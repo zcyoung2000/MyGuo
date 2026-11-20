@@ -55,14 +55,28 @@ func (p *nativeUIPlayer) Command(command string, value any) {
 			panel = ""
 		}
 		p.state.Panel = panel
+	case "pause":
+		p.state.Paused = true
+		p.state.Status.Playing = false
+		p.state.Preferences.Clear = false
+	case "play":
+		p.state.Paused = false
+		p.state.Status.Playing = true
 	case "toggle":
 		p.state.Paused = !p.state.Paused
+		p.state.Status.Playing = !p.state.Paused
 		if p.state.Paused {
 			p.state.Preferences.Clear = false
 		}
 	case "surface":
 		if p.state.Panel != "" {
 			p.state.Panel = ""
+			return
+		}
+		if p.state.Mode == playback.Feed {
+			p.state.Paused = true
+			p.state.Status.Playing = false
+			p.state.Preferences.Clear = false
 			return
 		}
 		if p.state.Paused || p.state.Status.Ended {

@@ -17,6 +17,12 @@ func (c *Controller) surfaceClick() {
 	}
 	if c.state.Error != "" {
 		c.state.Preferences.Clear = false
+		c.state.Paused = false
+		c.retrySelection()
+		return
+	}
+	if c.state.Mode == Feed {
+		c.setPaused(true)
 		return
 	}
 	if c.state.Paused || c.state.Status.Ended {
@@ -27,6 +33,24 @@ func (c *Controller) surfaceClick() {
 	} else {
 		c.state.Preferences.Clear = true
 	}
+}
+
+func (c *Controller) retrySelection() {
+	s := c.current
+	if s == nil {
+		if c.state.Mode == Feed {
+			c.fetchFeed()
+		}
+		return
+	}
+	card, n, position := s.card, s.number, c.state.Status.Position
+	s.cancel()
+	if s.engine != nil {
+		_ = s.engine.Close()
+		s.engine = nil // selectSlot must not snapshot a closed native object.
+	}
+	delete(c.slots, s.key)
+	c.selectSlot(card, n, position, 0)
 }
 
 func (c *Controller) setPaused(paused bool) {

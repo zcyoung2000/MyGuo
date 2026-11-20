@@ -68,3 +68,26 @@ func TestFeedQueueSurvivesRestartWithoutReorderingOrMixingChannels(t *testing.T)
 		t.Fatalf("queue operations must not invent viewing history: %+v, %v", history, err)
 	}
 }
+
+func TestUnavailableWorkRejectionKeepsOtherPendingItemsInEveryChannel(t *testing.T) {
+	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, channel := range []string{"推荐", "漫剧"} {
+		if err := s.AppendFeedQueue(channel, []FeedQueueEntry{{SeriesID: "good", Payload: json.RawMessage(`{}`)}, {SeriesID: "gone", Payload: json.RawMessage(`{}`)}, {SeriesID: "next", Payload: json.RawMessage(`{}`)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RemoveUnavailableFeedSeries("gone"); err != nil {
+		t.Fatal(err)
+	}
+	for _, channel := range []string{"推荐", "漫剧"} {
+		items, err := s.GetFeedQueue(channel)
+		if err != nil || len(items) != 2 || items[0].SeriesID != "good" || items[1].SeriesID != "next" {
+			t.Fatalf("rejection consumed adjacent works in %s: %+v / %v", channel, items, err)
+		}
+	}
+}

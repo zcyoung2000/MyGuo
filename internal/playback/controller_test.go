@@ -184,6 +184,7 @@ type testEngine struct {
 	loads        []string
 	seeks        []float64
 	warmNetwork  bool
+	holdClock    bool
 }
 
 func (e *testEngine) NativeView() uintptr  { return 0 }
@@ -217,8 +218,17 @@ func (e *testEngine) Configure(rate, volume float64, muted bool, fit string) {
 	e.muted = muted
 	e.mu.Unlock()
 }
-func (e *testEngine) Preroll()               { e.mu.Lock(); e.warmNetwork = true; e.mu.Unlock() }
-func (e *testEngine) Snapshot() avkit.Status { e.mu.Lock(); defer e.mu.Unlock(); return e.status }
+func (e *testEngine) Preroll() { e.mu.Lock(); e.warmNetwork = true; e.mu.Unlock() }
+func (e *testEngine) Snapshot() avkit.Status {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// Successful mock playback advances off the first frame. A separate held
+	// clock fixture exercises a decoded but stalled native pipeline.
+	if e.status.Playing && e.status.Position == 0 && !e.holdClock {
+		e.status.Position = .1
+	}
+	return e.status
+}
 func (e *testEngine) TogglePictureInPicture(context.Context) error {
 	e.mu.Lock()
 	e.status.PictureInPicture = !e.status.PictureInPicture
@@ -330,7 +340,7 @@ func TestSelectionPreservesExplicitResumePauseSpeedVolumeAndQuality(t *testing.T
 	c, r := newControllerTest(t, &testBackend{})
 	c.Play("A", 1, 0, 1)
 	s := waitSource(t, c, "A", 1)
-	if s.Status.Position != 0 {
+	if s.Status.Position > .1 {
 		t.Fatalf("explicit restart used saved position: %g", s.Status.Position)
 	}
 	c.Command("pause", nil)
@@ -365,7 +375,7 @@ func TestNormalPlayUsesSavedPositionAndNextSeason(t *testing.T) {
 	}
 	c.Command("nextEpisode", nil)
 	s = waitSource(t, c, "season2", 1)
-	if s.Status.Position != 0 || s.Session != 11 {
+	if s.Status.Position > .1 || s.Session != 11 {
 		t.Fatal("next season lost session or started at stale position")
 	}
 }

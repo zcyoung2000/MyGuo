@@ -17,6 +17,7 @@ import (
 )
 
 var ErrNoPlayableEpisodes = errors.New("该剧暂未提供可播放剧集")
+var ErrPlaybackAccessLimited = errors.New("播放信息访问受限，请稍后重试")
 
 func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version int64, currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) ([]media.FeedPreloadStatus, error) {
 	return s.media.SetFeedPreloadWindow(version, currentEpisodeID, currentQuality, items), nil
@@ -35,6 +36,11 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		log.Printf("[feed-playback] series=%q episode=%q phase=%s elapsedMs=%d cancelled=%t", seriesID, episodeID, phase, time.Since(started).Milliseconds(), ctx.Err() != nil)
 		if playbackErr != nil {
 			log.Printf("[feed-playback] series=%q phase=%s error=%q", seriesID, phase, playbackErr)
+			if errors.Is(playbackErr, ErrNoPlayableEpisodes) || errors.Is(playbackErr, hgapi.ErrContentUnavailable) {
+				if err := s.store.RemoveUnavailableFeedSeries(seriesID); err != nil {
+					log.Printf("[feed-catalog] remove unavailable series=%q: %v", seriesID, err)
+				}
+			}
 		}
 	}()
 
@@ -79,7 +85,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		found := false
 		var selected model.Episode
 		for _, ep := range pageItems(eps) {
-			if ep.Number == targetNum {
+			if ep.Number == targetNum && ep.Playable && ep.ID != "" {
 				episodeID = ep.ID
 				selected = ep
 				playbackDurationSec = int(selected.Duration.Seconds())
@@ -89,12 +95,17 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 			}
 		}
 		if !found {
-			items := pageItems(eps)
-			episodeID = items[0].ID
-			episodeNum = items[0].Number
-			selected = items[0]
-			commentCount = items[0].CommentCount
+			for _, ep := range pageItems(eps) {
+				if ep.Playable && ep.ID != "" {
+					episodeID, episodeNum, selected, commentCount = ep.ID, ep.Number, ep, ep.CommentCount
+					break
+				}
+			}
+			if episodeID == "" {
+				return nil, ErrNoPlayableEpisodes
+			}
 		}
+		playbackDurationSec = int(selected.Duration.Seconds())
 		episodePosterURL = s.media.ImageURL(selected.CoverURL)
 	}
 
@@ -127,7 +138,19 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		defer s.media.ReleasePlaybackSession(playbackSession)
 		info, err := s.media.PlaybackQualitiesForSession(ctx, episodeID, quality, playbackSession)
 		if err != nil {
-			// Playback can still succeed through MediaServer's own fallback.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			// Negotiation already tried protocol recovery and the spare pool. HLS
+			// and full-file transport use this same model resolver; returning
+			// their URLs cannot repair denied access and repeats the requests.
+			if !s.media.HasCachedHLS(episodeID, quality) {
+				if errors.Is(err, hgapi.ErrAnonymousLimited) || errors.Is(err, hgapi.ErrRateLimited) {
+					return nil, fmt.Errorf("%w: %w", ErrPlaybackAccessLimited, err)
+				}
+				return nil, fmt.Errorf("获取播放信息失败: %w", err)
+			}
+			// A completed local HLS copy can play without a new model.
 			qualityInfo = QualitySelection{
 				Options:     fallbackQualityOptions(normalizeVideoQuality(quality)),
 				Selected:    normalizeVideoQuality(quality),

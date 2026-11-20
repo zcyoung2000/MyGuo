@@ -11,7 +11,7 @@ import (
 func recoveryFixture() (*Controller, *slot, *testEngine, avkit.Status) {
 	e := &testEngine{}
 	_ = e.Load("hls")
-	s := &slot{engine: e, first: true, sourceURL: "hls", resume: 137, dto: &ipc.PlaybackDTO{EpisodeID: "episode", HLSStreamURL: "hls", FullStreamURL: "full"}}
+	s := &slot{engine: e, first: true, playStarted: true, sourceURL: "hls", resume: 137, dto: &ipc.PlaybackDTO{EpisodeID: "episode", HLSStreamURL: "hls", FullStreamURL: "full"}}
 	status := avkit.Status{Ready: true, Buffering: true, Position: 40, Buffered: 40, Duration: 200}
 	c := &Controller{current: s, state: State{Status: status, Preferences: Preferences{Rate: 2}}}
 	return c, s, e, status

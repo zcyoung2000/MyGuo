@@ -53,6 +53,24 @@ func (s *Store) GetFeedQueue(channel string) ([]FeedQueueEntry, error) {
 	return entries, rows.Err()
 }
 
+// RemoveFeedQueueItem rejects one catalog entry without acknowledging the
+// earlier, still-unviewed recommendations as consumed.
+func (s *Store) RemoveFeedQueueItem(channel, seriesID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM feed_queue WHERE channel = ? AND series_id = ?`, channel, seriesID)
+	return err
+}
+
+// RemoveUnavailableFeedSeries rejects a confirmed unplayable work in every
+// channel, without consuming any adjacent recommendations or watching history.
+func (s *Store) RemoveUnavailableFeedSeries(seriesID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM feed_queue WHERE series_id = ?`, seriesID)
+	return err
+}
+
 func (s *Store) ConsumeFeedQueue(channel, seriesID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

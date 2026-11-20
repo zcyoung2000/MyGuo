@@ -61,8 +61,8 @@ func TestNativeFeedChannelsOverlayKeepsMediaAndHidesWithItsScene(t *testing.T) {
 	}
 	player.state.Preferences.Clear = true
 	tt.Frame()
-	if tt.HasText("推荐频道") {
-		t.Fatal("clear-screen/fullscreen state retained native controls")
+	if !tt.HasText("推荐频道") || !tt.HasText("播放进度") {
+		t.Fatal("recommendation controls are not persistent")
 	}
 	player.state.Preferences.Clear = false
 	app.detail = Detail{ID: "123456"}
