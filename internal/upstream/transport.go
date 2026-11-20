@@ -2,11 +2,20 @@ package upstream
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 )
 
 const DefaultMaxHostAttempts = 3
+
+type fixedHostKey struct{}
+
+// WithFixedHost prevents the generic host transport from moving a request
+// whose signature was bound to an explicitly selected playback host.
+func WithFixedHost(ctx context.Context) context.Context {
+	return context.WithValue(ctx, fixedHostKey{}, true)
+}
 
 type Transport struct {
 	picker      *HostPicker
@@ -42,7 +51,7 @@ func (t *Transport) SetMaxAttempts(value int) {
 }
 
 func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if !t.enabled || t.picker == nil {
+	if !t.enabled || t.picker == nil || request.Context().Value(fixedHostKey{}) == true {
 		return t.next.RoundTrip(request)
 	}
 	family := FamilyForPath(request.URL.Path)

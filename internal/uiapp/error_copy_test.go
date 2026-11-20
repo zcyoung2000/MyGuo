@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/hgapi"
 	"myguo/internal/ipc"
 )
 
@@ -51,19 +51,19 @@ func (p *resultErrorProvider) GetSeriesAdaptations(context.Context, string, stri
 }
 
 func TestUserFacingErrorMapsAuthNetworkAndUnknownErrors(t *testing.T) {
-	apiErr := &sdk.APIError{HTTPStatus: http.StatusUnauthorized}
+	apiErr := &hgapi.APIError{HTTPStatus: http.StatusUnauthorized}
 	timeoutErr := &net.DNSError{IsTimeout: true}
 	tests := []struct {
 		name string
 		err  error
 		want string
 	}{
-		{name: "auth sentinel", err: sdk.ErrAuthenticationRequired, want: "会话已失效，请重新登录"},
-		{name: "http unauthorized", err: errors.Join(sdk.ErrTransport, apiErr), want: "会话已失效，请重新登录"},
+		{name: "auth sentinel", err: hgapi.ErrAuthenticationRequired, want: "会话已失效，请重新登录"},
+		{name: "http unauthorized", err: errors.Join(hgapi.ErrTransport, apiErr), want: "会话已失效，请重新登录"},
 		{name: "raw ranking unauthorized", err: errors.New("ranking API returned 401"), want: "会话已失效，请重新登录"},
-		{name: "rate limited", err: sdk.ErrRateLimited, want: "网络异常或访问受限，请稍后重试"},
-		{name: "anonymous limited", err: sdk.ErrAnonymousLimited, want: "网络异常或访问受限，请稍后重试"},
-		{name: "device rejected", err: sdk.ErrDeviceRejected, want: "网络异常或访问受限，请稍后重试"},
+		{name: "rate limited", err: hgapi.ErrRateLimited, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
+		{name: "anonymous limited", err: hgapi.ErrAnonymousLimited, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
+		{name: "device rejected", err: hgapi.ErrDeviceRejected, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
 		{name: "network timeout", err: &net.OpError{Op: "get", Err: timeoutErr}, want: "网络异常，请检查网络后重试"},
 		{name: "deadline", err: context.DeadlineExceeded, want: "网络异常，请检查网络后重试"},
 		{name: "unknown english", err: errors.New("failed to fetch actor profile"), want: "加载失败，请稍后重试"},
@@ -98,8 +98,8 @@ func waitFeature(t *testing.T, app *App, done func() bool) {
 func TestFeatureErrorsUseUnifiedChineseCopy(t *testing.T) {
 	provider := &resultErrorProvider{
 		rankErr:    errors.New("ranking API returned code 999"),
-		releaseErr: sdk.ErrAuthenticationRequired,
-		profileErr: &sdk.APIError{HTTPStatus: http.StatusUnauthorized},
+		releaseErr: hgapi.ErrAuthenticationRequired,
+		profileErr: &hgapi.APIError{HTTPStatus: http.StatusUnauthorized},
 	}
 	app := NewTestApp()
 	app.SetInvalidator(func() {})

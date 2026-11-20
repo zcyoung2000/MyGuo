@@ -14,7 +14,7 @@ func TestReconcileMustKeepPlaybackSavedDuringFetch(t *testing.T) {
 	const id = "710000000000001"
 	var service *Service
 	service, db := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		if r.URL.Path == "/reading/bookapi/read_progress/get/v" {
 			if err := service.SaveProgress(context.Background(), id, "710000000000103", "Local", "", 3, 10, 75, 100); err != nil {
 				t.Error(err)
 			}

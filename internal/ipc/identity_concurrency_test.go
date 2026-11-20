@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/sdk"
+	"myguo/internal/hgapi"
 )
 
 func TestRuntimeIdentityConcurrentReadWrite(t *testing.T) {
@@ -22,7 +22,7 @@ func TestRuntimeIdentityConcurrentReadWrite(t *testing.T) {
 		go func(writer int) {
 			defer writers.Done()
 			for update := 0; update < updatesPerWriter; update++ {
-				profile := &sdk.DeviceProfile{
+				profile := &hgapi.DeviceProfile{
 					DeviceID:    fmt.Sprintf("device-%d-%d", writer, update),
 					InstallID:   fmt.Sprintf("install-%d-%d", writer, update),
 					StoreRegion: fmt.Sprintf("region-%d-%d", writer, update),

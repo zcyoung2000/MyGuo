@@ -5,19 +5,19 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/sparedevice"
 	"myguo/internal/store"
 )
 
 type playbackClient struct {
-	client *sdk.Client
+	client *hgapi.Client
 	calls  int
 	err    error
 }
 
-func (c *playbackClient) ResolvePlayback(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
+func (c *playbackClient) ResolvePlayback(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
 	c.calls++
 	if c.err != nil {
 		return nil, c.err
@@ -32,10 +32,10 @@ func TestSparePoolDisabledKeepsExistingPlaybackBehavior(t *testing.T) {
 	}
 	defer server.Close()
 	server.playbackResolver = fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
-		return nil, sdk.ErrAnonymousLimited
+		return nil, hgapi.ErrAnonymousLimited
 	}}
 	result, err := server.resolvePlaybackForSession(context.Background(), "7100000000000201", "session")
-	if result != nil || !errors.Is(err, sdk.ErrAnonymousLimited) {
+	if result != nil || !errors.Is(err, hgapi.ErrAnonymousLimited) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -54,8 +54,8 @@ func TestSparePoolResolvesWithoutChangingPrimaryIdentity(t *testing.T) {
 	if err := state.UpsertSpareDevice(store.SpareDevice{DeviceID: "did", InstallID: "iid"}); err != nil {
 		t.Fatal(err)
 	}
-	manager := sparedevice.NewManager(state, sparedevice.WithClientFactory(func(sdk.ProfileStore) (sparedevice.PlaybackResolver, error) {
-		return func(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
+	manager := sparedevice.NewManager(state, sparedevice.WithClientFactory(func(hgapi.ProfileStore) (sparedevice.PlaybackResolver, error) {
+		return func(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
 			return &model.Playback{EpisodeID: "spare-episode"}, nil
 		}, nil
 	}))
@@ -63,7 +63,7 @@ func TestSparePoolResolvesWithoutChangingPrimaryIdentity(t *testing.T) {
 	var primaryCalls int
 	server.playbackResolver = fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
 		primaryCalls++
-		return nil, sdk.ErrAnonymousLimited
+		return nil, hgapi.ErrAnonymousLimited
 	}}
 	got, err := server.resolvePlaybackForSession(context.Background(), "episode", "session")
 	if err != nil || got.EpisodeID != "spare-episode" {

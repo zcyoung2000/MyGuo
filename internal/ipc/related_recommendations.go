@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/resourcecache"
 )
 
@@ -100,7 +100,7 @@ func (s *HongguoService) relatedCandidates(ctx context.Context, page *SeriesDeta
 	}
 	if selections := s.relatedFilterSelections(ctx, page); len(selections) > 0 {
 		if res, err := retryAnonymous(s, ctx, func(c context.Context) (*model.ShortFilterPage, error) {
-			return s.client.ShortFilter(c, sdk.ShortFilterQuery{Selections: selections})
+			return s.client.ShortFilter(c, hgapi.ShortFilterQuery{Selections: selections})
 		}); err == nil {
 			candidates = append(candidates, relatedSourceCandidates(shortFilterItems(res), relatedRelevanceFilter)...)
 		}
@@ -141,17 +141,17 @@ func isOfficialRelatedCell(related *model.Recommend) bool {
 		strings.TrimSpace(related.CellTitle) != "更多好剧"
 }
 
-func (s *HongguoService) relatedSearch(ctx context.Context, query string, contentType int) (*sdk.Page[model.SeriesSummary], error) {
-	opts := sdk.SearchOptions{PageSize: 20}
+func (s *HongguoService) relatedSearch(ctx context.Context, query string, contentType int) (*hgapi.Page[model.SeriesSummary], error) {
+	opts := hgapi.SearchOptions{PageSize: 20}
 	switch {
 	case model.ContentType(contentType) == model.ContentMotionComic || strings.Contains(query, "漫剧"):
-		opts.Filters = []string{sdk.SearchFilterComic}
+		opts.Filters = []string{hgapi.SearchFilterComic}
 	case strings.Contains(query, "AI剧"):
-		opts.Filters = []string{sdk.SearchFilterAIComic}
+		opts.Filters = []string{hgapi.SearchFilterAIComic}
 	default:
-		opts.Filters = []string{sdk.SearchFilterShortPlay}
+		opts.Filters = []string{hgapi.SearchFilterShortPlay}
 	}
-	return retryAnonymous(s, ctx, func(c context.Context) (*sdk.Page[model.SeriesSummary], error) {
+	return retryAnonymous(s, ctx, func(c context.Context) (*hgapi.Page[model.SeriesSummary], error) {
 		return s.client.Search(c, query, opts)
 	})
 }

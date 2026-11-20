@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 func TestEpisodeLoadBroadcastsToAllPlaybackAndDetailWaiters(t *testing.T) {
 	for _, wantErr := range []error{nil, errors.New("unavailable")} {
 		load := &episodeLoad{done: make(chan struct{})}
 		svc := &HongguoService{episodeLoads: map[string]*episodeLoad{"series": load}}
-		want := &sdk.Page[model.Episode]{Items: []model.Episode{{ID: "episode", Number: 1}}}
+		want := &hgapi.Page[model.Episode]{Items: []model.Episode{{ID: "episode", Number: 1}}}
 		var waiters sync.WaitGroup
 		for i := 0; i < 32; i++ {
 			waiters.Add(1)
@@ -43,7 +43,7 @@ func TestEpisodeCacheEvictsOldestAtLimit(t *testing.T) {
 	}
 	for seriesNumber := 0; seriesNumber < 129; seriesNumber++ {
 		id := fmt.Sprintf("series-%03d", seriesNumber)
-		service.rememberEpisode(id, &sdk.Page[model.Episode]{Items: []model.Episode{{ID: id}}}, time.Now())
+		service.rememberEpisode(id, &hgapi.Page[model.Episode]{Items: []model.Episode{{ID: id}}}, time.Now())
 	}
 
 	if len(service.episodeCache) != 128 {
@@ -63,7 +63,7 @@ func TestEpisodeCacheEvictsOldestAtLimit(t *testing.T) {
 func TestEpisodeCacheExpiresStaleEntry(t *testing.T) {
 	service := &HongguoService{
 		episodeCache: map[string]episodeCacheEntry{
-			"series": {page: &sdk.Page[model.Episode]{Items: []model.Episode{{ID: "stale"}}}, expiresAt: time.Now().Add(-time.Second)},
+			"series": {page: &hgapi.Page[model.Episode]{Items: []model.Episode{{ID: "stale"}}}, expiresAt: time.Now().Add(-time.Second)},
 		},
 		episodeCacheIndex: make(map[string]*list.Element),
 		episodeCacheLRU:   list.New(),
@@ -101,7 +101,7 @@ func TestPlaybackEpisodeWaitCanTimeoutWithoutConsumingSharedResult(t *testing.T)
 		close(load.done)
 		t.Fatal("playback waited past its own deadline for a background detail load")
 	}
-	load.result.page = &sdk.Page[model.Episode]{Items: []model.Episode{{ID: "episode"}}}
+	load.result.page = &hgapi.Page[model.Episode]{Items: []model.Episode{{ID: "episode"}}}
 	close(load.done)
 	if page, err := svc.listEpisodesCached(context.Background(), "series"); page != load.result.page || err != nil {
 		t.Fatalf("later detail waiter lost shared result: %p/%v", page, err)
@@ -115,7 +115,7 @@ func TestPlaybackPreservesEpisodeErrorWithoutSecondRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	for _, cause := range []error{errors.New("upstream unavailable"), sdk.ErrAnonymousLimited} {
+	for _, cause := range []error{errors.New("upstream unavailable"), hgapi.ErrAnonymousLimited} {
 		load := &episodeLoad{done: make(chan struct{})}
 		load.result.err = cause
 		close(load.done)

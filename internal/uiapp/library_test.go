@@ -32,6 +32,25 @@ func (f *fakeLibrary) GetLikes(context.Context) ([]ipc.LikeItem, error) {
 	return f.likes, f.err
 }
 
+type partialHistoryLibrary struct {
+	fakeLibrary
+	items []ipc.HistoryItem
+	err   error
+}
+
+func (f *partialHistoryLibrary) RefreshHistory(context.Context) ([]ipc.HistoryItem, error) {
+	return f.items, f.err
+}
+func (f *partialHistoryLibrary) RefreshFavorites(ctx context.Context) ([]ipc.FavoriteItem, error) {
+	return f.GetFavorites(ctx)
+}
+func (f *partialHistoryLibrary) RefreshLikes(ctx context.Context) ([]ipc.LikeItem, error) {
+	return f.GetLikes(ctx)
+}
+func (f *partialHistoryLibrary) RefreshReservations(ctx context.Context) ([]ipc.ReservationItem, error) {
+	return f.GetReservations(ctx)
+}
+
 func TestLoadHistoryMapsOnlyRealLocalRecords(t *testing.T) {
 	provider := &fakeLibrary{history: []ipc.HistoryItem{{
 		SeriesID: "123456", Title: "真实历史", CoverURL: "cover", EpisodeNum: 4,
@@ -81,6 +100,68 @@ func TestLoadLibraryShowsErrorWithoutSyntheticRecords(t *testing.T) {
 	app.loadLibrary(libraryHistory)
 	if app.library.History.Loading || app.library.History.Error == "" || len(app.library.History.Items) != 0 {
 		t.Fatalf("error history = %+v", app.library.History)
+	}
+}
+
+func TestLoadHistoryKeepsPartialRowsAlongsideSyncError(t *testing.T) {
+	provider := &partialHistoryLibrary{
+		items: []ipc.HistoryItem{{SeriesID: "710000000000001", Title: "远端已读到", EpisodeNum: 3, TotalEpisodes: 10}},
+		err:   errors.New("page two timed out"),
+	}
+	app := NewTestApp()
+	app.libraryData = provider
+	app.SetInvalidator(func() {})
+	app.loadLibraryWithRefresh(libraryHistory, true)
+	state := app.LibraryState().History
+	if state.Loading || !state.Loaded || state.Empty || state.Error == "" || len(state.Items) != 1 || state.Items[0].Title != "远端已读到" {
+		t.Fatalf("partial history state = %+v", state)
+	}
+}
+
+func TestHistoryCardsNameMissingArtworkAndTitle(t *testing.T) {
+	const id = "710000000000001"
+	app := NewTestApp()
+	app.view = "history"
+	app.artwork = newArtworkLoader("", nil, nil)
+	app.artwork.entries["https://media.invalid/missing.jpg"] = artworkEntry{retryAt: time.Now().Add(time.Hour)}
+	app.library.History = Library{Loaded: true, Items: []CatalogItem{
+		{ID: id, Title: "剧名待补全 · " + id, CoverURL: ""},
+		{ID: "710000000000002", Title: "另一部", CoverURL: "https://media.invalid/missing.jpg"},
+	}}
+	tt := ui.NewTester(app.Render, 1200, 800)
+	tt.Frame()
+	for _, label := range []string{"剧名待补全 · " + id, "封面待补全", "封面加载失败"} {
+		if !tt.HasText(label) {
+			t.Fatalf("history card status %q missing; texts=%v", label, tt.Texts())
+		}
+	}
+}
+
+func TestHistoryPartialSyncErrorLeavesCardsVisible(t *testing.T) {
+	app := NewTestApp()
+	app.view = "history"
+	app.library.History = Library{
+		Title: "观看历史", Loaded: true,
+		Error: "云端历史读取未完成，已读取和本机记录均已保留",
+		Items: []CatalogItem{{ID: "710000000000001", Title: "远端已读到"}},
+	}
+	tt := ui.NewTester(app.Render, 1200, 800)
+	tt.Frame()
+	if !tt.HasText("云端历史读取未完成，已读取和本机记录均已保留") || !tt.HasText("远端已读到") || !tt.HasText("立即重试") {
+		t.Fatalf("partial sync render texts=%v", tt.Texts())
+	}
+}
+
+func TestHistoryWithoutSyncErrorDoesNotShowRetryBanner(t *testing.T) {
+	app := NewTestApp()
+	app.view = "history"
+	app.library.History = Library{
+		Loaded: true,
+		Items:  []CatalogItem{{ID: "710000000000001", Title: "保留的观看记录"}},
+	}
+	tt := ui.NewTester(app.Render, 1200, 800)
+	if !tt.HasText("保留的观看记录") || tt.HasText("立即重试") || tt.HasText("账号归属") || tt.HasText("已下架") {
+		t.Fatalf("background maintenance leaked into history: %v", tt.Texts())
 	}
 }
 

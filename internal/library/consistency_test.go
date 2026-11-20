@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
-	userstore "myguo/internal/store"
 	"net/http"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	userstore "myguo/internal/store"
 )
 
 func TestFavoriteSyncRequiresSuccessfulCompleteShelf(t *testing.T) {
@@ -51,10 +52,10 @@ func TestOlderUploadAckKeepsNewEpisodeProgress(t *testing.T) {
 	var once sync.Once
 	var positions []float64
 	service, db := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "read_history/update") {
+		if strings.Contains(r.URL.Path, "read_progress/upload") {
 			raw, _ := io.ReadAll(r.Body)
-			row := decodeGZIP(t, raw)["update_datas"].([]any)[0].(map[string]any)
-			positions = append(positions, row["current_play_position"].(float64))
+			row := decodeGZIP(t, raw)["books"].([]any)[0].(map[string]any)
+			positions = append(positions, row["current_play_time"].(float64))
 			once.Do(func() {
 				newer := HistoryItem{SeriesID: id, Title: "Local", EpisodeNum: 2, PositionSec: 20, DurationSec: 100, UpdatedAt: 100}
 				if err := store.SaveHistory(newer); err != nil {
@@ -150,7 +151,7 @@ func TestPendingOperationsDoNotCrossCredentialChanges(t *testing.T) {
 	if _, err := service.processPendingHistoryDeletes(); err != nil {
 		t.Fatal(err)
 	}
-	if len(sentCookies) != 4 {
+	if len(sentCookies) != 3 {
 		t.Fatalf("original identity did not resume its intents: %v", sentCookies)
 	}
 	for _, cookie := range sentCookies {
@@ -160,7 +161,7 @@ func TestPendingOperationsDoNotCrossCredentialChanges(t *testing.T) {
 	}
 }
 
-func TestIdentityChangeBetweenHistoryAndProgressUploadStopsOldTransaction(t *testing.T) {
+func TestIdentityChangeDuringProgressUploadPreservesOldIntent(t *testing.T) {
 	var service *Service
 	var cookies []string
 	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

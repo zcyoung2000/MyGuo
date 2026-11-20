@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -255,8 +256,8 @@ func TestIncompleteRemoteHistorySnapshotKeepsLocalRows(t *testing.T) {
 		}
 	}
 
-	if err := service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration()); err != nil {
-		t.Fatalf("syncRemoteHistory() error = %v", err)
+	if err := service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration()); err == nil {
+		t.Fatal("incomplete snapshot with a stalled cursor was accepted")
 	}
 
 	items, err := store.GetHistory()
@@ -268,7 +269,7 @@ func TestIncompleteRemoteHistorySnapshotKeepsLocalRows(t *testing.T) {
 	}
 }
 
-func TestPendingHistoryUploadFlushesHistoryAndProgress(t *testing.T) {
+func TestPendingHistoryUploadUsesProgressEndpoint(t *testing.T) {
 	const seriesID = "710000000000001"
 	const episodeID = "710000000000101"
 	log := &requestLog{}
@@ -301,16 +302,11 @@ func TestPendingHistoryUploadFlushesHistoryAndProgress(t *testing.T) {
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("pending uploads = %#v, err = %v", pending, err)
 	}
-	historyCalls := log.matching("read_history/update")
 	progressCalls := log.matching("read_progress/upload")
-	if len(historyCalls) != 1 || len(progressCalls) != 1 {
-		t.Fatalf("history/progress calls = %d/%d, want 1/1", len(historyCalls), len(progressCalls))
+	if len(progressCalls) != 1 || len(log.matching("read_history/update")) != 0 {
+		t.Fatalf("history/progress calls = %d/%d, want 0/1", len(log.matching("read_history/update")), len(progressCalls))
 	}
-	historyPayload := decodeGZIP(t, historyCalls[0].body)
 	progressPayload := decodeGZIP(t, progressCalls[0].body)
-	if _, ok := historyPayload["update_datas"]; !ok {
-		t.Fatalf("history payload missing update_datas: %#v", historyPayload)
-	}
 	if _, ok := progressPayload["books"]; !ok {
 		t.Fatalf("progress payload missing books: %#v", progressPayload)
 	}
@@ -359,14 +355,85 @@ func TestHistoryMutationBatchesSplitAfterUpstreamLimit(t *testing.T) {
 	if pending, err := store.PendingHistoryUploads(10); err != nil || len(pending) != 0 {
 		t.Fatalf("pending uploads = %v, %v", pending, err)
 	}
-	historyCalls := log.matching("read_history/update")
-	if len(historyCalls) != 3 || string(historyCalls[0].body) != "2" ||
-		string(historyCalls[1].body) != "1" || string(historyCalls[2].body) != "1" {
-		t.Fatalf("history calls = %v; want batch 2 then 1, 1", historyCalls)
+	if historyCalls := log.matching("read_history/update"); len(historyCalls) != 0 {
+		t.Fatalf("progress upload called the history-update endpoint: %v", historyCalls)
 	}
 	progressCalls := log.matching("read_progress/upload")
-	if len(progressCalls) != 2 || string(progressCalls[0].body) != "1" || string(progressCalls[1].body) != "1" {
-		t.Fatalf("progress calls = %v; want single-item calls 1, 1", progressCalls)
+	if len(progressCalls) != 3 || string(progressCalls[0].body) != "2" || string(progressCalls[1].body) != "1" || string(progressCalls[2].body) != "1" {
+		t.Fatalf("progress calls = %v; want rejected batch 2 then single-item calls 1, 1", progressCalls)
+	}
+}
+
+func TestPendingPlaybackUploadAcknowledgesOnlySuccess(t *testing.T) {
+	for _, test := range []struct {
+		name, progressCode string
+		wantAck            bool
+	}{
+		{"progress accepted", "0", true},
+		{"progress rejected", "100103", false},
+		{"progress fast-rejected", "100", false},
+		{"account rejected", "401", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			progressCalls, historyCalls := 0, 0
+			service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "read_progress/upload") {
+					progressCalls++
+					fmt.Fprintf(w, `{"code":%s}`, test.progressCode)
+					return
+				}
+				if strings.Contains(r.URL.Path, "read_history/update") {
+					historyCalls++
+				}
+				writeJSON(w, map[string]any{"code": 0})
+			}))
+			item := HistoryItem{SeriesID: "710000000000001", EpisodeNum: 3, PositionSec: 12.5, UpdatedAt: 100}
+			if err := store.SaveHistory(item); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.QueueHistoryUpload(item, "710000000000101"); err != nil {
+				t.Fatal(err)
+			}
+			uploaded, err := service.processPendingHistoryUploads()
+			if (err == nil) != test.wantAck || (uploaded == 1) != test.wantAck {
+				t.Fatalf("upload = %d, %v; want acknowledgment=%t", uploaded, err, test.wantAck)
+			}
+			if progressCalls != 1 || historyCalls != 0 {
+				t.Fatalf("progress/history calls = %d/%d, want 1/0", progressCalls, historyCalls)
+			}
+			pending, err := store.PendingHistoryUploads(10)
+			if err != nil || (len(pending) == 0) != test.wantAck {
+				t.Fatalf("pending count = %d, %v; want acknowledgment=%t", len(pending), err, test.wantAck)
+			}
+		})
+	}
+}
+
+func TestFastRejectedProgressUploadUsesRateLimitBackoff(t *testing.T) {
+	var requests atomic.Int32
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeJSON(w, map[string]any{"code": 100, "message": "FAST_REJECT"})
+	}))
+	seed := historyRefreshTestItem()
+	if err := store.SaveHistory(seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueHistoryUpload(seed, "710000000000103"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.processPendingHistoryUploads(); err == nil {
+		t.Fatal("fast-rejected upload unexpectedly succeeded")
+	}
+	if processed, err := service.processPendingHistoryUploads(); err != nil || processed != 0 {
+		t.Fatalf("backoff retry = %d, %v; want no request", processed, err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("fast-rejected upload requests = %d, want one during cooldown", requests.Load())
+	}
+	pending, err := store.PendingHistoryUploads(10)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("fast-rejected intent = %+v, %v; want retained", pending, err)
 	}
 }
 
@@ -443,10 +510,11 @@ func TestHistoryMutationKeepsBatchWhenUpstreamAcceptsIt(t *testing.T) {
 	if uploaded, err := service.processPendingHistoryUploads(); err != nil || uploaded != 2 {
 		t.Fatalf("processPendingHistoryUploads() = %d, %v; want 2, nil", uploaded, err)
 	}
-	for _, suffix := range []string{"read_history/update", "read_progress/upload"} {
-		if calls := log.matching(suffix); len(calls) != 1 || string(calls[0].body) != "2" {
-			t.Fatalf("%s calls = %v; want one two-item batch", suffix, calls)
-		}
+	if calls := log.matching("read_history/update"); len(calls) != 0 {
+		t.Fatalf("progress upload called the history-update endpoint: %v", calls)
+	}
+	if calls := log.matching("read_progress/upload"); len(calls) != 1 || string(calls[0].body) != "2" {
+		t.Fatalf("progress calls = %v; want one two-item batch", calls)
 	}
 }
 

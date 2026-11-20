@@ -4,13 +4,13 @@
 
 - Upstream: OpenHongguo (<https://github.com/beilunyang/openhongguo>)
 - License: Apache-2.0
-- Usage: Go SDK and request-signing helpers used for catalog, account, playback, and comment integration.
+- Usage: Portions of the local data models, catalog parsing and registration encoding in `internal/hgapi` were adapted from the Apache-2.0 source. The external SDK dependency has been removed. The application owns API requests, signing, authentication and playback sessions; attribution and license files are retained in `internal/hgapi/NOTICE` and `licenses/`.
 
 ## MyGo
 
 - Upstream: MyGo (<https://github.com/egoist/mygo>)
 - License: MIT
-- Usage: Native macOS windowing, WKWebView embedding, IPC bridge, and packaging.
+- Usage: Native macOS windowing, GPU-drawn UI, native module integration and packaging.
 
 ## FFmpeg
 

@@ -10,11 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 const (
@@ -63,10 +62,11 @@ func newPlaybackRaceResolver(primary, spare PlaybackResolver) *playbackRaceResol
 }
 
 func (r *playbackRaceResolver) ResolvePlayback(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
-	if len(r.sources) > playbackRaceConcurrency {
-		r.sources = r.sources[:playbackRaceConcurrency]
+	sources := r.sources
+	if len(sources) > playbackRaceConcurrency {
+		sources = sources[:playbackRaceConcurrency]
 	}
-	if len(r.sources) == 0 {
+	if len(sources) == 0 {
 		return nil, errors.New("no playback source")
 	}
 	timeout := r.timeout
@@ -76,26 +76,22 @@ func (r *playbackRaceResolver) ResolvePlayback(ctx context.Context, episodeID st
 	raceCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	results := make(chan playbackSourceResult, len(r.sources))
-	wg := &sync.WaitGroup{}
-	wg.Add(len(r.sources))
-	for _, source := range r.sources {
+	results := make(chan playbackSourceResult, len(sources))
+	for _, source := range sources {
 		go func(source playbackSource) {
-			defer wg.Done()
 			result, err := source.call(raceCtx, episodeID)
 			results <- playbackSourceResult{name: source.name, result: result, err: err}
 		}(source)
 	}
-	resultsClosed := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(results)
-		close(resultsClosed)
-	}()
 
 	var failures []error
-	var terminal error
-	for event := range results {
+	for range sources {
+		var event playbackSourceResult
+		select {
+		case <-raceCtx.Done():
+			return nil, errors.Join(append(failures, raceCtx.Err())...)
+		case event = <-results:
+		}
 		if event.err == nil && event.result != nil && playbackUsable(event.result.Playback) {
 			return event.result, nil
 		}
@@ -103,22 +99,12 @@ func (r *playbackRaceResolver) ResolvePlayback(ctx context.Context, episodeID st
 			return event.result, nil
 		}
 		if event.err != nil && !playbackSwitchable(event.err) {
-			terminal = event.err
-			cancel()
-			<-results
-			break
+			return nil, errors.Join(append(failures, event.err)...)
 		}
 		if event.err == nil {
 			event.err = errPlaybackModelUnavailable
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", event.name, event.err))
-	}
-	cancel()
-	if terminal != nil {
-		<-resultsClosed
-	}
-	if terminal != nil {
-		return nil, errors.Join(append(failures, terminal)...)
 	}
 	return nil, errors.Join(failures...)
 }
@@ -128,27 +114,27 @@ func playbackUsable(pb *model.Playback) bool {
 }
 
 func playbackSwitchable(err error) bool {
-	return errors.Is(err, sdk.ErrAnonymousLimited) || sdk.Retryable(err)
+	return errors.Is(err, hgapi.ErrAnonymousLimited) || hgapi.Retryable(err)
 }
 
-func newSDKPlaybackResolver(client *sdk.Client) *sdkPlaybackResolver {
-	return &sdkPlaybackResolver{client: client}
+func newNativePlaybackResolver(client *hgapi.Client) *nativePlaybackResolver {
+	return &nativePlaybackResolver{client: client}
 }
 
-type sdkPlaybackResolver struct {
-	client *sdk.Client
+type nativePlaybackResolver struct {
+	client *hgapi.Client
 	http   *http.Client
 }
 
-func (r sdkPlaybackResolver) fetchPrimary(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
-	pb, err := r.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
-	if err != nil && !errors.Is(err, sdk.ErrDRMProtected) {
+func (r nativePlaybackResolver) fetchPrimary(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
+	pb, err := r.client.ResolvePlayback(ctx, episodeID, hgapi.PlaybackOptions{})
+	if err != nil && !errors.Is(err, hgapi.ErrDRMProtected) {
 		return nil, err
 	}
 	return &playbackResolveResult{Playback: pb}, nil
 }
 
-func (r sdkPlaybackResolver) fetchFallback(ctx context.Context, fallbackURL string) (*playbackResolveResult, error) {
+func (r nativePlaybackResolver) fetchFallback(ctx context.Context, fallbackURL string) (*playbackResolveResult, error) {
 	target, err := url.Parse(strings.TrimSpace(fallbackURL))
 	if err != nil || target.Scheme == "" || target.Host == "" {
 		return nil, errors.New("invalid fallback_api URL")
@@ -188,7 +174,7 @@ func (r sdkPlaybackResolver) fetchFallback(ctx context.Context, fallbackURL stri
 	return &playbackResolveResult{Playback: pb}, nil
 }
 
-func (r sdkPlaybackResolver) ResolvePlayback(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
+func (r nativePlaybackResolver) ResolvePlayback(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
 	if r.client == nil {
 		return nil, errNilPlaybackClient
 	}
@@ -200,8 +186,8 @@ type playbackFallbackResolver struct {
 	fetcher func(ctx context.Context, fallbackURL string) (*playbackResolveResult, error)
 }
 
-func newSDKFallbackPlaybackResolver(client *sdk.Client, httpClient *http.Client) *playbackFallbackResolver {
-	sdkResolver := sdkPlaybackResolver{client: client, http: httpClient}
+func newNativeFallbackPlaybackResolver(client *hgapi.Client, httpClient *http.Client) *playbackFallbackResolver {
+	sdkResolver := nativePlaybackResolver{client: client, http: httpClient}
 	return &playbackFallbackResolver{
 		inner:   &sdkResolver,
 		fetcher: sdkResolver.fetchFallback,

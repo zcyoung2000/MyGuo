@@ -1,7 +1,7 @@
-// Package qrauth implements the official website's QR authorization protocol.
+// Package passport implements the official website's QR authorization protocol.
 // Each attempt owns a fresh, in-memory cookie jar. Account credentials are
 // available only after phone confirmation and a successful Passport check.
-package qrauth
+package passport
 
 import (
 	"bytes"
@@ -12,13 +12,14 @@ import (
 	"fmt"
 	"image"
 	_ "image/png"
-	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"myguo/internal/hgapi"
 )
 
 const Origin = "https://hongguoduanju.com"
@@ -135,7 +136,7 @@ func (s *Session) complete(ctx context.Context) (string, *Credentials, error) {
 	return "confirmed", &Credentials{Cookies: strings.Join(cookies, "; ")}, nil
 }
 
-func (s *Session) request(ctx context.Context, path string, params url.Values) (*http.Response, error) {
+func (s *Session) request(ctx context.Context, path string, params url.Values) (*hgapi.Response, error) {
 	u, _ := url.Parse(Origin + path)
 	q := u.Query()
 	for k, v := range map[string]string{"aid": "513755", "passport_jssdk_version": "3.4.10", "passport_jssdk_type": "normal", "account_sdk_source": "web", "is_from_ttaccountsdk": "1", "language": "zh"} {
@@ -145,20 +146,13 @@ func (s *Session) request(ctx context.Context, path string, params url.Values) (
 		q[k] = v
 	}
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Origin", Origin)
-	req.Header.Set("Referer", Origin+"/")
-	req.Header.Set("Accept", "application/json, text/javascript")
-	for _, c := range s.client.Jar.Cookies(u) {
-		if c.Name == "passport_csrf_token" {
-			req.Header.Set("x-tt-passport-csrf-token", c.Value)
+	headers := map[string]string{"User-Agent": userAgent, "Origin": Origin, "Referer": Origin + "/", "Accept": "application/json, text/javascript"}
+	for _, cookie := range s.client.Jar.Cookies(u) {
+		if cookie.Name == "passport_csrf_token" {
+			headers["x-tt-passport-csrf-token"] = cookie.Value
 		}
 	}
-	resp, err := s.client.Do(req)
+	resp, err := hgapi.Exchange(ctx, s.client, &hgapi.Request{Method: "GET", URL: u.String(), Headers: headers, CredentialsManaged: true})
 	// Never surface URLs: they contain the short-lived QR authorization token.
 	if err != nil {
 		if ctx.Err() != nil {
@@ -195,15 +189,14 @@ func (s *Session) callOnce(ctx context.Context, path string, params url.Values) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("%w（HTTP %d）", ErrTemporary, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("红果登录服务暂不可用（HTTP %d）", resp.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
-	if err != nil || len(raw) > 2<<20 {
+	raw := resp.Body
+	if len(raw) > 2<<20 {
 		return nil, ErrTemporary
 	}
 	var env struct {
@@ -228,22 +221,18 @@ func (s *Session) finishRedirect(ctx context.Context, value string) error {
 		if err != nil || u == nil || u.Scheme != "https" || u.Host != "hongguoduanju.com" || u.User != nil {
 			return errors.New("登录确认地址无效，请重新扫码")
 		}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-		req.Header.Set("User-Agent", userAgent)
-		req.Header.Set("Referer", Origin+"/")
-		resp, e := s.client.Do(req)
+		resp, e := hgapi.Exchange(ctx, s.client, &hgapi.Request{Method: "GET", URL: u.String(), Headers: map[string]string{"User-Agent": userAgent, "Referer": Origin + "/"}, CredentialsManaged: true})
 		if e != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			return ErrTemporary
 		}
-		resp.Body.Close()
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			return ErrTemporary
 		}
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			u, err = u.Parse(resp.Header.Get("Location"))
+			u, err = u.Parse(resp.Headers["Location"])
 			continue
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {

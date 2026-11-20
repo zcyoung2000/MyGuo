@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/resourcecache"
 	"myguo/internal/sanitize"
 )
@@ -92,7 +92,7 @@ func retryAnonymous[T any](s *HongguoService, ctx context.Context, op func(conte
 }
 
 func errorsIsAnonymous(err error) bool {
-	if errors.Is(err, sdk.ErrAnonymousLimited) {
+	if errors.Is(err, hgapi.ErrAnonymousLimited) {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "anonymous")
@@ -154,7 +154,7 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 
 	if len(detail.Episodes) == 0 {
 		episodesCtx, episodesCancel := context.WithTimeout(pageCtx, seriesDetailTimeout)
-		if episodes, episodeErr := s.client.ListEpisodes(episodesCtx, seriesID, sdk.EpisodeOptions{}); episodeErr == nil && episodes != nil {
+		if episodes, episodeErr := s.client.ListEpisodes(episodesCtx, seriesID, hgapi.EpisodeOptions{}); episodeErr == nil && episodes != nil {
 			detail.Episodes = episodes.Items
 		}
 		episodesCancel()

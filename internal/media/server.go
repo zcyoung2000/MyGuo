@@ -22,9 +22,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/appdirs"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/lifecycle"
 	"myguo/internal/mediautil"
 	"myguo/internal/resourcelog"
@@ -83,7 +83,7 @@ type QualitySelection struct {
 
 type MediaServer struct {
 	tasks                    lifecycle.Group
-	client                   *sdk.Client
+	client                   *hgapi.Client
 	cacheDir                 string
 	port                     int
 	server                   *http.Server
@@ -459,14 +459,14 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 
 	resolver := ms.playbackResolver
 	if resolver == nil {
-		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
+		resolver = newNativeFallbackPlaybackResolver(ms.client, nil)
 	}
 	resolved, err := resolver.ResolvePlayback(ctx, episodeID)
 	var pb *model.Playback
 	if resolved != nil {
 		pb = resolved.Playback
 	}
-	if errors.Is(err, sdk.ErrAnonymousLimited) || (err != nil && errors.Is(err, context.DeadlineExceeded)) {
+	if errors.Is(err, hgapi.ErrAnonymousLimited) || (err != nil && errors.Is(err, context.DeadlineExceeded)) {
 		if pool := ms.spareDevicePool.Load(); pool != nil {
 			if session == "" {
 				session = sparedevice.RandomSession()
@@ -483,7 +483,7 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 		// The SDK already bounds and coordinates device recovery. Repeating
 		// it here multiplies requests and discards other valid cached models.
 	}
-	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
+	if errors.Is(err, hgapi.ErrDRMProtected) && pb != nil {
 		err = nil
 	}
 	if pb == nil {
@@ -502,10 +502,10 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	return pb, err
 }
 
-func (ms *MediaServer) primaryResolverForSparePool(ctx context.Context, episodeID string, _ sdk.PlaybackOptions) (*model.Playback, error) {
+func (ms *MediaServer) primaryResolverForSparePool(ctx context.Context, episodeID string, _ hgapi.PlaybackOptions) (*model.Playback, error) {
 	resolver := ms.playbackResolver
 	if resolver == nil {
-		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
+		resolver = newNativeFallbackPlaybackResolver(ms.client, nil)
 	}
 	resolved, err := resolver.ResolvePlayback(ctx, episodeID)
 	if resolved != nil {
@@ -663,7 +663,7 @@ func (ms *MediaServer) mediaNetworkSnapshot() (profile string, bytesPerSecond fl
 	return profile, ema, failureCount
 }
 
-func NewMediaServer(client *sdk.Client) (*MediaServer, error) {
+func NewMediaServer(client *hgapi.Client) (*MediaServer, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -671,7 +671,7 @@ func NewMediaServer(client *sdk.Client) (*MediaServer, error) {
 	return newMediaServer(client, appdirs.AppCacheDir(home))
 }
 
-func newMediaServer(client *sdk.Client, cacheDir string) (*MediaServer, error) {
+func newMediaServer(client *hgapi.Client, cacheDir string) (*MediaServer, error) {
 	if err := os.MkdirAll(filepath.Join(cacheDir, "episodes"), 0755); err != nil {
 		return nil, err
 	}
@@ -702,7 +702,7 @@ func newMediaServer(client *sdk.Client, cacheDir string) (*MediaServer, error) {
 		progressiveStreams: make(map[string]*progressiveStream),
 		hlsStreams:         make(map[string]*hlsStream),
 		cachePins:          make(map[string]int),
-		playbackResolver:   newPlaybackRaceResolver(newSDKFallbackPlaybackResolver(client, nil), nil),
+		playbackResolver:   newPlaybackRaceResolver(newNativeFallbackPlaybackResolver(client, nil), nil),
 	}
 
 	mux := http.NewServeMux()
@@ -1073,7 +1073,7 @@ func (ms *MediaServer) downloadAndDecrypt(ctx context.Context, episodeID, qualit
 
 	keyHex := ""
 	if pb.Protected {
-		k, err := sdk.ContentKey(pb)
+		k, err := hgapi.ContentKey(pb)
 		if err != nil {
 			return fmt.Errorf("failed to extract CENC key: %w", err)
 		}
@@ -1197,7 +1197,7 @@ func (ms *MediaServer) runPrefetchTask(ctx context.Context, task PrefetchTask, t
 	}
 	episodeID := task.EpisodeID
 	if episodeID == "" {
-		episodes, err := ms.client.ListEpisodes(ctx, task.SeriesID, sdk.EpisodeOptions{})
+		episodes, err := ms.client.ListEpisodes(ctx, task.SeriesID, hgapi.EpisodeOptions{})
 		if err != nil {
 			log.Printf("[prefetch] episode list failed for %s episode %d: %v", task.SeriesID, task.Number, err)
 			return
@@ -1532,6 +1532,7 @@ var (
 const fallbackSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="#181920"/><circle cx="150" cy="160" r="36" fill="#252733"/><polygon points="142,146 166,160 142,174" fill="#666"/><text x="150" y="230" fill="#777" font-size="14" font-family="-apple-system,BlinkMacSystemFont,PingFang SC,sans-serif" text-anchor="middle">myguo</text></svg>`
 
 func serveFallback(w http.ResponseWriter) {
+	w.Header().Set("X-Image-Fallback", "1")
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -1573,11 +1574,11 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 
 	// If already cached and valid, serve immediately
 	if fi, err := os.Stat(cacheJpg); err == nil && fi.Size() > 500 {
-		ms.triggerCacheEviction()
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=2592000")
-		http.ServeFile(w, r, cacheJpg)
-		return
+		if serveCachedImage(w, r, cacheJpg) {
+			ms.triggerCacheEviction()
+			return
+		}
+		_ = os.Remove(cacheJpg)
 	}
 
 	// Lock per image to avoid concurrent duplicate downloads & conversion races
@@ -1588,11 +1589,11 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 
 	// Recheck cache after acquiring lock
 	if fi, err := os.Stat(cacheJpg); err == nil && fi.Size() > 500 {
-		ms.triggerCacheEviction()
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=2592000")
-		http.ServeFile(w, r, cacheJpg)
-		return
+		if serveCachedImage(w, r, cacheJpg) {
+			ms.triggerCacheEviction()
+			return
+		}
+		_ = os.Remove(cacheJpg)
 	}
 
 	// Fetch from upstream ByteDance CDN
@@ -1664,14 +1665,35 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fi, err := os.Stat(cacheJpg); err == nil && fi.Size() > 500 {
-		ms.triggerCacheEviction()
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=2592000")
-		http.ServeFile(w, r, cacheJpg)
-		return
+		if serveCachedImage(w, r, cacheJpg) {
+			ms.triggerCacheEviction()
+			return
+		}
+		_ = os.Remove(cacheJpg)
 	}
 
 	serveFallback(w)
+}
+
+func serveCachedImage(w http.ResponseWriter, r *http.Request, path string) bool {
+	format, ok := imageFormat(path)
+	if !ok {
+		return false
+	}
+	contentType := map[imageMagic]string{
+		imageJPEG: "image/jpeg",
+		imagePNG:  "image/png",
+		imageWebP: "image/webp",
+		imageGIF:  "image/gif",
+		imageHEIC: "image/heic",
+	}[format]
+	if contentType == "" {
+		return false
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=2592000")
+	http.ServeFile(w, r, path)
+	return true
 }
 
 func redactImageURL(raw string) string { return resourcelog.RedactURL(raw) }

@@ -55,6 +55,18 @@ func (a *App) Artwork(source string) ui.ImageSource {
 	}
 	return loader.get(source)
 }
+
+func (a *App) ArtworkFailed(source string) bool {
+	loader := a.artwork
+	if loader == nil || source == "" {
+		return false
+	}
+	loader.mu.Lock()
+	defer loader.mu.Unlock()
+	entry := loader.entries[source]
+	return entry.bitmap == nil && !entry.retryAt.IsZero() && !loader.pending[source]
+}
+
 func (l *artworkLoader) get(source string) ui.ImageSource {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -99,7 +111,7 @@ func (l *artworkLoader) load(source string) {
 			// Do not follow a redirect out of the local media pipeline.
 			client := http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			if resp, err := client.Do(req); err == nil {
-				if resp.StatusCode == http.StatusOK {
+				if resp.StatusCode == http.StatusOK && resp.Header.Get("X-Image-Fallback") != "1" {
 					if data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)); err == nil {
 						bitmap, _ = ui.DecodeImage(data)
 					}

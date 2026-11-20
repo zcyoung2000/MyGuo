@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/media"
 	"myguo/internal/sparedevice"
 )
@@ -42,7 +42,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	var commentCount int64
 	var playbackDurationSec int
 	cachedStart := false
-	var eps *sdk.Page[model.Episode]
+	var eps *hgapi.Page[model.Episode]
 	if episodeID == "" {
 		// A full local cache can start instantly without a quality probe or
 		// another episode-list round trip. Series details/comments still load
@@ -67,7 +67,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		var err error
 		eps, err = s.listEpisodes(ctx, seriesID)
 		if err != nil {
-			if errors.Is(err, sdk.ErrAnonymousLimited) {
+			if errors.Is(err, hgapi.ErrAnonymousLimited) {
 				return nil, fmt.Errorf("分集访问受限，请稍后重试: %w", err)
 			}
 			return nil, fmt.Errorf("获取分集失败: %w", err)

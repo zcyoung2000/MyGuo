@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 )
 
 func TestColdFragmentsDecodeBeforeNextKeyframeAndKeepCacheWithActiveReader(t *testing.T) {

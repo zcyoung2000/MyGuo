@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/auth"
 	"myguo/internal/catalog"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/library"
 	"myguo/internal/media"
 	"myguo/internal/mediautil"
@@ -24,7 +24,6 @@ import (
 	"myguo/internal/sanitize"
 	"myguo/internal/sparedevice"
 	userstore "myguo/internal/store"
-	"myguo/internal/upstream"
 )
 
 type (
@@ -83,7 +82,7 @@ type PlaybackDTO struct {
 
 func NewStore(dir string) (*Store, error) { return userstore.NewStore(dir) }
 
-func NewMediaServer(client *sdk.Client) (*MediaServer, error) { return media.NewMediaServer(client) }
+func NewMediaServer(client *hgapi.Client) (*MediaServer, error) { return media.NewMediaServer(client) }
 
 func ffmpegCommand() (string, error) { return media.FFmpegCommand() }
 
@@ -96,10 +95,6 @@ func qualityLabel(quality string) string { return media.QualityLabel(quality) }
 func normalizeImageURL(raw string) string { return mediautil.NormalizeImageURL(raw) }
 
 func sanitizeIPC[T any](value T) T { return sanitize.Sanitize(value) }
-
-func defaultDeviceQueryPairs(deviceID, installID, cdid, openudid string) [][2]string {
-	return upstream.DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid)
-}
 
 func formatHeatScore(n int64) string { return catalog.FormatHeatScore(n) }
 
@@ -114,7 +109,7 @@ type FeedMetricDTO = userstore.FeedMetric
 const metadataCacheCapacity = 256
 
 type episodeCacheEntry struct {
-	page      *sdk.Page[model.Episode]
+	page      *hgapi.Page[model.Episode]
 	expiresAt time.Time
 }
 
@@ -124,7 +119,7 @@ type episodeLoad struct {
 }
 
 type episodeListResult struct {
-	page *sdk.Page[model.Episode]
+	page *hgapi.Page[model.Episode]
 	err  error
 }
 
@@ -133,14 +128,14 @@ type HongguoService struct {
 	catalog              *catalog.Service
 	libraryOnce          sync.Once
 	library              *library.Service
-	client               *sdk.Client
-	discover             func(context.Context, sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error)
+	client               *hgapi.Client
+	discover             func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error)
 	resetDevice          func(context.Context) error
 	seriesBatch          func(context.Context, []string) ([]model.SeriesDetail, error)
 	store                *Store
 	media                *MediaServer
 	appDir               string
-	deviceProfileStore   sdk.ProfileStore
+	deviceProfileStore   hgapi.ProfileStore
 	authTransport        auth.CredentialTransport
 	identityMu           sync.RWMutex
 	accountMu            sync.Mutex
@@ -167,6 +162,7 @@ type HongguoService struct {
 	episodeCacheLRU      *list.List
 	episodeLoads         map[string]*episodeLoad
 	spareDevices         *sparedevice.Manager
+	historyInvalidator   func()
 }
 
 type ServiceOption func(*HongguoService)
@@ -179,12 +175,16 @@ func WithAuthTransport(transport auth.CredentialTransport) ServiceOption {
 	return func(s *HongguoService) { s.setAuthTransport(transport) }
 }
 
-func WithDeviceProfileStore(store sdk.ProfileStore) ServiceOption {
+func WithDeviceProfileStore(store hgapi.ProfileStore) ServiceOption {
 	return func(s *HongguoService) { s.setDeviceProfileStore(store) }
 }
 
 func WithSpareDeviceManager(manager *sparedevice.Manager) ServiceOption {
 	return func(s *HongguoService) { s.spareDevices = manager }
+}
+
+func WithHistoryInvalidator(invalidate func()) ServiceOption {
+	return func(s *HongguoService) { s.historyInvalidator = invalidate }
 }
 
 func WithUpstreamTransport(transport http.RoundTripper) ServiceOption {
@@ -196,11 +196,11 @@ func WithUpstreamTransport(transport http.RoundTripper) ServiceOption {
 	}
 }
 
-func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
+func NewHongguoService(client *hgapi.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
 	return newHongguoService(client, store, media, appDir, "", opts...)
 }
 
-func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir, home string, opts ...ServiceOption) *HongguoService {
+func newHongguoService(client *hgapi.Client, store *Store, media *MediaServer, appDir, home string, opts ...ServiceOption) *HongguoService {
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -236,9 +236,9 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 		opt(svc)
 	}
 	if svc.spareDevices != nil {
-		if transport, ok := svc.authTransport.(sdk.Transport); ok {
+		if transport, ok := svc.authTransport.(hgapi.Transport); ok {
 			svc.spareDevices = sparedevice.NewManager(store,
-				sparedevice.WithClientConstructor(sdk.NewClient, transport),
+				sparedevice.WithClientConstructor(hgapi.NewClient, transport),
 				sparedevice.WithLogger(log.Default()),
 			)
 		}
@@ -252,7 +252,7 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 		log.Printf("[account] restore failed: %v", err)
 	}
 	if err := svc.reloadDeviceIdentity(); err != nil {
-		// The SDK will generate and persist a profile on first network use.
+		// The protocol client will generate and persist a profile on first network use.
 		log.Printf("[device] stored identity unavailable: %v", err)
 	}
 	if userAgent, region, ok := svc.store.GetDeviceRuntime(); ok {
@@ -269,7 +269,7 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 	return svc
 }
 
-func (s *HongguoService) setDeviceProfileStore(store sdk.ProfileStore) {
+func (s *HongguoService) setDeviceProfileStore(store hgapi.ProfileStore) {
 	s.identityMu.Lock()
 	defer s.identityMu.Unlock()
 	s.deviceProfileStore = store
@@ -359,10 +359,10 @@ func (s *HongguoService) reloadDeviceIdentity() error {
 	return nil
 }
 
-// applyDeviceProfile is called after SQLite has committed the SDK profile.
-// It uses a separate lock from SDK registration so a device reset callback can
+// applyDeviceProfile is called after SQLite has committed the protocol profile.
+// It uses a separate lock from device registration so a device reset callback can
 // update the in-memory identity while the old profile is being replaced.
-func (s *HongguoService) applyDeviceProfile(profile *sdk.DeviceProfile) {
+func (s *HongguoService) applyDeviceProfile(profile *hgapi.DeviceProfile) {
 	s.identityMu.Lock()
 	s.deviceID = profile.DeviceID
 	s.iid = profile.InstallID
@@ -472,7 +472,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 	// viewing; three generations suppress immediate repeats while preserving a
 	// renewable recommendation stream after cursor or anonymous-session loss.
 	played := s.store.GetRecentFeedSeenIDs(feedKey, generation)
-	rememberSeenPage := func(page *sdk.Page[model.SeriesSummary]) {
+	rememberSeenPage := func(page *hgapi.Page[model.SeriesSummary]) {
 		ids := make([]string, 0, len(pageItems(page)))
 		for _, item := range pageItems(page) {
 			ids = append(ids, item.ID)
@@ -489,16 +489,16 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		return generation, err
 	}
 
-	discoverOnce := func(cur string) (*sdk.Page[model.SeriesSummary], string, error) {
+	discoverOnce := func(cur string) (*hgapi.Page[model.SeriesSummary], string, error) {
 		discover := s.client.Discover
 		if s.discover != nil {
 			discover = s.discover
 		}
-		p, err := discover(ctx, sdk.DiscoverOptions{
+		p, err := discover(ctx, hgapi.DiscoverOptions{
 			Channel: channel,
 			Cursor:  cur,
 		})
-		if err != nil && (errors.Is(err, sdk.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous")) {
+		if err != nil && (errors.Is(err, hgapi.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous")) {
 			// A cursor belongs to the anonymous session. Resetting the device
 			// therefore also invalidates it; continue from a fresh stream.
 			resetDevice := s.client.ResetDevice
@@ -507,7 +507,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 			}
 			_ = resetDevice(ctx)
 			cur = ""
-			p, err = discover(ctx, sdk.DiscoverOptions{
+			p, err = discover(ctx, hgapi.DiscoverOptions{
 				Channel: channel,
 				Cursor:  cur,
 			})
@@ -548,7 +548,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		return cards, nil
 	}
 
-	savePage := func(page *sdk.Page[model.SeriesSummary]) {
+	savePage := func(page *hgapi.Page[model.SeriesSummary]) {
 		_ = s.store.SaveFeedProgress(feedKey, page.Cursor, generation)
 	}
 
@@ -591,7 +591,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		}
 
 		if effectiveCursor != queryCursor {
-			// The SDK recovered by resetting the anonymous session. Start a new
+			// The protocol client recovered by resetting the anonymous session. Start a new
 			// generation so cursor bookkeeping matches the new fingerprint.
 			_, _ = startGeneration()
 		}
@@ -733,9 +733,9 @@ func (s *HongguoService) GetRecommend(ctx context.Context) ([]SeriesCard, error)
 	return res.Items, nil
 }
 
-// listEpisodesCached deduplicates concurrent SDK calls and avoids repeating the
+// listEpisodesCached deduplicates concurrent protocol calls and avoids repeating the
 // same series-detail request while a feed item is played and preloaded.
-func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error) {
+func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string) (*hgapi.Page[model.Episode], error) {
 	s.episodeMu.Lock()
 	s.ensureEpisodeCache()
 	s.forgetExpiredEpisodes(time.Now())
@@ -760,10 +760,10 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 	s.episodeLoads[seriesID] = load
 	s.episodeMu.Unlock()
 
-	page, err := s.client.ListEpisodes(ctx, seriesID, sdk.EpisodeOptions{})
-	// The SDK also reports a successful zero-episode response as anonymous-
+	page, err := s.client.ListEpisodes(ctx, seriesID, hgapi.EpisodeOptions{})
+	// The protocol client also reports a successful zero-episode response as anonymous-
 	// limited. Verify through batch detail before resetting a device identity.
-	if ctx.Err() == nil && (errors.Is(err, sdk.ErrAnonymousLimited) || (err == nil && len(pageItems(page)) == 0)) {
+	if ctx.Err() == nil && (errors.Is(err, hgapi.ErrAnonymousLimited) || (err == nil && len(pageItems(page)) == 0)) {
 		batch := s.client.GetSeriesBatch
 		if s.seriesBatch != nil {
 			batch = s.seriesBatch
@@ -774,7 +774,7 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 					continue
 				}
 				if len(detail.Episodes) > 0 {
-					page, err = &sdk.Page[model.Episode]{Items: detail.Episodes}, nil
+					page, err = &hgapi.Page[model.Episode]{Items: detail.Episodes}, nil
 				} else if detail.Series.EpisodeCount == 0 && (detail.Series.RightText == "全0集" || isUpcomingRightText(detail.Series.RightText)) {
 					page, err = nil, ErrNoPlayableEpisodes
 				}
@@ -827,7 +827,7 @@ func (s *HongguoService) touchEpisode(seriesID string) {
 	}
 }
 
-func (s *HongguoService) rememberEpisode(seriesID string, page *sdk.Page[model.Episode], now time.Time) {
+func (s *HongguoService) rememberEpisode(seriesID string, page *hgapi.Page[model.Episode], now time.Time) {
 	const episodeCacheTTL = 5 * time.Minute
 	const maxEpisodeCacheEntries = 128
 
@@ -849,27 +849,27 @@ func (s *HongguoService) rememberEpisode(seriesID string, page *sdk.Page[model.E
 	}
 }
 
-func (s *HongguoService) listEpisodes(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error) {
+func (s *HongguoService) listEpisodes(ctx context.Context, seriesID string) (*hgapi.Page[model.Episode], error) {
 	eps, err := s.listEpisodesCached(ctx, seriesID)
-	if err != nil && s.client != nil && (errors.Is(err, sdk.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous")) {
+	if err != nil && s.client != nil && (errors.Is(err, hgapi.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous")) {
 		_ = s.client.ResetDevice(ctx)
 		eps, err = s.listEpisodesCached(ctx, seriesID)
 	}
 	return eps, err
 }
 
-func pageItems[T any](page *sdk.Page[T]) []T {
+func pageItems[T any](page *hgapi.Page[T]) []T {
 	return mediautil.PageItems(page)
 }
 
-func pageCursor[T any](page *sdk.Page[T]) string {
+func pageCursor[T any](page *hgapi.Page[T]) string {
 	if page == nil {
 		return ""
 	}
 	return page.Cursor
 }
 
-func pageHasMore[T any](page *sdk.Page[T]) bool {
+func pageHasMore[T any](page *hgapi.Page[T]) bool {
 	return page != nil && page.HasMore
 }
 

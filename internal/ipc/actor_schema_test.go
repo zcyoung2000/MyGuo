@@ -3,7 +3,7 @@ package ipc
 import (
 	"testing"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 )
 
 func TestNewSeriesDetailPagePreservesActorSchemaUserID(t *testing.T) {

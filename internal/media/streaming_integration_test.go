@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 )
 
 // Hold the upstream connection halfway through the file. Streaming must expose

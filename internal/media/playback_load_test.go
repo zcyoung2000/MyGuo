@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 )
 
 func TestPlaybackLoadBroadcastsResultToEveryWaiter(t *testing.T) {

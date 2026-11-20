@@ -7,16 +7,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
 	"myguo/internal/auth"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters/memstore"
 	"net/url"
 	"time"
 )
 
-type inspect struct{ inner sdk.Transport }
+type inspect struct{ inner hgapi.Transport }
 
-func (t inspect) Do(ctx context.Context, req *sdk.Request) (*sdk.Response, error) {
+func (t inspect) Do(ctx context.Context, req *hgapi.Request) (*hgapi.Response, error) {
 	res, err := t.inner.Do(ctx, req)
 	u, _ := url.Parse(req.URL)
 	if u.Query().Get("from") == "single_col_same_ip_series" && res != nil {
@@ -42,7 +42,7 @@ func main() {
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	c, err := sdk.NewClient(sdk.Options{Transport: inspect{auth.New()}, ProfileStore: memstore.New(), RetryAttempts: 1})
+	c, err := hgapi.NewClient(hgapi.Options{Transport: inspect{auth.New()}, ProfileStore: memstore.New(), RetryAttempts: 1})
 	if err != nil {
 		panic(err)
 	}
@@ -63,7 +63,7 @@ func main() {
 	}
 }
 
-func inspectVersions(ctx context.Context, c *sdk.Client, id string) {
+func inspectVersions(ctx context.Context, c *hgapi.Client, id string) {
 	series, err := c.GetSeries(ctx, id)
 	if err != nil {
 		fmt.Println("detail", err)
@@ -78,7 +78,7 @@ func inspectVersions(ctx context.Context, c *sdk.Client, id string) {
 	cursor := ""
 	seen := map[string]bool{}
 	for pages := 0; pages < 10; pages++ {
-		page, err := c.Search(ctx, series.Novel.Title, sdk.SearchOptions{Tab: "剧集", PageSize: 30, Cursor: cursor})
+		page, err := c.Search(ctx, series.Novel.Title, hgapi.SearchOptions{Tab: "剧集", PageSize: 30, Cursor: cursor})
 		if err != nil {
 			fmt.Println("search", err)
 			return

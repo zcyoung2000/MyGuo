@@ -1,7 +1,9 @@
 package library
 
 import (
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 )
@@ -59,11 +61,26 @@ func TestReconcileSeriesProgressKeepsNewerLocalProgress(t *testing.T) {
 
 func seriesProgressHandler(rows []map[string]any) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/reading/bookapi/read_progress/list/v1/" || request.URL.Query().Get("series_ids") == "" {
+		if request.Method != "POST" || request.URL.Path != "/reading/bookapi/read_progress/get/v" {
 			writeJSON(w, map[string]any{"code": 1001})
 			return
 		}
-		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"data_list": rows}})
+		var payload map[string]any
+		reader, err := gzip.NewReader(request.Body)
+		if err != nil {
+			writeJSON(w, map[string]any{"code": 100103})
+			return
+		}
+		defer reader.Close()
+		if err := json.NewDecoder(reader).Decode(&payload); err != nil || payload["book_ids"] == nil {
+			writeJSON(w, map[string]any{"code": 100103})
+			return
+		}
+		videos := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			videos = append(videos, map[string]any{"series_id": row["series_id"], "vid_index": row["vid_index"].(int) + 1, "current_play_time": row["current_play_time"], "last_watch_time": row["last_watch_time"], "episode_count": row["episode_cnt"]})
+		}
+		writeJSON(w, map[string]any{"code": 0, "data": []any{}, "video_data": videos})
 	})
 }
 

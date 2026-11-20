@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 )
 
 func TestCloseDrainsConvertersPrefetchWorkersAndHTTP(t *testing.T) {

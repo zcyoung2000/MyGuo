@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/lifecycle"
 	userstore "myguo/internal/store"
 )
@@ -29,43 +29,56 @@ type Notification struct {
 const remoteSnapshotSettleDelay = 5 * time.Second
 
 type Dependencies struct {
-	Store            *userstore.Store
-	Client           *sdk.Client
-	ImageURL         func(string) string
-	Credentials      func() (cookies, token string)
-	AuthSession      func() (userID, cookies, token string)
-	DeviceIdentity   func() (deviceID, installID, cdid, openudid string)
-	Runtime          func() (userAgent, storeRegion string)
-	HTTPClient       *http.Client
-	Episodes         func(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error)
-	InvalidateCaches func(prefixes ...string)
-	Notify           func(ctx context.Context, notification Notification)
+	Store             *userstore.Store
+	Client            *hgapi.Client
+	ImageURL          func(string) string
+	Credentials       func() (cookies, token string)
+	AuthSession       func() (userID, cookies, token string)
+	DeviceIdentity    func() (deviceID, installID, cdid, openudid string)
+	Runtime           func() (userAgent, storeRegion string)
+	HTTPClient        *http.Client
+	Episodes          func(ctx context.Context, seriesID string) (*hgapi.Page[model.Episode], error)
+	SeriesBatch       func(ctx context.Context, seriesIDs []string) ([]model.SeriesDetail, error)
+	Series            func(ctx context.Context, seriesID string) (*model.Series, error)
+	InvalidateCaches  func(prefixes ...string)
+	InvalidateHistory func()
+	Notify            func(ctx context.Context, notification Notification)
 }
 
 type Service struct {
-	store            *userstore.Store
-	client           *sdk.Client
-	imageURL         func(string) string
-	credentials      func() (cookies, token string)
-	authSession      func() (userID, cookies, token string)
-	deviceIdentity   func() (deviceID, installID, cdid, openudid string)
-	runtimeInfo      func() (userAgent, storeRegion string)
-	httpClient       *http.Client
-	episodes         func(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error)
-	invalidateCaches func(prefixes ...string)
-	notify           func(ctx context.Context, notification Notification)
+	store             *userstore.Store
+	client            *hgapi.Client
+	imageURL          func(string) string
+	credentials       func() (cookies, token string)
+	authSession       func() (userID, cookies, token string)
+	deviceIdentity    func() (deviceID, installID, cdid, openudid string)
+	runtimeInfo       func() (userAgent, storeRegion string)
+	httpClient        *http.Client
+	episodes          func(ctx context.Context, seriesID string) (*hgapi.Page[model.Episode], error)
+	seriesBatch       func(ctx context.Context, seriesIDs []string) ([]model.SeriesDetail, error)
+	series            func(ctx context.Context, seriesID string) (*model.Series, error)
+	invalidateCaches  func(prefixes ...string)
+	invalidateHistory func()
+	notify            func(ctx context.Context, notification Notification)
 
 	historyMu              sync.Mutex
 	historyRemoteMu        sync.Mutex
 	cachedHistory          []HistoryItem
 	historyCachedAt        time.Time
 	historySyncing         bool
+	historySyncDone        chan struct{}
+	historySyncErr         error
 	historyGeneration      uint64
 	historyMutationAt      time.Time
 	historyMutationMu      sync.Mutex
 	historyMutationSyncing bool
 	historyMutationWake    bool
+	historyMutationErr     error
 	historyUploadRetries   map[string]historyUploadRetry
+	historyMetadataMu      sync.Mutex
+	historyMetadataSyncing bool
+	historyMetadataWake    bool
+	historyMetadataTimer   *time.Timer
 	progressScheduler      *progressScheduler
 
 	favMu           sync.Mutex
@@ -97,7 +110,15 @@ type Service struct {
 
 func (s *Service) WaitForBackgroundSync() { s.background.Wait() }
 
-func (s *Service) Close() { s.background.Close() }
+func (s *Service) Close() {
+	s.historyMetadataMu.Lock()
+	if s.historyMetadataTimer != nil {
+		s.historyMetadataTimer.Stop()
+		s.historyMetadataTimer = nil
+	}
+	s.historyMetadataMu.Unlock()
+	s.background.Close()
+}
 
 func NewService(deps Dependencies) *Service {
 	if deps.ImageURL == nil {
@@ -116,12 +137,21 @@ func NewService(deps Dependencies) *Service {
 		deps.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	if deps.Episodes == nil {
-		deps.Episodes = func(context.Context, string) (*sdk.Page[model.Episode], error) {
+		deps.Episodes = func(context.Context, string) (*hgapi.Page[model.Episode], error) {
 			return nil, errors.New("episode provider unavailable")
 		}
 	}
+	if deps.SeriesBatch == nil && deps.Client != nil {
+		deps.SeriesBatch = deps.Client.GetSeriesBatch
+	}
+	if deps.Series == nil && deps.Client != nil {
+		deps.Series = deps.Client.GetSeries
+	}
 	if deps.InvalidateCaches == nil {
 		deps.InvalidateCaches = func(prefixes ...string) {}
+	}
+	if deps.InvalidateHistory == nil {
+		deps.InvalidateHistory = func() {}
 	}
 	if deps.Notify == nil {
 		deps.Notify = func(context.Context, Notification) {}
@@ -136,7 +166,10 @@ func NewService(deps Dependencies) *Service {
 		runtimeInfo:       deps.Runtime,
 		httpClient:        deps.HTTPClient,
 		episodes:          deps.Episodes,
+		seriesBatch:       deps.SeriesBatch,
+		series:            deps.Series,
 		invalidateCaches:  deps.InvalidateCaches,
+		invalidateHistory: deps.InvalidateHistory,
 		notify:            deps.Notify,
 		progressScheduler: newProgressScheduler(progressSchedulerConfig{}),
 	}
@@ -155,6 +188,9 @@ func (s *Service) InvalidateUserData() {
 	s.historyCachedAt = time.Time{}
 	s.historyGeneration++
 	s.historyMu.Unlock()
+	s.historyMutationMu.Lock()
+	s.historyMutationErr = nil
+	s.historyMutationMu.Unlock()
 
 	s.favMu.Lock()
 	s.cachedFavorites = nil
@@ -227,16 +263,6 @@ func (s *Service) favoriteSnapshotSettled() bool {
 	s.favMu.Lock()
 	defer s.favMu.Unlock()
 	return time.Since(s.favMutationAt) >= remoteSnapshotSettleDelay
-}
-
-func (s *Service) userAgentValue() string {
-	userAgent, _ := s.runtimeInfo()
-	return userAgent
-}
-
-func (s *Service) storeRegionValue() string {
-	_, storeRegion := s.runtimeInfo()
-	return storeRegion
 }
 
 func firstNonEmpty(values ...string) string {

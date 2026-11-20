@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
+	"myguo/internal/hgapi"
 )
 
 func TestRetryAnonymousSkipsWhenParentBudgetIsExhausted(t *testing.T) {
@@ -15,11 +15,11 @@ func TestRetryAnonymousSkipsWhenParentBudgetIsExhausted(t *testing.T) {
 	calls := 0
 	op := func(context.Context) (string, error) {
 		calls++
-		return "", sdk.ErrAnonymousLimited
+		return "", hgapi.ErrAnonymousLimited
 	}
 
 	_, err := retryAnonymous(&HongguoService{}, ctx, op)
-	if !errors.Is(err, sdk.ErrAnonymousLimited) {
+	if !errors.Is(err, hgapi.ErrAnonymousLimited) {
 		t.Fatalf("retryAnonymous err = %v, want anonymous limit", err)
 	}
 	if calls != 1 {
@@ -34,7 +34,7 @@ func TestRetryAnonymousUsesIndependentBudget(t *testing.T) {
 	op := func(retryCtx context.Context) (string, error) {
 		calls++
 		if calls == 1 {
-			return "", sdk.ErrAnonymousLimited
+			return "", hgapi.ErrAnonymousLimited
 		}
 		if _, ok := retryCtx.Deadline(); !ok {
 			t.Error("anonymous retry has no independent deadline")

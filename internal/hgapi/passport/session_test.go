@@ -1,4 +1,4 @@
-package qrauth
+package passport
 
 import (
 	"bytes"

@@ -9,12 +9,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/appdirs"
 	"myguo/internal/auth"
 	"myguo/internal/avkit"
+	"myguo/internal/hgapi"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 	"myguo/internal/native"
@@ -85,16 +85,17 @@ func main() {
 	hostTransport.SetMaxAttempts(upstream.AttemptsFromEnvironment())
 	authenticatedTransport := auth.New()
 	authenticatedTransport.SetHTTPClient(&http.Client{Timeout: 30 * time.Second, Transport: hostTransport})
-	client, err := sdk.NewClient(sdk.Options{
-		Transport:     authenticatedTransport,
-		ProfileStore:  profileStore,
-		APIOrigin:     "https://" + upstream.DefaultPlaybackHosts[0],
-		RetryAttempts: 3,
+	client, err := hgapi.NewClient(hgapi.Options{
+		Transport:          authenticatedTransport,
+		ProfileStore:       profileStore,
+		APIOrigin:          "https://" + upstream.DefaultPlaybackHosts[0],
+		RetryAttempts:      3,
+		PlaybackDeviceFile: filepath.Join(appDir, "playback_device.json"),
 	})
 	if err != nil {
-		log.Fatalf("failed to init openhongguo client: %v", err)
+		log.Fatalf("failed to init Hongguo protocol client: %v", err)
 	}
-	log.Printf("[startup] stage=sdk-ready elapsedMs=%d", time.Since(started).Milliseconds())
+	log.Printf("[startup] stage=protocol-ready elapsedMs=%d", time.Since(started).Milliseconds())
 
 	// 3. Initialize local media streaming & decryption server
 	mediaServer, err := media.NewMediaServer(client)
@@ -111,6 +112,7 @@ func main() {
 		log.Printf("[ffmpeg] using %s", ffmpegPath)
 	}
 	native.SetFeedScrollCapture(false)
+	var appRef atomic.Pointer[uiapp.App]
 	// 4. Create and bind HongguoService for MyGo IPC
 	service := ipc.NewHongguoService(
 		client,
@@ -120,10 +122,15 @@ func main() {
 		ipc.WithAuthTransport(authenticatedTransport),
 		ipc.WithDeviceProfileStore(profileStore),
 		ipc.WithSpareDeviceManager(sparedevice.NewManager(store,
-			sparedevice.WithClientConstructor(sdk.NewClient, authenticatedTransport),
+			sparedevice.WithClientConstructor(hgapi.NewClient, authenticatedTransport),
 			sparedevice.WithLogger(log.Default()),
 		)),
 		ipc.WithUpstreamTransport(hostTransport),
+		ipc.WithHistoryInvalidator(func() {
+			if app := appRef.Load(); app != nil {
+				app.HistoryDataChanged()
+			}
+		}),
 	)
 	defer ipc.CloseService(service)
 	mediaServer.SetMultiModelDeviceIdentity(ipc.MediaDeviceIdentityProvider(service))
@@ -132,6 +139,7 @@ func main() {
 		log.Printf("[native-player] preference migration: %v", err)
 	}
 	app := uiapp.NewApp(service)
+	appRef.Store(app)
 	controller := playback.New(service, avkit.NewPlayer, filepath.Join(appDir, "native-player.json"), playback.Hooks{
 		Changed: app.PlaybackChanged,
 		Progress: func(p playback.Progress) {

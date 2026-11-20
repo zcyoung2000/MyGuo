@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/resourcecache"
 )
 

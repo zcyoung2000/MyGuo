@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/store"
 )
 
@@ -33,24 +33,24 @@ func testManager(t *testing.T, factory ClientFactory) (*Manager, *store.Store, *
 
 func TestManagerBorrowsProtectedPlaybackAndStaysSessionStable(t *testing.T) {
 	var requested []string
-	manager, state, logs := testManager(t, func(profile sdk.ProfileStore) (PlaybackResolver, error) {
+	manager, state, logs := testManager(t, func(profile hgapi.ProfileStore) (PlaybackResolver, error) {
 		device, _ := profile.Load(context.Background())
 		requested = append(requested, device.DeviceID)
-		return func(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
-			return &model.Playback{EpisodeID: "episode", Protected: true, Streams: []model.Stream{{URL: "https://media.invalid/encrypted.mp4", Protected: true}}}, sdk.ErrDRMProtected
+		return func(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
+			return &model.Playback{EpisodeID: "episode", Protected: true, Streams: []model.Stream{{URL: "https://media.invalid/encrypted.mp4", Protected: true}}}, hgapi.ErrDRMProtected
 		}, nil
 	})
 	if err := manager.Import(store.SpareDevice{DeviceID: "did-1", InstallID: "iid-1"}); err != nil {
 		t.Fatal(err)
 	}
-	primary := func(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
-		return nil, sdk.ErrAnonymousLimited
+	primary := func(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
+		return nil, hgapi.ErrAnonymousLimited
 	}
-	first, err := manager.ResolveForSession(context.Background(), "session", "episode", sdk.ErrAnonymousLimited, primary)
+	first, err := manager.ResolveForSession(context.Background(), "session", "episode", hgapi.ErrAnonymousLimited, primary)
 	if err != nil || first.EpisodeID != "episode" {
 		t.Fatalf("first = %+v err = %v", first, err)
 	}
-	second, err := manager.ResolveForSession(context.Background(), "session", "next", sdk.ErrRateLimited, primary)
+	second, err := manager.ResolveForSession(context.Background(), "session", "next", hgapi.ErrRateLimited, primary)
 	if err != nil || second.EpisodeID != "episode" {
 		t.Fatalf("second = %+v err = %v", second, err)
 	}
@@ -70,20 +70,20 @@ func TestManagerBorrowsProtectedPlaybackAndStaysSessionStable(t *testing.T) {
 }
 
 func TestManagerFailureCooldownAndDisable(t *testing.T) {
-	manager, state, _ := testManager(t, func(sdk.ProfileStore) (PlaybackResolver, error) {
+	manager, state, _ := testManager(t, func(hgapi.ProfileStore) (PlaybackResolver, error) {
 		return nil, errors.New("spare rejected")
 	})
 	if err := manager.Import(store.SpareDevice{DeviceID: "did-1", InstallID: "iid-1"}); err != nil {
 		t.Fatal(err)
 	}
-	primary := func(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
-		return nil, sdk.ErrAnonymousLimited
+	primary := func(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
+		return nil, hgapi.ErrAnonymousLimited
 	}
-	if _, err := manager.ResolveForSession(context.Background(), "one", "episode", sdk.ErrAnonymousLimited, primary); err == nil {
+	if _, err := manager.ResolveForSession(context.Background(), "one", "episode", hgapi.ErrAnonymousLimited, primary); err == nil {
 		t.Fatal("failure was hidden")
 	}
 	manager = NewManager(state,
-		WithClientFactory(func(sdk.ProfileStore) (PlaybackResolver, error) {
+		WithClientFactory(func(hgapi.ProfileStore) (PlaybackResolver, error) {
 			return nil, errors.New("spare rejected")
 		}),
 		WithCooldown(time.Minute),
@@ -94,18 +94,18 @@ func TestManagerFailureCooldownAndDisable(t *testing.T) {
 	if devices[0].FailureCount != 1 || devices[0].CooldownUntil == 0 {
 		t.Fatalf("cooldown missing = %+v", devices[0])
 	}
-	if _, err := manager.ResolveForSession(context.Background(), "two", "episode", sdk.ErrAnonymousLimited, primary); !errors.Is(err, ErrNoDeviceAvailable) {
+	if _, err := manager.ResolveForSession(context.Background(), "two", "episode", hgapi.ErrAnonymousLimited, primary); !errors.Is(err, ErrNoDeviceAvailable) {
 		t.Fatalf("cooldown bypass err = %v", err)
 	}
 }
 
 func TestManagerDoesNotBorrowForUnswitchableFailure(t *testing.T) {
-	manager, _, _ := testManager(t, func(sdk.ProfileStore) (PlaybackResolver, error) {
+	manager, _, _ := testManager(t, func(hgapi.ProfileStore) (PlaybackResolver, error) {
 		t.Fatal("spare resolver called")
 		return nil, nil
 	})
 	cause := errors.New("device rejected")
-	_, err := manager.ResolveForSession(context.Background(), "session", "episode", cause, func(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error) {
+	_, err := manager.ResolveForSession(context.Background(), "session", "episode", cause, func(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
 		return nil, cause
 	})
 	if !errors.Is(err, cause) {

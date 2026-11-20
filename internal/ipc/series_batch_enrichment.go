@@ -2,7 +2,7 @@ package ipc
 
 import (
 	"context"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 	"time"
 )
 

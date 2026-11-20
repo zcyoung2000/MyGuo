@@ -6,11 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters"
+	"myguo/internal/hgapi/adapters/memstore"
+	"myguo/internal/hgapi/model"
 )
 
 func TestNextEpisodesKeepsOrderedPlayableWindow(t *testing.T) {
@@ -32,7 +35,7 @@ func TestNextEpisodesKeepsOrderedPlayableWindow(t *testing.T) {
 }
 
 func TestMultiVideoModelBodyAndParser(t *testing.T) {
-	episodes := []model.Episode{{ID: "e1"}, {ID: "e2"}}
+	episodes := []model.Episode{{ID: "7100000000000201"}, {ID: "7100000000000202"}}
 	body, err := multiVideoModelBody(episodes)
 	if err != nil {
 		t.Fatal(err)
@@ -41,19 +44,19 @@ func TestMultiVideoModelBodyAndParser(t *testing.T) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.VideoID) != 2 || request.VideoID[0] != "e1" || request.BizParam["video_platform"] != float64(3) {
+	if len(request.MixedVideoIDMap["1004"]) != 2 || request.MixedVideoIDMap["1004"][0] != episodes[0].ID || request.BizParam["video_platform"] != float64(1024) || request.BizParam["device_level"] != float64(4) {
 		t.Fatalf("request = %s", body)
 	}
-	if _, err := multiVideoModelBody([]model.Episode{{ID: "1"}, {ID: "2"}, {ID: "3"}}); err == nil {
+	if _, err := multiVideoModelBody(make([]model.Episode, 16)); err == nil {
 		t.Fatal("oversized batch accepted")
 	}
 
-	response := []byte(`{"code":0,"data":{"e1":{"streams":[{"url":"https://media.invalid/e1"}]},"e2":{"streams":[{"url":"https://media.invalid/e2"}]}}}`)
+	response := []byte(`{"code":0,"data":{"7100000000000201":{"video_model":{"video_list":[{"main_url":"https://media.invalid/e1","video_meta":{"codec_type":"h264"}}]}},"7100000000000202":{"video_model":{"video_list":[{"main_url":"https://media.invalid/e2","video_meta":{"codec_type":"h264"}}]}}}}`)
 	parsed, err := parseMultiVideoModels(response, episodes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed) != 2 || parsed["e1"].EpisodeID != "e1" || len(parsed["e2"].Streams) != 1 {
+	if len(parsed) != 2 || parsed[episodes[0].ID].EpisodeID != episodes[0].ID || len(parsed[episodes[1].ID].Streams) != 1 {
 		t.Fatalf("parsed = %+v", parsed)
 	}
 	if _, err := parseMultiVideoModels([]byte(`{"code":100001}`), episodes); err == nil {
@@ -66,17 +69,30 @@ func TestMultiModelBatcherChunksDeduplicatesAndCancelsStaleWindow(t *testing.T) 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request MultiVideoModelRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		requests = append(requests, request.VideoID)
-		_, _ = w.Write([]byte(`{"code":0,"data":{"e1":{"streams":[{"url":"https://a"}]}}}`))
+		requests = append(requests, request.MixedVideoIDMap["1004"])
+		data := map[string]any{}
+		for _, id := range request.MixedVideoIDMap["1004"] {
+			data[id] = map[string]any{"video_model": map[string]any{"video_list": []any{map[string]any{"main_url": "https://media.invalid/" + id, "video_meta": map[string]any{"codec_type": "h264"}}}}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
 	}))
 	defer ts.Close()
 
-	batcher := NewMultiVideoModelBatcher(&sdk.Client{}, &http.Client{})
+	profiles := memstore.New()
+	_ = profiles.Save(context.Background(), &hgapi.DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002"})
+	client, err := adapters.NewClient("", hgapi.Options{ProfileStore: profiles, APIOrigin: ts.URL, DeviceResets: hgapi.Int(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batcher := NewMultiVideoModelBatcher(client, &http.Client{})
 	batcher.multiVideoModelURL = ts.URL
-	episodes := []model.Episode{{ID: "e1"}, {ID: "e2"}, {ID: "e3"}}
+	episodes := make([]model.Episode, 16)
+	for i := range episodes {
+		episodes[i].ID = strconv.Itoa(7100000000000201 + i)
+	}
 	batcher.ReplaceWindow(episodes)
 	batcher.Run(context.Background(), func(string, *model.Playback) {})
-	if len(requests) != 2 || len(requests[0]) != 2 || len(requests[1]) != 1 {
+	if len(requests) != 2 || len(requests[0]) != 15 || len(requests[1]) != 1 {
 		t.Fatalf("batch requests = %v", requests)
 	}
 
@@ -88,10 +104,10 @@ func TestMultiModelBatcherChunksDeduplicatesAndCancelsStaleWindow(t *testing.T) 
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	batcher.ReplaceWindow([]model.Episode{{ID: "fresh", Number: 1, Playable: true}})
+	batcher.ReplaceWindow([]model.Episode{{ID: "7100000000000301", Number: 1, Playable: true}})
 	batcher.Run(context.Background(), func(string, *model.Playback) {})
 	latest := requests[len(requests)-1:]
-	if len(latest) != 1 || len(latest[0]) != 1 || latest[0][0] != "fresh" {
+	if len(latest) != 1 || len(latest[0]) != 1 || latest[0][0] != "7100000000000301" {
 		t.Fatalf("replacement requests = %v", requests)
 	}
 	batcher.mu.Lock()
@@ -115,7 +131,7 @@ func TestMultiModelBatcherFailureDoesNotRememberModels(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	batcher := NewMultiVideoModelBatcher(&sdk.Client{}, &http.Client{})
+	batcher := NewMultiVideoModelBatcher(&hgapi.Client{}, &http.Client{})
 	batcher.multiVideoModelURL = ts.URL
 	batcher.ReplaceWindow([]model.Episode{{ID: "e1"}})
 	remembered := make(chan string, 3)

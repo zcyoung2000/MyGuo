@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/ipc"
 )
 

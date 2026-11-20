@@ -445,6 +445,13 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 		posterBox := ui.Box(posterKey).Size(width, width*4/3).Radius(8).Clip().Role(ui.RoleImage).Label(posterLabel)
 		posterBox.Children(func() {
 			a.image(c, item.CoverURL, width, width*4/3)
+			if a.view == "history" {
+				if item.CoverURL == "" {
+					ui.Badge(c.Key("history-cover-pending"), "封面待补全").Absolute().Bottom(8).Left(8)
+				} else if a.ArtworkFailed(item.CoverURL) {
+					ui.Badge(c.Key("history-cover-failed"), "封面加载失败").Absolute().Bottom(8).Left(8)
+				}
+			}
 			if topLeftBadge != "" {
 				ui.Badge(c.Key("badge-tl"), topLeftBadge).Absolute().Top(6).Left(6).
 					Padding(2, 6).Radius(4).Background(ui.Transparent).Material(artworkMaterial()).
@@ -737,10 +744,17 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 	}
 
 	if library.Error != "" {
-		a.errorView(c, library.Error, func() { go a.RefreshLibrary(tab) })
 		if len(library.Items) == 0 {
+			a.errorView(c, library.Error, func() { go a.RefreshLibrary(tab) })
 			return
 		}
+		ui.Row(c.Key("library-sync-warning")).Justify(ui.SpaceBetween).AlignItems(ui.Center).
+			Padding(8, 12).Radius(8).Background(ui.RGBA(230, 80, 80, 0.10)).Children(func() {
+			ui.Text(c, library.Error).TextColor(c.Theme().Danger)
+			if ui.PrimaryButton(c, "立即重试").Clicked() {
+				go a.RefreshLibrary(tab)
+			}
+		})
 	}
 	if library.Empty {
 		a.emptyView(c, "暂无记录", "浏览和播放后才会形成记录")

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/ipc"
 	"myguo/internal/native"
 )
@@ -148,6 +148,20 @@ func (a *App) LibraryChanged() {
 	a.invalidateLibraryReadsLocked()
 	a.bumpDetailRevisionLocked("favorite:" + a.detail.ID)
 	a.mu.Unlock()
+}
+
+func (a *App) HistoryDataChanged() {
+	a.mu.Lock()
+	tab := libraryHistory
+	a.libraryGeneration[tab]++
+	a.libraryAt(tab).Loading = false
+	active := a.view == "history"
+	a.mu.Unlock()
+	if active {
+		go a.loadLibraryWithRefresh(tab, false)
+		return
+	}
+	a.Invalidate()
 }
 func (a *App) navigateLocked(entry navigationEntry, record bool) {
 	if entry.View != "settings" {

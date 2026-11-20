@@ -10,7 +10,7 @@ func TestConvertedLibraryTitlesUseHistoryFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convertHistory() error = %v", err)
 	}
-	if len(history) != 1 || history[0].Title != "未知短剧" {
+	if len(history) != 1 || history[0].Title != "剧名待补全 · "+seriesID {
 		t.Fatalf("history title = %#v", history)
 	}
 
@@ -36,5 +36,13 @@ func TestConvertedLibraryTitlesUseHistoryFallback(t *testing.T) {
 	}
 	if len(reservations) != 1 || reservations[0].Title != "未知短剧" {
 		t.Fatalf("reservation title = %#v", reservations)
+	}
+}
+
+func TestHistoryEpisodeLabelIsShownAsMetadataPending(t *testing.T) {
+	const id = "710000000000001"
+	items, err := convertHistory([]ipc.HistoryItem{{SeriesID: id, Title: "第7集", EpisodeNum: 7}}, nil)
+	if err != nil || len(items) != 1 || items[0].Title != "剧名待补全 · "+id {
+		t.Fatalf("history fallback = %+v, %v", items, err)
 	}
 }

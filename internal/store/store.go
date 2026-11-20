@@ -92,6 +92,13 @@ type PendingFavoriteOp struct {
 	Revision  int64  `json:"-"`
 }
 
+type PendingHistoryMetadata struct {
+	SeriesID      string
+	Scope         string
+	Attempts      int
+	NextAttemptAt int64
+}
+
 // UserData holds legacy JSON schema for one-time auto-migration
 type UserData struct {
 	Profile      UserProfile                `json:"profile"`
@@ -220,6 +227,10 @@ func NewStore(dir string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.InitUpstreamState(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := s.CleanupLegacyHistoryMutations(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -963,6 +974,54 @@ func (s *Store) SaveHistoryIfCurrentScope(item HistoryItem, scope string) (bool,
 	return true, s.saveHistoryLocked(item, []string{scope})
 }
 
+// EnrichHistoryMetadataIfCurrentScope updates display metadata without
+// changing the playback clock or reviving a row deleted during the request.
+func (s *Store) EnrichHistoryMetadataIfCurrentScope(seriesID string, metadata HistoryItem, scope string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope != s.syncScope {
+		return false, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`
+		UPDATE history SET
+			title = CASE
+				WHEN (trim(title) = '' OR title = '未知短剧' OR title GLOB '第[0-9]*集') AND ? != '' THEN ?
+				ELSE title END,
+			cover_url = CASE WHEN trim(cover_url) = '' AND ? != '' THEN ? ELSE cover_url END,
+			total_episodes = CASE WHEN total_episodes <= 0 AND ? > 0 THEN ? ELSE total_episodes END,
+			intro = CASE WHEN intro = '' AND ? != '' THEN ? ELSE intro END,
+			content_type = CASE WHEN content_type = 0 AND ? != 0 THEN ? ELSE content_type END,
+			duration_sec = CASE WHEN duration_sec <= 0 AND episode_num = ? AND ? > 0 THEN ? ELSE duration_sec END
+		WHERE series_id = ?`,
+		metadata.Title, metadata.Title,
+		metadata.CoverURL, metadata.CoverURL,
+		metadata.TotalEpisodes, metadata.TotalEpisodes,
+		metadata.Intro, metadata.Intro,
+		metadata.ContentType, metadata.ContentType,
+		metadata.EpisodeNum, metadata.DurationSec, metadata.DurationSec,
+		seriesID,
+	)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`DELETE FROM unavailable_history_metadata WHERE scope = ? AND series_id = ?`, scope, seriesID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return changed > 0, nil
+}
+
 func (s *Store) saveHistoryLocked(item HistoryItem, scopes []string) error {
 	if item.UpdatedAt <= 0 {
 		item.UpdatedAt = time.Now().Unix()
@@ -981,6 +1040,9 @@ func (s *Store) saveHistoryLocked(item HistoryItem, scopes []string) error {
 	return tx.Commit()
 }
 func saveHistoryTx(tx *sql.Tx, item HistoryItem, scope string) error {
+	if _, err := tx.Exec(`DELETE FROM local_history_retention WHERE series_id = ?`, item.SeriesID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM history_tombstones WHERE series_id = ?`, item.SeriesID); err != nil {
 		return err
 	}
@@ -1024,6 +1086,25 @@ func (s *Store) SaveHistoryBatch(items []HistoryItem, scopes ...string) error {
 	return s.saveHistoryBatchTx(tx, items, s.syncScopeLocked(scopes))
 }
 
+// SaveHistoryBatchIfCurrentScope prevents a late snapshot from crossing an
+// account transition. The identity check and transaction share the store lock.
+func (s *Store) SaveHistoryBatchIfCurrentScope(items []HistoryItem, scope string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope != s.syncScope {
+		return false, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err := s.saveHistoryBatchTx(tx, items, scope); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ReplaceHistoryBatch applies a complete remote snapshot. Rows absent from the
 // snapshot were deleted on another device and must not survive locally.
 func (s *Store) ReplaceHistoryBatch(items []HistoryItem, scopes ...string) error {
@@ -1036,11 +1117,35 @@ func (s *Store) ReplaceHistoryBatch(items []HistoryItem, scopes ...string) error
 	}
 	defer tx.Rollback()
 
+	return s.replaceHistoryBatchTx(tx, items, s.syncScopeLocked(scopes))
+}
+
+// ReplaceHistoryBatchIfCurrentScope applies a complete snapshot only while
+// the account that fetched it still owns the store.
+func (s *Store) ReplaceHistoryBatchIfCurrentScope(items []HistoryItem, scope string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope != s.syncScope {
+		return false, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err := s.replaceHistoryBatchTx(tx, items, scope); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) replaceHistoryBatchTx(tx *sql.Tx, items []HistoryItem, scope string) error {
 	keep := make(map[string]bool, len(items))
 	for _, item := range items {
 		keep[item.SeriesID] = true
 	}
-	rows, err := tx.Query(`SELECT series_id FROM history`)
+	rows, err := tx.Query(`SELECT series_id FROM history
+		WHERE series_id NOT IN (SELECT series_id FROM local_history_retention)`)
 	if err != nil {
 		return err
 	}
@@ -1065,7 +1170,7 @@ func (s *Store) ReplaceHistoryBatch(items []HistoryItem, scopes ...string) error
 			return err
 		}
 	}
-	return s.saveHistoryBatchTx(tx, items, s.syncScopeLocked(scopes))
+	return s.saveHistoryBatchTx(tx, items, scope)
 }
 
 func (s *Store) saveHistoryBatchTx(tx *sql.Tx, items []HistoryItem, scope string) error {
@@ -1244,6 +1349,9 @@ func (s *Store) DeleteHistory(seriesID string, scopes ...string) error {
 	if _, err := tx.Exec(`DELETE FROM history WHERE series_id = ?`, seriesID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM local_history_retention WHERE series_id = ?`, seriesID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO history_tombstones (series_id, deleted_at) VALUES (?, ?)
 		ON CONFLICT(series_id) DO UPDATE SET deleted_at = excluded.deleted_at
@@ -1312,6 +1420,9 @@ func (s *Store) ClearHistory(scopes ...string) error {
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM history`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM local_history_retention`); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`

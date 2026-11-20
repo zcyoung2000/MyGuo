@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
 	"myguo/internal/auth"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters/memstore"
 	"myguo/internal/resourcecache"
 )
 
@@ -166,7 +166,7 @@ func TestLiveOfficialDetailAPIs(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MYGUO_DATA_ROOT", root)
 	profiles := memstore.New()
-	client, e := sdk.NewClient(sdk.Options{Transport: auth.New(), ProfileStore: profiles, RetryAttempts: 2})
+	client, e := hgapi.NewClient(hgapi.Options{Transport: auth.New(), ProfileStore: profiles, RetryAttempts: 2})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -219,7 +219,7 @@ func TestLiveOfficialRelatedGroups(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MYGUO_DATA_ROOT", root)
 	profiles := memstore.New()
-	client, err := sdk.NewClient(sdk.Options{Transport: auth.New(), ProfileStore: profiles, RetryAttempts: 2})
+	client, err := hgapi.NewClient(hgapi.Options{Transport: auth.New(), ProfileStore: profiles, RetryAttempts: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

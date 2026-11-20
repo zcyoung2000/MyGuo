@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 func TestPlaybackRacePrimarySuccessCancelsSpare(t *testing.T) {
@@ -66,7 +66,7 @@ func TestPlaybackRaceSlowPrimaryLosesToSpare(t *testing.T) {
 
 func TestPlaybackRaceEmptyPrimaryAllowsSwitchAndAggregatesAllFailures(t *testing.T) {
 	primary := fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
-		return nil, sdk.ErrAnonymousLimited
+		return nil, hgapi.ErrAnonymousLimited
 	}}
 	spare := fakePlaybackResolver{func(ctx context.Context, _ string) (*playbackResolveResult, error) {
 		select {
@@ -87,7 +87,7 @@ func TestPlaybackRaceEmptyPrimaryAllowsSwitchAndAggregatesAllFailures(t *testing
 }
 
 func TestPlaybackRaceParamErrorIsNotSwitched(t *testing.T) {
-	paramErr := fmt.Errorf("bad body: %w", sdk.ErrParamInvalid)
+	paramErr := fmt.Errorf("bad body: %w", hgapi.ErrParamInvalid)
 	primary := fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
 		return nil, paramErr
 	}}
@@ -97,7 +97,7 @@ func TestPlaybackRaceParamErrorIsNotSwitched(t *testing.T) {
 	}}
 
 	_, err := newPlaybackRaceResolver(primary, spare).ResolvePlayback(context.Background(), "71001")
-	if !errors.Is(err, sdk.ErrParamInvalid) {
+	if !errors.Is(err, hgapi.ErrParamInvalid) {
 		t.Fatalf("ResolvePlayback err = %v", err)
 	}
 }
@@ -126,7 +126,7 @@ func TestPlaybackFallbackResolverFollowsFallbackAPI(t *testing.T) {
 	inner := fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
 		return &playbackResolveResult{Fallback: fallback}, nil
 	}}
-	resolver := playbackFallbackResolver{inner: inner, fetcher: sdkPlaybackResolver{http: server.Client()}.fetchFallback}
+	resolver := playbackFallbackResolver{inner: inner, fetcher: nativePlaybackResolver{http: server.Client()}.fetchFallback}
 
 	result, err := resolver.ResolvePlayback(context.Background(), "71001")
 	if err != nil {
@@ -139,7 +139,7 @@ func TestPlaybackFallbackResolverFollowsFallbackAPI(t *testing.T) {
 
 func TestPlaybackFallbackResolverHandlesNilResultWithSwitchableError(t *testing.T) {
 	inner := fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
-		return nil, sdk.ErrAnonymousLimited
+		return nil, hgapi.ErrAnonymousLimited
 	}}
 	resolver := playbackFallbackResolver{inner: inner, fetcher: func(context.Context, string) (*playbackResolveResult, error) {
 		t.Fatal("fetcher should not be called without a fallback URL")
@@ -150,7 +150,7 @@ func TestPlaybackFallbackResolverHandlesNilResultWithSwitchableError(t *testing.
 	if result != nil {
 		t.Fatalf("result = %+v, want nil", result)
 	}
-	if !errors.Is(err, sdk.ErrAnonymousLimited) {
+	if !errors.Is(err, hgapi.ErrAnonymousLimited) {
 		t.Fatalf("ResolvePlayback err = %v", err)
 	}
 }

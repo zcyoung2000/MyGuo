@@ -37,8 +37,11 @@ func TestProgressUploadPayloadUsesProtocolUnits(t *testing.T) {
 	if got := book["player_cumulative_total_duration"]; got != int64(12500) {
 		t.Fatalf("cumulative duration = %#v, want 12500", got)
 	}
-	if got := book["progress_type"]; got != int64(12500) {
-		t.Fatalf("progress type = %#v, want 12500", got)
+	if got := book["progress_type"]; got != 0 {
+		t.Fatalf("progress type = %#v, want 0", got)
+	}
+	if got := book["check_timestamp"]; got != false {
+		t.Fatalf("check_timestamp = %#v, want false", got)
 	}
 	if got := book["book_id"]; got != "710000000000001" {
 		t.Fatalf("book_id = %#v, want string ID", got)

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 func TestSQLiteDeviceProfileRoundTrip(t *testing.T) {
@@ -20,7 +20,7 @@ func TestSQLiteDeviceProfileRoundTrip(t *testing.T) {
 	}
 	defer store.Close()
 
-	want, err := sdk.NewAnonymousDeviceProfile(nil, func() time.Time { return time.Unix(1, 0).UTC() })
+	want, err := hgapi.NewAnonymousDeviceProfile(nil, func() time.Time { return time.Unix(1, 0).UTC() })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +59,11 @@ func TestSQLiteProfileStoreSavedHookSeesCommittedProfile(t *testing.T) {
 	defer store.Close()
 
 	profileStore := store.ProfileStore()
-	hooked := make(chan *sdk.DeviceProfile, 1)
-	profileStore.SetSavedHook(func(profile *sdk.DeviceProfile) {
+	hooked := make(chan *hgapi.DeviceProfile, 1)
+	profileStore.SetSavedHook(func(profile *hgapi.DeviceProfile) {
 		hooked <- profile
 	})
-	want, err := sdk.NewAnonymousDeviceProfile(nil, func() time.Time { return time.Unix(3, 0).UTC() })
+	want, err := hgapi.NewAnonymousDeviceProfile(nil, func() time.Time { return time.Unix(3, 0).UTC() })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestAccountAuthTransactionsPreserveScopedQueues(t *testing.T) {
 func TestOwnJSONIdentityFilesMigrateToSQLiteAndAreRemoved(t *testing.T) {
 	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
 	dir := t.TempDir()
-	device, err := sdk.NewAnonymousDeviceProfile(nil, func() time.Time { return time.Unix(2, 0).UTC() })
+	device, err := hgapi.NewAnonymousDeviceProfile(nil, func() time.Time { return time.Unix(2, 0).UTC() })
 	if err != nil {
 		t.Fatal(err)
 	}

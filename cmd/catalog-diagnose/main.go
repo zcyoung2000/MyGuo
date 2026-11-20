@@ -13,18 +13,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
 	"myguo/internal/auth"
 	"myguo/internal/catalog"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters/memstore"
 )
 
 type inspect struct {
-	inner      sdk.Transport
+	inner      hgapi.Transport
 	genre, dir string
 }
 
-func (t inspect) Do(ctx context.Context, req *sdk.Request) (*sdk.Response, error) {
+func (t inspect) Do(ctx context.Context, req *hgapi.Request) (*hgapi.Response, error) {
 	u, _ := url.Parse(req.URL)
 	panel := strings.Contains(u.Path, "/category/landpage/")
 	var kind string
@@ -55,7 +55,7 @@ func run() error {
 		}
 	}
 	for _, genre := range []string{"short_play", "comic_series", "ai_series"} {
-		client, err := sdk.NewClient(sdk.Options{Transport: inspect{auth.New(), genre, *dir}, ProfileStore: memstore.New(), RetryAttempts: 3})
+		client, err := hgapi.NewClient(hgapi.Options{Transport: inspect{auth.New(), genre, *dir}, ProfileStore: memstore.New(), RetryAttempts: 3})
 		if err != nil {
 			return err
 		}

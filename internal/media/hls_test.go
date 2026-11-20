@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi/model"
 )
 
 func TestHLSMasterURLUsesPathEndpoints(t *testing.T) {

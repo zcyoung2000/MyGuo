@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 func TestRecommendQueueRestoresOnlyUnviewedCardsWithoutNetwork(t *testing.T) {
@@ -21,8 +21,8 @@ func TestRecommendQueueRestoresOnlyUnviewedCardsWithoutNetwork(t *testing.T) {
 	}
 	const cover = "https://p3-novel.byteimg.com/origin/test.jpg"
 	svc := &HongguoService{store: store, media: &MediaServer{},
-		discover: func(context.Context, sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
-			return &sdk.Page[model.SeriesSummary]{
+		discover: func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
+			return &hgapi.Page[model.SeriesSummary]{
 				Items: []model.SeriesSummary{
 					{ID: "a", Title: "A", CoverURL: cover},
 					{ID: "b", Title: "B", CoverURL: cover},
@@ -64,11 +64,11 @@ func TestRecommendQueueRestoresOnlyUnviewedCardsWithoutNetwork(t *testing.T) {
 	}
 	// Background recommendations append after the restored queue; recently
 	// viewed cards still pass through the existing feed deduplication filter.
-	svc.discover = func(_ context.Context, opts sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
+	svc.discover = func(_ context.Context, opts hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
 		if opts.Cursor != "next-page" {
 			t.Fatalf("background fill rewound the feed: %q", opts.Cursor)
 		}
-		return &sdk.Page[model.SeriesSummary]{Items: []model.SeriesSummary{{ID: "a"}, {ID: "d", Title: "D"}}, Cursor: "after-d", HasMore: true}, nil
+		return &hgapi.Page[model.SeriesSummary]{Items: []model.SeriesSummary{{ID: "a"}, {ID: "d", Title: "D"}}, Cursor: "after-d", HasMore: true}, nil
 	}
 	if _, err := svc.GetRecommendFeed(ctx, "推荐", "next-page"); err != nil {
 		t.Fatal(err)
@@ -122,10 +122,10 @@ func TestViewingAcknowledgementDoesNotWaitForBackgroundRecommendations(t *testin
 		t.Fatal(err)
 	}
 	entered, release, filled := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	svc.discover = func(context.Context, sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
+	svc.discover = func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
 		close(entered)
 		<-release
-		return &sdk.Page[model.SeriesSummary]{Items: []model.SeriesSummary{{ID: "new"}}, Cursor: "next", HasMore: true}, nil
+		return &hgapi.Page[model.SeriesSummary]{Items: []model.SeriesSummary{{ID: "new"}}, Cursor: "next", HasMore: true}, nil
 	}
 	go func() {
 		_, err := svc.GetRecommendFeed(context.Background(), "推荐", "")

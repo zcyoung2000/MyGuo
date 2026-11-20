@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/adapters"
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters"
+	"myguo/internal/hgapi/adapters/memstore"
+	"myguo/internal/hgapi/model"
 )
 
 func TestEmptySingleDetailIsVerifiedWithoutChangingDevice(t *testing.T) {
@@ -30,7 +30,7 @@ func TestEmptySingleDetailIsVerifiedWithoutChangingDevice(t *testing.T) {
 				_, _ = w.Write([]byte(`{"code":0,"data":{"video_data":{"series_id_str":"710000000000001","series_title":"零集作品","episode_cnt":0,"video_list":[]}}}`))
 			}))
 			defer server.Close()
-			client, err := adapters.NewClient("", sdk.Options{ProfileStore: memstore.New(), APIOrigin: server.URL, RegisterOrigin: server.URL, RetryAttempts: 1})
+			client, err := adapters.NewClient("", hgapi.Options{ProfileStore: memstore.New(), APIOrigin: server.URL, RegisterOrigin: server.URL, RetryAttempts: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +55,7 @@ func TestEmptySingleDetailIsVerifiedWithoutChangingDevice(t *testing.T) {
 					t.Fatalf("batch recovery failed: %v/%v", page, err)
 				}
 			} else if scenario == "inconclusive-detail" {
-				if !errors.Is(err, sdk.ErrAnonymousLimited) {
+				if !errors.Is(err, hgapi.ErrAnonymousLimited) {
 					t.Fatalf("inconclusive metadata marked unavailable: %v", err)
 				}
 			} else if !errors.Is(err, ErrNoPlayableEpisodes) {

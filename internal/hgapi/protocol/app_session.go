@@ -1,6 +1,6 @@
-package upstream
+package protocol
 
-func DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid string) [][2]string {
+func AppDeviceQueryPairs(deviceID, installID, cdid, openudid string) [][2]string {
 	return [][2]string{
 		{"aid", "8662"},
 		{"app_name", "novelread"},

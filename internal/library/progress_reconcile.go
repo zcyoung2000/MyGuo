@@ -3,14 +3,10 @@ package library
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
 	"myguo/internal/mediautil"
-	"myguo/internal/sign"
-	"myguo/internal/upstream"
 )
 
 const seriesProgressTimeout = 8 * time.Second
@@ -132,40 +128,7 @@ func (s *Service) fetchSeriesProgress(ctx context.Context, seriesID string) (*Hi
 	}
 	ctx, cancel := context.WithTimeout(ctx, seriesProgressTimeout)
 	defer cancel()
-	deviceID, installID, cdid, openudid := s.deviceIdentity()
-	pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid),
-		[2]string{"book_types", "2"},
-		[2]string{"series_ids", seriesID},
-	)
-	rawQuery, headers := sign.SignGET(pairs, time.Now().UnixMilli(), deviceID, "7.3.9.32", nil)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/read_progress/list/v1/?"+rawQuery, nil)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range headers {
-		request.Header.Set(key, value)
-	}
-	request.Header.Set("User-Agent", s.userAgentValue())
-	request.Header.Set("Cookie", session.cookies)
-	if session.token != "" {
-		request.Header.Set("x-tt-token", session.token)
-	}
-	request.Header.Set("x-tt-store-region", s.storeRegionValue())
-	request.Header.Set("Accept", "application/json")
-	response, err := s.httpClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("进度对账接口返回 HTTP %d", response.StatusCode)
-	}
-	page, err := decodeRemoteHistoryPage(body)
+	page, err := s.apiForSession(session).History(ctx, 0, seriesID)
 	if err != nil {
 		return nil, err
 	}

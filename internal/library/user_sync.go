@@ -1,33 +1,22 @@
 package library
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/rand"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"strconv"
 	"time"
 
+	"myguo/internal/hgapi"
 	"myguo/internal/mediautil"
-	"myguo/internal/sign"
 	userstore "myguo/internal/store"
-	"myguo/internal/upstream"
 )
 
 const (
-	favoriteBookType = 2
 	userSyncPageSize = 20
-	userSyncMaxBody  = 1 << 20
 )
 
-var errParameterInvalid = errors.New("parameter invalid")
+var errParameterInvalid = hgapi.ErrParameterInvalid
 
 type historyUploadRetry struct {
 	attempt int
@@ -40,282 +29,16 @@ const (
 	invalidHistoryMaxBackoff = 30 * time.Minute
 )
 
-func contentInt(value string) (int64, error) {
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed <= 0 {
-		return 0, fmt.Errorf("内容 ID 无效")
-	}
-	return parsed, nil
+func apiProgress(item HistoryItem) hgapi.ProgressRecord {
+	return hgapi.ProgressRecord{SeriesID: item.SeriesID, EpisodeNum: item.EpisodeNum, PositionSec: item.PositionSec, DurationSec: item.DurationSec, TotalEpisodes: item.TotalEpisodes}
 }
-
-func (s *Service) postSignedMutation(ctx context.Context, operation, path string, payload any) error {
-	session, err := s.sessionForRequest(ctx)
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("%s 编码失败: %w", operation, err)
-	}
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed)
-	if _, err := writer.Write(raw); err != nil {
-		return fmt.Errorf("%s 压缩失败: %w", operation, err)
-	}
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("%s 压缩失败: %w", operation, err)
-	}
-
-	userCookies, userToken := session.cookies, session.token
-	deviceID, installID, cdid, openudid := s.deviceIdentity()
-	pairs := upstream.DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid)
-	ticket := time.Now().UnixMilli()
-	rawQuery, headers := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", compressed.Bytes(), nil)
-	var nonce [4]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(
-		ctx, http.MethodPost,
-		"https://api5-normal-lq.fqnovel.com"+path+"?"+rawQuery,
-		bytes.NewReader(compressed.Bytes()),
-	)
-	if err != nil {
-		return err
-	}
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("X-SS-DP", "8662")
-	req.Header.Set("Lc", "101")
-	req.Header.Set("X-Reading-Request", fmt.Sprintf("%d-%d", ticket, binary.LittleEndian.Uint32(nonce[:])))
-	req.Header.Set("Cookie", userCookies)
-	if userToken != "" {
-		req.Header.Set("x-tt-token", userToken)
-	}
-	req.Header.Set("User-Agent", s.userAgentValue())
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("%s请求失败: %w", operation, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, userSyncMaxBody))
-	if err != nil {
-		return fmt.Errorf("%s响应读取失败: %w", operation, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s接口返回 HTTP %d", operation, resp.StatusCode)
-	}
-	var result struct {
-		Code    *int   `json:"code"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("%s接口返回无效 JSON: %w", operation, err)
-	}
-	if result.Code == nil {
-		return fmt.Errorf("%s接口缺少业务状态", operation)
-	}
-	if *result.Code != 0 {
-		message := result.Message
-		if message == "" {
-			message = "unknown error"
-		}
-		if *result.Code == 100103 {
-			return fmt.Errorf("%s接口返回 code %d: %w", operation, *result.Code, errParameterInvalid)
-		}
-		return fmt.Errorf("%s接口返回 code %d: %s", operation, *result.Code, message)
-	}
-	return nil
-}
-
-func historyUpdatePayload(item HistoryItem, episodeID string) map[string]any {
-	bookID, err := contentInt(item.SeriesID)
-	if err != nil {
-		return nil
-	}
-	episodeNum, err := contentInt(episodeID)
-	if err != nil {
-		return nil
-	}
-	index := item.EpisodeNum - 1
-	if index < 0 {
-		index = 0
-	}
-	now := time.Now().UnixMilli()
-	positionMS := int64(item.PositionSec * 1000)
-	inner := map[string]any{
-		"book_id":                      bookID,
-		"book_type":                    favoriteBookType,
-		"vid":                          episodeNum,
-		"vid_index":                    index,
-		"chapter_index":                index,
-		"current_play_position":        positionMS,
-		"player_accumulate_total_time": positionMS,
-		"read_timestamp_ms":            now,
-		"update_timestamp_ms":          now,
-		"is_delete":                    false,
-		"is_interactive_game":          false,
-		"is_listen_mode":               false,
-		"is_multi_season":              false,
-		"season_index":                 0,
-		"digged_count":                 0,
-		"user_digg":                    false,
-		"duration":                     int64(item.DurationSec),
-		"episode_cnt":                  item.TotalEpisodes,
-		"origin_novel_book_id":         0,
-		"recent_reads":                 0,
-		"retain_video_play_time":       0,
-		"series_play_cnt":              0,
-		"tone_id":                      0,
-		"use_soft_delete":              false,
-		"meet_guide_comment_tag":       false,
-		"user_playlet_comment_flag":    false,
-	}
-	return map[string]any{"update_datas": []any{inner}}
-}
-
-func historyUpdateBatchPayload(items []HistoryItem, episodeIDs []string) map[string]any {
-	if len(items) != len(episodeIDs) {
-		return nil
-	}
-	updates := make([]any, 0, len(items))
+func apiProgressBatch(items []HistoryItem) []hgapi.ProgressRecord {
+	out := make([]hgapi.ProgressRecord, len(items))
 	for i, item := range items {
-		payload := historyUpdatePayload(item, episodeIDs[i])
-		if payload == nil {
-			return nil
-		}
-		updates = append(updates, payload["update_datas"].([]any)[0])
+		out[i] = apiProgress(item)
 	}
-	return map[string]any{"update_datas": updates}
+	return out
 }
-
-func progressUploadPayload(item HistoryItem, episodeID string) map[string]any {
-	if _, err := contentInt(item.SeriesID); err != nil {
-		return nil
-	}
-	if _, err := contentInt(episodeID); err != nil {
-		return nil
-	}
-	index := item.EpisodeNum - 1
-	if index < 0 {
-		index = 0
-	}
-	now := time.Now().UnixMilli()
-	positionMS := int64(item.PositionSec * 1000)
-	inner := map[string]any{
-		"book_id":                          item.SeriesID,
-		"book_type":                        favoriteBookType,
-		"item_id":                          episodeID,
-		"vid_index":                        index,
-		"current_play_time":                positionMS,
-		"player_cumulative_total_duration": positionMS,
-		"read_timestamp_ms":                now,
-		"progress_type":                    positionMS,
-		"channel_id":                       0,
-		"cur_channel_id":                   0,
-		"check_timestamp":                  now,
-		"is_listen_mode":                   false,
-		"is_local_book":                    false,
-		"listen_and_read":                  false,
-		"page_index":                       0,
-		"page_progress_rate":               0,
-		"paragraph_offset":                 0,
-		"tone_id":                          0,
-	}
-	return map[string]any{"books": []any{inner}}
-}
-
-func progressUploadBatchPayload(items []HistoryItem, episodeIDs []string) map[string]any {
-	if len(items) != len(episodeIDs) {
-		return nil
-	}
-	books := make([]any, 0, len(items))
-	for i, item := range items {
-		payload := progressUploadPayload(item, episodeIDs[i])
-		if payload == nil {
-			return nil
-		}
-		books = append(books, payload["books"].([]any)[0])
-	}
-	return map[string]any{"books": books}
-}
-
-func favoriteMutationPayload(seriesID string, added bool) map[string]any {
-	if _, err := contentInt(seriesID); err != nil {
-		return nil
-	}
-	return map[string]any{
-		"is_cancelled": false,
-		"shark_param": map[string]any{
-			"enter_from":         "MainFragmentActivity",
-			"previous_page":      "",
-			"page_list":          "MainFragmentActivity",
-			"is_active_behavior": "true",
-			"inactive_type":      "0",
-		},
-		"book_id":     seriesID,
-		"book_type":   favoriteBookType,
-		"modify_time": time.Now().UnixMilli(),
-		"update_bookshelf_video_list": []any{map[string]any{
-			"is_cancelled": !added,
-		}},
-	}
-}
-
-func historyDeletePayload(items []HistoryItem, episodeIDs []string) map[string]any {
-	if len(items) != len(episodeIDs) {
-		return nil
-	}
-	updates := make([]any, 0, len(items))
-	now := time.Now().UnixMilli()
-	for i, item := range items {
-		bookID, err := contentInt(item.SeriesID)
-		if err != nil {
-			continue
-		}
-		episodeID, err := contentInt(episodeIDs[i])
-		if err != nil {
-			continue
-		}
-		index := item.EpisodeNum - 1
-		if index < 0 {
-			index = 0
-		}
-		updates = append(updates, map[string]any{
-			"book_id":                      bookID,
-			"book_type":                    favoriteBookType,
-			"vid":                          episodeID,
-			"vid_index":                    index,
-			"is_delete":                    true,
-			"use_soft_delete":              true,
-			"update_timestamp_ms":          now,
-			"chapter_index":                index,
-			"current_play_position":        0,
-			"player_accumulate_total_time": 0,
-			"read_timestamp_ms":            now,
-			"is_interactive_game":          false,
-			"is_listen_mode":               false,
-			"is_multi_season":              false,
-			"season_index":                 0,
-			"digged_count":                 0,
-			"user_digg":                    false,
-			"duration":                     0,
-			"episode_cnt":                  item.TotalEpisodes,
-			"origin_novel_book_id":         0,
-			"recent_reads":                 0,
-			"retain_video_play_time":       0,
-			"series_play_cnt":              0,
-			"tone_id":                      0,
-			"meet_guide_comment_tag":       false,
-			"user_playlet_comment_flag":    false,
-		})
-	}
-	return map[string]any{"update_datas": updates}
-}
-
 func (s *Service) resolveHistoryEpisodeID(item HistoryItem) string {
 	if cached, ok := s.store.GetCachedEpisodeAt(item.SeriesID, "", item.EpisodeNum); ok {
 		return cached.EpisodeID
@@ -338,15 +61,10 @@ func (s *Service) requestHistoryDelete(ctx context.Context, items []HistoryItem,
 	if len(items) == 0 || len(items) != len(episodeIDs) {
 		return nil
 	}
-	payload := historyDeletePayload(items, episodeIDs)
-	updates, ok := payload["update_datas"].([]any)
-	if !ok || len(updates) == 0 {
-		return fmt.Errorf("历史删除缺少有效分集引用")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if len(items) > 1 {
-		err := s.postSignedMutation(ctx, "历史删除", "/reading/bookapi/read_history/update/v", payload)
+		err := s.updateHistory(ctx, items, episodeIDs, true)
 		if err == nil || !errors.Is(err, errParameterInvalid) {
 			return err
 		}
@@ -358,7 +76,7 @@ func (s *Service) requestHistoryDelete(ctx context.Context, items []HistoryItem,
 		}
 		return s.requestHistoryDelete(ctx, items[middle:], episodeIDs[middle:])
 	}
-	return s.postSignedMutation(ctx, "历史删除", "/reading/bookapi/read_history/update/v", payload)
+	return s.updateHistory(ctx, items, episodeIDs, true)
 }
 
 func (s *Service) reportPlaybackProgress(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
@@ -385,18 +103,10 @@ func (s *Service) reportPlaybackProgress(ctx context.Context, items []HistoryIte
 func (s *Service) reportPlaybackProgressBatch(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	historyPayload := historyUpdateBatchPayload(items, episodeIDs)
-	if historyPayload == nil {
-		return fmt.Errorf("历史上报缺少有效内容 ID")
-	}
-	if err := s.postSignedMutation(ctx, "历史上报", "/reading/bookapi/read_history/update/v", historyPayload); err != nil {
-		return err
-	}
-	progressPayload := progressUploadBatchPayload(items, episodeIDs)
-	if progressPayload == nil {
-		return fmt.Errorf("进度上报缺少有效内容 ID")
-	}
-	return s.postSignedMutation(ctx, "进度上报", "/reading/bookapi/read_progress/upload/v", progressPayload)
+	// Playback clocks belong to read_progress/upload. read_history/update is
+	// retained for deletion compatibility and rejects valid progress records on
+	// some hosts, so do not send every save through both mutation endpoints.
+	return s.uploadProgress(ctx, items, episodeIDs)
 }
 
 func (s *Service) triggerPendingHistorySync() {
@@ -427,6 +137,7 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 		if err != nil {
 			s.historyMutationMu.Lock()
 			s.historyMutationSyncing = false
+			s.historyMutationErr = err
 			s.historyMutationMu.Unlock()
 			if processed > 0 {
 				s.touchHistoryMutation()
@@ -438,6 +149,7 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 		if err != nil {
 			s.historyMutationMu.Lock()
 			s.historyMutationSyncing = false
+			s.historyMutationErr = err
 			s.historyMutationMu.Unlock()
 			if processed > 0 {
 				s.touchHistoryMutation()
@@ -449,6 +161,7 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 		s.historyMutationWake = false
 		if !again {
 			s.historyMutationSyncing = false
+			s.historyMutationErr = nil
 			s.historyMutationMu.Unlock()
 			if processed > 0 {
 				s.touchHistoryMutation()
@@ -470,7 +183,7 @@ func (s *Service) markHistoryUploadFailed(items []userstore.PendingHistoryUpload
 		s.historyUploadRetries = make(map[string]historyUploadRetry)
 	}
 	base := historyUploadBaseBackoff
-	if errors.Is(err, errParameterInvalid) {
+	if errors.Is(err, errParameterInvalid) || errors.Is(err, hgapi.ErrRateLimited) {
 		base = time.Minute
 	}
 	for _, item := range items {
@@ -556,6 +269,9 @@ func (s *Service) processPendingHistoryUploads() (int, error) {
 		s.markHistoryUploadFailed(ack, err)
 		return 0, err
 	}
+	if !s.syncSessionCurrent(session) {
+		return 0, errSyncSessionChanged
+	}
 	acknowledged := len(ack)
 	if s.historyUploadRetries == nil {
 		s.historyUploadRetries = make(map[string]historyUploadRetry)
@@ -635,7 +351,7 @@ func (s *Service) syncPendingFavoriteOps() (int, error) {
 		}
 		for _, item := range items {
 			requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := s.postSignedMutation(requestCtx, "收藏同步", "/reading/bookapi/bookshelf/video/update/v", favoriteMutationPayload(item.SeriesID, item.Added))
+			err := s.updateFavorite(requestCtx, item.SeriesID, item.Added)
 			cancel()
 			if err == nil {
 				err = s.store.AckFavoriteOps([]userstore.PendingFavoriteOp{item})

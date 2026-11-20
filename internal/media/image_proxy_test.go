@@ -28,6 +28,9 @@ func TestImageProxyDownloadLimitRejectsOversizedResponse(t *testing.T) {
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "image/svg+xml" {
 		t.Fatalf("response = %d/%s, want fallback", response.Code, response.Header().Get("Content-Type"))
 	}
+	if response.Header().Get("X-Image-Fallback") != "1" {
+		t.Fatal("fallback image response is not marked for UI diagnostics")
+	}
 	cachePath := mediautil.ImageCachePath(cacheDir, target)
 	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
 		t.Fatalf("oversized image was cached: %v", err)
@@ -73,6 +76,24 @@ func TestImageProxyCachesNativeJPEG(t *testing.T) {
 	cachePath := mediautil.ImageCachePath(cacheDir, target)
 	if info, err := os.Stat(cachePath); err != nil || info.Size() != int64(len(payload)) {
 		t.Fatalf("cache file = %v, %v", info, err)
+	}
+}
+
+func TestImageProxyReportsCachedFormatFromBytes(t *testing.T) {
+	cacheDir := t.TempDir()
+	path := filepath.Join(cacheDir, "cached.raw")
+	webp, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = webp.Write([]byte("RIFF\x04\x00\x00\x00WEBP"))
+	_ = webp.Close()
+	response := httptest.NewRecorder()
+	if !serveCachedImage(response, httptest.NewRequest(http.MethodGet, "/img", nil), path) {
+		t.Fatal("valid WebP cache entry was not served")
+	}
+	if response.Header().Get("Content-Type") != "image/webp" {
+		t.Fatalf("WebP content type = %q", response.Header().Get("Content-Type"))
 	}
 }
 

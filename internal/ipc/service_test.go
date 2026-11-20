@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/adapters"
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters"
+	"myguo/internal/hgapi/adapters/memstore"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/resourcecache"
 	userstore "myguo/internal/store"
 )
@@ -54,14 +54,14 @@ func TestRecommendFeedFiltersRepeatsAcrossCursorGeneration(t *testing.T) {
 	resets := 0
 	responses := []page{
 		{ids: []string{"a", "b"}, cursor: "expired", hasMore: true},
-		{err: sdk.ErrAnonymousLimited},
+		{err: hgapi.ErrAnonymousLimited},
 		{ids: []string{"b", "c"}, cursor: "fresh", hasMore: true},
 	}
 	requests := 0
 	svc := &HongguoService{
 		store: store,
 		media: &MediaServer{},
-		discover: func(context.Context, sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
+		discover: func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
 			if requests >= len(responses) {
 				return nil, errors.New("unexpected request")
 			}
@@ -74,7 +74,7 @@ func TestRecommendFeedFiltersRepeatsAcrossCursorGeneration(t *testing.T) {
 			for _, id := range response.ids {
 				items = append(items, model.SeriesSummary{ID: id, Title: "Drama " + id})
 			}
-			return &sdk.Page[model.SeriesSummary]{Items: items, Cursor: response.cursor, HasMore: response.hasMore}, nil
+			return &hgapi.Page[model.SeriesSummary]{Items: items, Cursor: response.cursor, HasMore: response.hasMore}, nil
 		},
 		resetDevice: func(context.Context) error {
 			resets++
@@ -140,12 +140,12 @@ func TestRecommendFeedContinuesPastRepeatedPages(t *testing.T) {
 			svc := &HongguoService{
 				store: store,
 				media: &MediaServer{},
-				discover: func(_ context.Context, opts sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
+				discover: func(_ context.Context, opts hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
 					if opts.Cursor == "expired" {
-						return nil, sdk.ErrAnonymousLimited
+						return nil, hgapi.ErrAnonymousLimited
 					}
 					if tt.emptyFirstPage && resets == 0 {
-						return &sdk.Page[model.SeriesSummary]{}, nil
+						return &hgapi.Page[model.SeriesSummary]{}, nil
 					}
 					index := 0
 					if opts.Cursor != "" {
@@ -165,7 +165,7 @@ func TestRecommendFeedContinuesPastRepeatedPages(t *testing.T) {
 						id, nextCursor, hasMore = oldIDs[index], oldIDs[index], true
 					}
 					visited = append(visited, id)
-					return &sdk.Page[model.SeriesSummary]{
+					return &hgapi.Page[model.SeriesSummary]{
 						Items:  []model.SeriesSummary{{ID: id, Title: id}},
 						Cursor: nextCursor, HasMore: hasMore,
 					}, nil
@@ -285,7 +285,7 @@ func TestGetDiscoverUnavailableContentReturnsEmptyResponse(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, err := adapters.NewClient("", sdk.Options{
+	client, err := adapters.NewClient("", hgapi.Options{
 		ProfileStore:       memstore.New(),
 		DistributionOrigin: ts.URL,
 		RegisterOrigin:     ts.URL,

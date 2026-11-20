@@ -27,6 +27,11 @@ func (s *HongguoService) libraryService() *library.Service {
 				return s.runtimeIdentity()
 			},
 			InvalidateCaches: s.invalidateCatalogCaches,
+			InvalidateHistory: func() {
+				if s.historyInvalidator != nil {
+					s.historyInvalidator()
+				}
+			},
 			Notify: func(ctx context.Context, notification library.Notification) {
 				_, _ = s.SendNativeNotification(ctx, native.NotificationArgs{
 					Title:    notification.Title,

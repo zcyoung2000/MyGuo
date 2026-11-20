@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/beilunyang/openhongguo/sdk"
+	"myguo/internal/hgapi"
 )
 
 const DefaultVideoQuality = "720p"
@@ -74,7 +74,7 @@ func NormalizeImageURL(raw string) string {
 	return raw
 }
 
-func PageItems[T any](page *sdk.Page[T]) []T {
+func PageItems[T any](page *hgapi.Page[T]) []T {
 	if page == nil {
 		return nil
 	}

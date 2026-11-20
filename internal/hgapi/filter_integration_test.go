@@ -1,4 +1,4 @@
-package filterapi_test
+package hgapi_test
 
 import (
 	"context"
@@ -12,13 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
 	"myguo/internal/auth"
-	"myguo/internal/filterapi"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters/memstore"
 )
 
-// Exercise the complete production SDK -> extension -> account -> HTTP path.
+// Exercise production filter encoding, signing and account transport together.
 func TestArtStyleIsSignedAndRetainedAcrossPagination(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,27 +45,27 @@ func TestArtStyleIsSignedAndRetainedAcrossPagination(t *testing.T) {
 	}))
 	defer server.Close()
 	profiles := memstore.New()
-	_ = profiles.Save(context.Background(), &sdk.DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002", TTReq: "fixture"})
+	_ = profiles.Save(context.Background(), &hgapi.DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002", TTReq: "fixture"})
 	transport := auth.New()
 	transport.SetCredentials("sessionid=fixture", "", "cn")
-	client, err := sdk.NewClient(sdk.Options{Transport: transport, ProfileStore: profiles, DistributionOrigin: server.URL, RetryAttempts: 1})
+	client, err := hgapi.NewClient(hgapi.Options{Transport: transport, ProfileStore: profiles, DistributionOrigin: server.URL, RetryAttempts: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := map[string][]string{"genre": {"comic_series"}, "category_dim_art_style": {"cate_5415"}}
-	first, err := filterapi.Query(context.Background(), client, values, "")
+	first, err := client.ShortFilter(context.Background(), hgapi.ShortFilterQuery{Selections: values})
 	if err != nil || first == nil || first.Cursor == "" {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
-	second, err := filterapi.Query(context.Background(), client, values, first.Cursor)
+	second, err := client.ShortFilter(context.Background(), hgapi.ShortFilterQuery{Selections: values, Cursor: first.Cursor})
 	if err != nil || second == nil || calls != 2 {
 		t.Fatalf("second=%+v calls=%d err=%v", second, calls, err)
 	}
 	changed := map[string][]string{"genre": {"comic_series"}, "category_dim_art_style": {"cate_5416"}}
-	if _, err := filterapi.Query(context.Background(), client, changed, first.Cursor); err == nil {
+	if _, err := client.ShortFilter(context.Background(), hgapi.ShortFilterQuery{Selections: changed, Cursor: first.Cursor}); err == nil {
 		t.Fatal("changed style reused the prior cursor")
 	}
-	if _, err := filterapi.Query(context.Background(), client, map[string][]string{"genre": {"comic_series"}}, first.Cursor); err == nil {
+	if _, err := client.ShortFilter(context.Background(), hgapi.ShortFilterQuery{Selections: map[string][]string{"genre": {"comic_series"}}, Cursor: first.Cursor}); err == nil {
 		t.Fatal("cleared style reused the prior cursor")
 	}
 	if calls != 2 {

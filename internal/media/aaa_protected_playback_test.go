@@ -11,13 +11,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/adapters"
-	"github.com/beilunyang/openhongguo/adapters/memstore"
-	"github.com/beilunyang/openhongguo/sdk"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters"
+	"myguo/internal/hgapi/adapters/memstore"
 )
 
 func TestProtectedFullCacheDownloadUsesContentKeyAndDecrypts(t *testing.T) {
-	const playbackPath = "/novel/player/video_model/v1/"
+	const playbackPath = hgapi.PlaybackPath
 	const registerPath = "/service/2/device_register/"
 	const sourceURL = "https://protected.invalid/720.mp4"
 	videoModel := map[string]any{
@@ -55,7 +55,7 @@ func TestProtectedFullCacheDownloadUsesContentKeyAndDecrypts(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    0,
 				"message": "ok",
-				"data":    map[string]any{"video_model": string(encodedModel)},
+				"data":    map[string]any{"7100000000000201": map[string]any{"video_model": string(encodedModel)}},
 			})
 		default:
 			http.NotFound(w, r)
@@ -64,7 +64,7 @@ func TestProtectedFullCacheDownloadUsesContentKeyAndDecrypts(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	profilePath := filepath.Join(t.TempDir(), "profile.json")
-	client, err := adapters.NewClient(profilePath, sdk.Options{
+	client, err := adapters.NewClient(profilePath, hgapi.Options{
 		ProfileStore:   memstore.New(),
 		RegisterOrigin: server.URL,
 		APIOrigin:      server.URL,
@@ -73,11 +73,11 @@ func TestProtectedFullCacheDownloadUsesContentKeyAndDecrypts(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	pb, err := client.ResolvePlayback(context.Background(), "7100000000000201", sdk.PlaybackOptions{})
-	if !errors.Is(err, sdk.ErrDRMProtected) || pb == nil {
+	pb, err := client.ResolvePlayback(context.Background(), "7100000000000201", hgapi.PlaybackOptions{})
+	if !errors.Is(err, hgapi.ErrDRMProtected) || pb == nil {
 		t.Fatalf("ResolvePlayback() error = %v, playback = %+v", err, pb)
 	}
-	key, err := sdk.ContentKey(pb)
+	key, err := hgapi.ContentKey(pb)
 	if err != nil {
 		t.Fatalf("ContentKey() error = %v", err)
 	}

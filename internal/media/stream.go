@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
+	"myguo/internal/hgapi"
 )
 
 const progressiveStreamTimeout = 10 * time.Minute
@@ -177,7 +177,7 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 	}
 	keyHex := ""
 	if pb.Protected {
-		contentKey, keyErr := sdk.ContentKey(pb)
+		contentKey, keyErr := hgapi.ContentKey(pb)
 		if keyErr != nil {
 			return nil, fmt.Errorf("failed to extract CENC key: %w", keyErr)
 		}

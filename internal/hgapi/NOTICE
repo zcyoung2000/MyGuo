@@ -1,0 +1,3 @@
+Catalog response models, parsing, registration encoding and catalog request recipes were adapted from beilunyang/openhongguo commit 1d3354a932bc under Apache-2.0.
+The external SDK is removed. myguo owns the client, transport, device/session lifecycle and reference-compatible playback implementation.
+See licenses/openhongguo-Apache-2.0.txt.

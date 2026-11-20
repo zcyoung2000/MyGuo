@@ -1,32 +1,26 @@
 package media
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
-	"myguo/internal/sign"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 const (
-	// The reverse report proves the endpoint but not its server-side ceiling.
-	// Two is the conservative requested window; it must be verified before
-	// being raised.
-	multiVideoModelBatchSize = 2
+	// The reference client submits at most fifteen models per request.
+	multiVideoModelBatchSize = hgapi.PlaybackBatchSize
 	// multiVideoModelWindow is the i+1/i+2 lookahead requested while an episode
 	// plays. It deliberately matches the conservative batch above.
 	multiVideoModelWindow      = 2
-	multiVideoModelPath        = "/novel/player/multi_video_model/v1/"
+	multiVideoModelPath        = hgapi.PlaybackPath
 	multiVideoModelOrigin      = "https://api5-normal-lq.fqnovel.com"
 	multiVideoModelHTTPTimeout = 8 * time.Second
 	maxPlaybackResponseBytes   = int64(8 * 1024 * 1024)
@@ -34,8 +28,9 @@ const (
 )
 
 type MultiVideoModelRequest struct {
-	VideoID  []string       `json:"video_id"`
-	BizParam map[string]any `json:"biz_param"`
+	MixedVideoIDMap map[string][]string `json:"mixed_video_id_map"`
+	DRScene         string              `json:"dr_scene"`
+	BizParam        map[string]any      `json:"biz_param"`
 }
 
 type multiVideoModelResponse struct {
@@ -61,7 +56,7 @@ type multiModelWindow struct {
 // only fills the existing playback-model cache, so normal playback and model
 // prefetch share deduplication and expiry instead of creating a second cache.
 type MultiVideoModelBatcher struct {
-	client             *sdk.Client
+	client             *hgapi.Client
 	httpClient         *http.Client
 	multiVideoModelURL string
 	deviceIdentity     func() (deviceID, installID, cdid, openudid string)
@@ -72,7 +67,7 @@ type MultiVideoModelBatcher struct {
 	windowID uint64
 }
 
-func NewMultiVideoModelBatcher(client *sdk.Client, httpClient *http.Client) *MultiVideoModelBatcher {
+func NewMultiVideoModelBatcher(client *hgapi.Client, httpClient *http.Client) *MultiVideoModelBatcher {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: multiVideoModelHTTPTimeout}
 	}
@@ -116,14 +111,7 @@ func multiVideoModelBody(episodes []model.Episode) ([]byte, error) {
 	for _, episode := range episodes {
 		ids = append(ids, episode.ID)
 	}
-	return json.Marshal(MultiVideoModelRequest{
-		VideoID: ids,
-		BizParam: map[string]any{
-			"video_id_type":             0,
-			"need_all_video_definition": true,
-			"video_platform":            3,
-		},
-	})
+	return hgapi.PlaybackBody(ids, 1004)
 }
 
 func decodeMultiVideoModel(body []byte, episodeID string) (*model.Playback, error) {
@@ -139,30 +127,11 @@ func decodeMultiVideoModel(body []byte, episodeID string) (*model.Playback, erro
 }
 
 func parseMultiVideoModels(body []byte, episodes []model.Episode) (map[string]*model.Playback, error) {
-	var response multiVideoModelResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
+	ids := make([]string, 0, len(episodes))
+	for _, ep := range episodes {
+		ids = append(ids, ep.ID)
 	}
-	code := strings.Trim(strings.TrimSpace(string(response.Code)), `"`)
-	if code != "" && code != "0" {
-		return nil, fmt.Errorf("multi video model code %s", code)
-	}
-	out := make(map[string]*model.Playback, len(episodes))
-	for _, episode := range episodes {
-		raw := response.Data[episode.ID]
-		if len(raw) == 0 || string(raw) == "null" {
-			continue
-		}
-		playback, err := decodeMultiVideoModel(raw, episode.ID)
-		if err != nil {
-			return nil, err
-		}
-		out[episode.ID] = playback
-	}
-	if len(out) == 0 {
-		return nil, errors.New("multi video model response has no models")
-	}
-	return out, nil
+	return hgapi.ParseVideoModels(body, ids)
 }
 
 func (b *MultiVideoModelBatcher) setDeviceIdentity(identity func() (deviceID, installID, cdid, openudid string)) {
@@ -281,6 +250,11 @@ func (b *MultiVideoModelBatcher) Run(ctx context.Context, remember func(string, 
 		}
 		b.runTask(ctx, task, remember, windowID)
 	}
+	b.mu.Lock()
+	if b.windowID == windowID {
+		b.window = nil
+	}
+	b.mu.Unlock()
 }
 
 func (b *MultiVideoModelBatcher) runTask(ctx context.Context, task multiModelTask, remember func(string, *model.Playback), windowID uint64) {
@@ -330,10 +304,6 @@ func (b *MultiVideoModelBatcher) runTask(ctx context.Context, task multiModelTas
 }
 
 func (b *MultiVideoModelBatcher) fetch(ctx context.Context, episodes []model.Episode) (map[string]*model.Playback, error) {
-	body, err := multiVideoModelBody(episodes)
-	if err != nil {
-		return nil, err
-	}
 	b.mu.Lock()
 	identity := b.deviceIdentity
 	b.mu.Unlock()
@@ -341,31 +311,16 @@ func (b *MultiVideoModelBatcher) fetch(ctx context.Context, episodes []model.Epi
 	if identity != nil {
 		deviceID, installID, cdid, openudid = identity()
 	}
-	ticket := time.Now().UnixMilli()
-	requestURL := b.multiVideoModelURL
-	if requestURL == "" {
-		requestURL = multiVideoModelOrigin
+	ids := make([]string, 0, len(episodes))
+	for _, ep := range episodes {
+		ids = append(ids, ep.ID)
 	}
-	query, headers := sign.SignPOST(multiVideoModelPath, defaultPlaybackDeviceQuery(deviceID, installID, cdid, openudid), ticket, deviceID, sdkVersionName, body, nil)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL+multiVideoModelPath+"?"+query, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	options := hgapi.PlaybackOptions{}
+	if b.multiVideoModelURL != "" && b.multiVideoModelURL != multiVideoModelOrigin {
+		options.Origin = b.multiVideoModelURL
 	}
-	for key, value := range headers {
-		request.Header.Set(key, value)
+	if deviceID != "" && installID != "" {
+		options.Profile = &hgapi.DeviceProfile{DeviceID: deviceID, InstallID: installID, CDID: cdid, OpenUDID: openudid}
 	}
-	setPlaybackHeaders(request.Header, ticket)
-	response, err := b.httpClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("multi video model API returned %d", response.StatusCode)
-	}
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxPlaybackResponseBytes))
-	if err != nil {
-		return nil, err
-	}
-	return parseMultiVideoModels(responseBody, episodes)
+	return b.client.MultiVideoModels(ctx, ids, options)
 }

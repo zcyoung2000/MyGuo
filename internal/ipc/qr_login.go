@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"myguo/internal/qrauth"
+
+	"myguo/internal/hgapi/passport"
 )
 
 // QRLoginDTO contains presentation data only; Passport tokens and cookies stay
@@ -26,7 +27,7 @@ type qrLoginAttempt struct {
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	mu                   sync.Mutex
-	session              *qrauth.Session
+	session              *passport.Session
 	ownerID, ownerCookie string
 }
 
@@ -47,7 +48,7 @@ func (s *HongguoService) BeginQRLogin(ctx context.Context) (*QRLoginDTO, error) 
 		}
 		s.qrMu.Unlock()
 	})
-	session, err := qrauth.New(ctx, s.httpClient.Transport)
+	session, err := passport.New(ctx, s.httpClient.Transport)
 	s.qrMu.Lock()
 	defer s.qrMu.Unlock()
 	if err != nil || s.qrActive != attempt || ctx.Err() != nil {
@@ -81,7 +82,7 @@ func (s *HongguoService) PollQRLogin(ctx context.Context, id string) (*QRLoginSt
 	defer stop()
 	defer cancel()
 	state, credentials, err := attempt.session.Poll(pollCtx)
-	if errors.Is(err, qrauth.ErrTemporary) {
+	if errors.Is(err, passport.ErrTemporary) {
 		state = "waiting"
 		if attempt.session.PhoneConfirmed() {
 			state = "confirming"
@@ -108,7 +109,7 @@ func (s *HongguoService) PollQRLogin(ctx context.Context, id string) (*QRLoginSt
 		return nil, errors.New("账号状态已变化，请重新扫码")
 	}
 	profile, err := s.loginWithCookiesLocked(pollCtx, credentials.Cookies, credentials.Token)
-	if errors.Is(err, qrauth.ErrTemporary) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, passport.ErrTemporary) || errors.Is(err, context.DeadlineExceeded) {
 		return &QRLoginStatusDTO{State: "confirming"}, nil
 	}
 	if err != nil {

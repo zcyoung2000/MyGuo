@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/resourcecache"
 	userstore "myguo/internal/store"
 )
@@ -24,8 +24,8 @@ func TestRecommendFeedEnrichesDetailBatch(t *testing.T) {
 	svc := &HongguoService{
 		store: store,
 		media: &MediaServer{},
-		discover: func(_ context.Context, _ sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
-			return &sdk.Page[model.SeriesSummary]{
+		discover: func(_ context.Context, _ hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
+			return &hgapi.Page[model.SeriesSummary]{
 				Items: []model.SeriesSummary{
 					{ID: "1", Title: "raw one", EpisodeCount: 1},
 					{ID: "2", Title: "raw two"},
@@ -83,8 +83,8 @@ func TestRecommendFeedDetailBatchFailureKeepsCards(t *testing.T) {
 	svc := &HongguoService{
 		store: store,
 		media: &MediaServer{},
-		discover: func(context.Context, sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error) {
-			return &sdk.Page[model.SeriesSummary]{
+		discover: func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error) {
+			return &hgapi.Page[model.SeriesSummary]{
 				Items:  []model.SeriesSummary{{ID: "1", Title: "raw one"}},
 				Cursor: "next", HasMore: true,
 			}, nil

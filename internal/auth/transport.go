@@ -1,17 +1,14 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"myguo/internal/filterapi"
+	"myguo/internal/hgapi"
 )
 
 type CredentialTransport interface {
@@ -19,10 +16,8 @@ type CredentialTransport interface {
 	SetHTTPClient(client *http.Client)
 }
 
-// Transport sends the same official SDK requests as the public client,
-// but lets an installed account credential cross the SDK boundary. The
-// upstream SDK deliberately refuses credentials; Hongguo's player and user
-// APIs have always sent them, so catalog reads use the same login state.
+// Transport applies the saved account to ordinary Hongguo requests. Dedicated
+// playback sessions supply their own bound credentials or explicitly omit them.
 type Transport struct {
 	mu          sync.RWMutex
 	client      *http.Client
@@ -52,61 +47,23 @@ func (t *Transport) SetCredentials(cookies, token, storeRegion string) {
 	t.storeRegion = strings.TrimSpace(storeRegion)
 }
 
-func (t *Transport) Do(ctx context.Context, req *sdk.Request) (*sdk.Response, error) {
+func (t *Transport) Do(ctx context.Context, req *hgapi.Request) (*hgapi.Response, error) {
 	if req == nil {
 		return nil, errors.New("auth transport: nil request")
 	}
-	var err error
-	req, err = filterapi.AmendSignedRequest(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, methodOrGet(req.Method), req.URL, bytes.NewReader(req.Body))
-	if err != nil {
-		return nil, err
-	}
+	copy := *req
+	copy.Headers = make(map[string]string, len(req.Headers)+3)
 	for key, value := range req.Headers {
-		httpReq.Header.Set(key, value)
+		copy.Headers[key] = value
 	}
-	cookies, token, storeRegion := t.credentials()
-	if cookies != "" && !isDeviceRegistration(req.URL) {
-		httpReq.Header.Set("Cookie", cookies)
-		httpReq.Header.Set("x-tt-store-region", storeRegion)
-		if token != "" {
-			httpReq.Header.Set("x-tt-token", token)
-		}
+	cookies, token, region := t.credentials()
+	if !req.SkipAuth && !req.CredentialsManaged && cookies != "" && !hgapi.IsDeviceRegistration(req.URL) {
+		copy.Headers["Cookie"], copy.Headers["x-tt-token"], copy.Headers["x-tt-store-region"] = cookies, token, region
 	}
-
-	resp, err := t.client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
-	headers := make(map[string]string, len(resp.Header))
-	for key, values := range resp.Header {
-		if strings.EqualFold(key, "Set-Cookie") || strings.EqualFold(key, "Cookie") || len(values) == 0 {
-			continue
-		}
-		headers[key] = values[0]
-	}
-	responseCookies := make(map[string]string, len(resp.Cookies()))
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name != "" {
-			responseCookies[cookie.Name] = cookie.Value
-		}
-	}
-	return &sdk.Response{
-		StatusCode: resp.StatusCode,
-		Headers:    headers,
-		Body:       body,
-		Cookies:    responseCookies,
-	}, nil
+	t.mu.RLock()
+	client := t.client
+	t.mu.RUnlock()
+	return hgapi.Exchange(ctx, client, &copy)
 }
 
 func (t *Transport) credentials() (cookies, token, storeRegion string) {
@@ -115,13 +72,6 @@ func (t *Transport) credentials() (cookies, token, storeRegion string) {
 	return t.cookies, t.token, t.storeRegion
 }
 
-func methodOrGet(method string) string {
-	if strings.TrimSpace(method) == "" {
-		return http.MethodGet
-	}
-	return method
-}
-
-func isDeviceRegistration(rawURL string) bool {
-	return strings.Contains(rawURL, "/service/2/device_register/")
-}
+// Credentials snapshots the current account for a separately bound playback
+// session. The snapshot is never logged.
+func (t *Transport) Credentials() (cookies, token, storeRegion string) { return t.credentials() }

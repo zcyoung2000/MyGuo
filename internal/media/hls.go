@@ -17,14 +17,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/mediautil"
 )
 
 func validContentID(id string) bool { return mediautil.ValidContentID(id) }
 
-func pageItems[T any](page *sdk.Page[T]) []T { return mediautil.PageItems(page) }
+func pageItems[T any](page *hgapi.Page[T]) []T { return mediautil.PageItems(page) }
 
 const (
 	hlsWaitTimeout             = 12 * time.Second
@@ -344,7 +344,7 @@ func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seri
 	}
 	keyHex := ""
 	if pb.Protected {
-		contentKey, keyErr := sdk.ContentKey(pb)
+		contentKey, keyErr := hgapi.ContentKey(pb)
 		if keyErr != nil {
 			ms.failHLSStream(stream, fmt.Errorf("failed to extract CENC key: %w", keyErr))
 			return

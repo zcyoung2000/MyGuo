@@ -1,28 +1,20 @@
 package library
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/rand"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
-	"io"
 	"log"
-	"myguo/internal/mediautil"
-	"myguo/internal/sanitize"
-	"myguo/internal/sign"
-	"myguo/internal/upstream"
-	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
+	"myguo/internal/mediautil"
+	"myguo/internal/sanitize"
+	userstore "myguo/internal/store"
 )
 
 func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
@@ -45,9 +37,6 @@ func (s *Service) SaveProgressForScope(ctx context.Context, scope, seriesID, epi
 func (s *Service) saveProgress(ctx context.Context, session syncSession, seriesID, episodeID, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
 	seriesID = strings.TrimSpace(seriesID)
 	episodeID = strings.TrimSpace(episodeID)
-	if strings.TrimSpace(title) == "" {
-		title = "未知短剧"
-	}
 	if !mediautil.ValidContentID(seriesID) {
 		return fmt.Errorf("历史 ID 无效")
 	}
@@ -82,6 +71,7 @@ func (s *Service) saveProgress(ctx context.Context, session syncSession, seriesI
 }
 
 func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
+	statusErr := s.loggedInHistoryStatusError()
 	s.historyMu.Lock()
 
 	// 1. If in-memory cache is fresh (< 30s), return instantly
@@ -89,7 +79,7 @@ func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 		cached := make([]HistoryItem, len(s.cachedHistory))
 		copy(cached, s.cachedHistory)
 		s.historyMu.Unlock()
-		return sanitize.Sanitize(cached), nil
+		return sanitize.Sanitize(cached), statusErr
 	}
 
 	// 2. Check local store (sub-millisecond instant return)
@@ -123,30 +113,30 @@ func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 			})
 		}
 		s.historyMu.Unlock()
-		return sanitize.Sanitize(localItems), nil
+		return sanitize.Sanitize(localItems), statusErr
 	}
 	s.historyMu.Unlock()
 
 	// 3. Local store is empty (e.g. first app launch with an existing account) -> sync synchronously
 	if s.currentSyncSession().cookies != "" {
 		if err := s.syncRemoteHistory(ctx, s.currentHistoryGeneration()); err != nil {
-			return nil, err
+			items, readErr := s.historyFromStore()
+			if readErr != nil {
+				return nil, errors.Join(err, readErr)
+			}
+			return items, errors.Join(err, s.loggedInHistoryStatusError())
 		}
 	}
 
-	s.historyMu.Lock()
-	defer s.historyMu.Unlock()
-	list, err := s.store.GetHistory()
-	if err != nil {
-		return nil, err
+	items, err := s.historyFromStore()
+	return items, errors.Join(err, s.loggedInHistoryStatusError())
+}
+
+func (s *Service) loggedInHistoryStatusError() error {
+	if session := s.currentSyncSession(); session.cookies != "" {
+		return s.historySyncStatusError()
 	}
-	for i := range list {
-		list[i].CoverURL = s.imageURL(list[i].CoverURL)
-	}
-	list = sanitize.Sanitize(list)
-	s.cachedHistory = list
-	s.historyCachedAt = time.Now()
-	return sanitize.Sanitize(list), nil
+	return nil
 }
 
 // RefreshHistory flushes local mutations, then reads the complete upstream
@@ -156,120 +146,99 @@ func (s *Service) RefreshHistory(ctx context.Context) ([]HistoryItem, error) {
 		return s.GetHistory(ctx)
 	}
 	generation := s.currentHistoryGeneration()
-	if err := s.syncRemoteHistory(ctx, generation); err != nil {
-		// Queued history can be invalid or the upstream endpoint can be
-		// temporarily unreachable. Neither condition invalidates local rows,
-		// and blocking refresh on a failed upload makes a saved-playback bug
-		// look like a failed library. Failed intents remain queued for retry.
-		return s.GetHistory(ctx)
-	}
-	return s.GetHistory(ctx)
-}
-
-type remoteHistoryRow struct {
-	SeriesID        string `json:"series_id"`
-	VidIndex        int    `json:"vid_index"`
-	EpisodeCount    int    `json:"episode_cnt"`
-	CurrentPlayTime int64  `json:"current_play_time"`
-	LastWatchTime   int64  `json:"last_watch_time"`
-}
-
-type remoteHistoryPage struct {
-	Items      []remoteHistoryRow
-	NextOffset int64
-	HasMore    bool
-}
-
-// The endpoint returns data_list in an object, or data directly as an array.
-// Validate the envelope before accepting an empty result so failures cannot
-// accidentally be reconciled as an empty remote history.
-func decodeRemoteHistoryPage(body []byte) (*remoteHistoryPage, error) {
-	var envelope struct {
-		Code       int             `json:"code"`
-		Data       json.RawMessage `json:"data"`
-		NextOffset int64           `json:"next_offset"`
-		HasMore    bool            `json:"has_more"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
+	if err := s.cleanupLegacyHistoryMutations(); err != nil {
 		return nil, err
 	}
-	data := bytes.TrimSpace(envelope.Data)
-	if envelope.Code != 0 || len(data) == 0 || bytes.Equal(data, []byte("null")) {
-		return nil, fmt.Errorf("历史同步响应无效 (code=%d)", envelope.Code)
-	}
-	page := &remoteHistoryPage{NextOffset: envelope.NextOffset, HasMore: envelope.HasMore}
-	if data[0] == '[' {
-		if err := json.Unmarshal(data, &page.Items); err != nil {
-			return nil, err
+	// Uploads already have a durable queue. Try them independently so a slow or
+	// rejected write never consumes the read budget for other-device history.
+	uploadDone := make(chan error, 1)
+	s.background.Go(func(context.Context) {
+		_, err := s.syncPendingHistoryMutations()
+		uploadDone <- err
+	})
+	syncErr := s.syncRemoteHistory(ctx, generation)
+	// Give the durable uploader a small, separate completion window. It never
+	// shares the history request context or delays remote reads for a long retry.
+	uploadTimer := time.NewTimer(250 * time.Millisecond)
+	select {
+	case uploadErr := <-uploadDone:
+		if uploadErr != nil {
+			log.Printf("[history] progress upload remains queued: %v", uploadErr)
 		}
-	} else {
-		var object struct {
-			Items      []remoteHistoryRow `json:"data_list"`
-			NextOffset int64              `json:"next_offset"`
-			HasMore    bool               `json:"has_more"`
-		}
-		if err := json.Unmarshal(data, &object); err != nil {
-			return nil, err
-		}
-		page.Items, page.NextOffset, page.HasMore = object.Items, object.NextOffset, object.HasMore
+	case <-uploadTimer.C:
 	}
-	if page.Items == nil {
-		return nil, fmt.Errorf("历史同步响应缺少记录列表")
+	if !uploadTimer.Stop() {
+		select {
+		case <-uploadTimer.C:
+		default:
+		}
 	}
-	return page, nil
+	items, readErr := s.historyFromStore()
+	return items, errors.Join(syncErr, readErr, s.historySyncStatusError())
 }
+
+func (s *Service) historySyncStatusError() error {
+	s.historyMutationMu.Lock()
+	mutationErr := s.historyMutationErr
+	s.historyMutationMu.Unlock()
+	if s.store != nil {
+		scope := s.currentSyncSession().scope
+		if pending, err := s.store.PendingOwnedHistoryMutationIDs(scope); err != nil {
+			mutationErr = errors.Join(mutationErr, err)
+		} else if len(pending) > 0 {
+			mutationErr = errors.Join(mutationErr, fmt.Errorf("%d 条本机播放进度待上传", len(pending)))
+		}
+	}
+	// Metadata enrichment and unavailable content are maintained in the
+	// background. Neither makes a successfully read history list an error.
+	return mutationErr
+}
+
+func (s *Service) cleanupLegacyHistoryMutations() error {
+	count, err := s.store.CleanupLegacyHistoryMutations()
+	if err != nil {
+		return fmt.Errorf("清理旧版历史同步任务失败: %w", err)
+	}
+	if count > 0 {
+		log.Printf("[history] retired %d unowned legacy sync tasks; local history retained", count)
+	}
+	return nil
+}
+
+func (s *Service) historyFromStore() ([]HistoryItem, error) {
+	list, err := s.store.GetHistory()
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
+	}
+	list = sanitize.Sanitize(list)
+	s.historyMu.Lock()
+	s.cachedHistory = append([]HistoryItem(nil), list...)
+	s.historyCachedAt = time.Now()
+	s.historyMu.Unlock()
+	return sanitize.Sanitize(list), nil
+}
+
+type remoteHistoryRow = hgapi.HistoryRow
+type remoteHistoryPage = hgapi.HistoryPage
+
+const (
+	historyDetailBatchSize = 10
+	historySyncTimeout     = 90 * time.Second
+	historyMaxPages        = 2000
+)
 
 func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*remoteHistoryPage, error) {
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
 		return nil, err
 	}
-	userCookies, userToken := session.cookies, session.token
-	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
-		[2]string{"book_types", "2"},
-		[2]string{"limit", "50"},
-	)
-	if offset > 0 {
-		pairs = append(pairs, [2]string{"offset", strconv.FormatInt(offset, 10)})
-	}
-	ticket := time.Now().UnixMilli()
-	rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
-	reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/read_progress/list/v1/?" + rawQuery
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	api := s.apiForSession(session)
+	page, err := api.History(ctx, offset, "")
 	if err != nil {
 		return nil, err
-	}
-	for key, value := range sigHeaders {
-		req.Header.Set(key, value)
-	}
-	req.Header.Set("User-Agent", s.userAgentValue())
-	req.Header.Set("Cookie", userCookies)
-	if userToken != "" {
-		req.Header.Set("x-tt-token", userToken)
-	}
-	req.Header.Set("x-tt-store-region", s.storeRegionValue())
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("历史同步接口返回 HTTP %d", resp.StatusCode)
-	}
-
-	page, err := decodeRemoteHistoryPage(body)
-	if err != nil {
-		return nil, err
-	}
-	if page.HasMore && page.NextOffset <= offset {
-		page.NextOffset = offset + int64(len(page.Items))
 	}
 	return page, nil
 }
@@ -283,46 +252,60 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	if err != nil {
 		return err
 	}
-	// Remote reads must not race a local intent. Flush first; if any intent was
-	// uploaded in this run, the next list read is a merge only and may still be
-	// slightly behind the just-acknowledged mutation.
-	processed, err := s.syncPendingHistoryMutations()
-	if err != nil {
+	if err := s.cleanupLegacyHistoryMutations(); err != nil {
 		return err
-	}
-	// Another pending-sync worker may already be uploading intents. Do not
-	// fetch an authoritative snapshot until that worker has finished; the next
-	// revalidation will flush anything it left behind.
-	if s.historyMutationSyncBusy() {
-		return nil
 	}
 	pendingIDs, err := s.store.PendingHistoryMutationIDs(session.scope)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	if count, countErr := s.store.PendingHistoryMetadataCount(session.scope); countErr != nil {
+		return countErr
+	} else if count > 0 {
+		s.scheduleHistoryMetadata(session)
+	}
+	ctx, cancel := context.WithTimeout(ctx, historySyncTimeout)
 	defer cancel()
 
 	var remoteRows []remoteHistoryRow
 	snapshotComplete := false
 	offset := int64(0)
-	for page := 0; page < 10; page++ {
+	pagesRead := 0
+	seenCursors := map[int64]bool{}
+	var readErr error
+	for page := 0; page < historyMaxPages; page++ {
 		result, err := s.fetchRemoteHistoryPage(ctx, offset)
 		if err != nil {
-			return fmt.Errorf("历史远端第%d页读取失败: %w", page+1, err)
+			readErr = fmt.Errorf("历史远端第%d页读取失败: %w", page+1, err)
+			break
 		}
 		if result == nil {
-			return nil
+			readErr = fmt.Errorf("历史远端第%d页没有响应", page+1)
+			break
 		}
+		pagesRead++
 		remoteRows = append(remoteRows, result.Items...)
 		if !result.HasMore {
 			snapshotComplete = true
 			break
 		}
-		if len(result.Items) == 0 || result.NextOffset <= offset {
+		if len(result.Items) == 0 {
+			readErr = fmt.Errorf("历史远端第%d页为空但仍标记有后续页", page+1)
 			break
 		}
+		cursorDidNotAdvance := result.NextOffset <= offset
+		if result.TimestampCursor {
+			cursorDidNotAdvance = offset > 0 && result.NextOffset >= offset
+		}
+		if cursorDidNotAdvance || seenCursors[result.NextOffset] {
+			readErr = fmt.Errorf("历史远端第%d页游标没有前进", page+1)
+			break
+		}
+		seenCursors[result.NextOffset] = true
 		offset = result.NextOffset
+	}
+	if !snapshotComplete && readErr == nil {
+		readErr = fmt.Errorf("历史远端分页超过安全上限 %d", historyMaxPages)
 	}
 
 	// The local history model stores one row per series, while the remote
@@ -337,102 +320,13 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 			latestByID[row.SeriesID] = row
 		}
 	}
-	if len(latestByID) == 0 && !snapshotComplete {
-		return nil
-	}
-
-	var missingIDs []string
-	for id := range latestByID {
-		if s.store.HistoryDeleted(id) {
-			continue
-		}
-		if exist, ok := s.store.GetHistoryItem(id); ok && exist.Title != "" && exist.CoverURL != "" && exist.TotalEpisodes > 0 {
-			continue
-		}
-		missingIDs = append(missingIDs, id)
-	}
-
-	detailsMap := make(map[string]model.SeriesDetail)
-	if len(missingIDs) > 0 {
-		for i := 0; i < len(missingIDs); i += 100 {
-			end := i + 100
-			if end > len(missingIDs) {
-				end = len(missingIDs)
-			}
-			bCtx, bCancel := context.WithTimeout(ctx, 8*time.Second)
-			batch, bErr := s.client.GetSeriesBatch(bCtx, missingIDs[i:end])
-			bCancel()
-			if bErr == nil {
-				for _, b := range batch {
-					if b.Series != nil && b.Series.ID != "" {
-						detailsMap[b.Series.ID] = b
-					}
-				}
-			}
-		}
-	}
-
 	var histBatch []HistoryItem
 	remoteSnapshot := make([]HistoryItem, 0, len(latestByID))
-	resolvedRemote := 0
 	for _, it := range latestByID {
 		id := it.SeriesID
-		title := ""
-		cover := ""
-		epCount := 0
-		intro := ""
-		contentType := 1004
-		durationSec := 0.0
-
-		if detail, ok := detailsMap[id]; ok {
-			contentType = int(detail.Series.ContentType)
-			if detail.Series.Title != "" {
-				title = detail.Series.Title
-			}
-			cover = detail.Series.CoverURL
-			epCount = detail.Series.EpisodeCount
-			intro = detail.Series.Description
-		} else if exist, ok := s.store.GetHistoryItem(id); ok {
-			contentType = exist.ContentType
-			title = exist.Title
-			cover = exist.CoverURL
-			epCount = exist.TotalEpisodes
-			intro = exist.Intro
-			if exist.EpisodeNum == it.VidIndex+1 {
-				durationSec = exist.DurationSec
-			}
-		} else {
-			// Never synthesize placeholder metadata or progress values.
-			continue
-		}
-
-		if it.EpisodeCount > 0 {
-			epCount = it.EpisodeCount
-		}
 		epNum := it.VidIndex + 1
 		if epNum <= 0 {
 			epNum = 1
-		}
-		// The remote list has no reliable duration. Resolve the watched final
-		// episode through the existing SDK episode provider, never a guessed value.
-		if local, ok := s.store.GetHistoryItem(id); ok && local.EpisodeNum == epNum && local.DurationSec > 0 {
-			durationSec = local.DurationSec
-		}
-		if durationSec <= 0 && epCount > 0 && epNum == epCount {
-			if episodes, err := s.episodes(ctx, id); err == nil && episodes != nil {
-				for _, episode := range episodes.Items {
-					if episode.Number != epNum {
-						continue
-					}
-					durationSec = episode.Duration.Seconds()
-					if durationSec <= 0 && s.client != nil {
-						if playback, err := s.client.ResolvePlayback(ctx, episode.ID, sdk.PlaybackOptions{}); err == nil && playback != nil {
-							durationSec = float64(playback.DurationSeconds)
-						}
-					}
-					break
-				}
-			}
 		}
 		posSec := float64(it.CurrentPlayTime) / 1000
 		updatedAt := it.LastWatchTime / 1000
@@ -442,34 +336,44 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		exist, hasLocal := s.store.GetHistoryItem(id)
 		current := HistoryItem{
 			SeriesID:      id,
-			Title:         title,
-			CoverURL:      mediautil.NormalizeImageURL(cover),
+			Title:         "",
+			CoverURL:      "",
 			EpisodeNum:    epNum,
 			EpisodeTitle:  fmt.Sprintf("第%d集", epNum),
 			PositionSec:   posSec,
-			DurationSec:   durationSec,
-			TotalEpisodes: epCount,
+			TotalEpisodes: it.EpisodeCount,
 			UpdatedAt:     updatedAt,
-			Intro:         intro,
-			ContentType:   contentType,
+			ContentType:   1004,
 		}
-		if hasLocal && (pendingIDs[id] || exist.UpdatedAt >= updatedAt) {
-			current = exist
-			// Metadata enrichment must not roll back a newer local position.
-			if current.EpisodeNum == epNum && current.DurationSec <= 0 {
-				current.DurationSec = durationSec
+		if hasLocal {
+			if !historyTitleNeedsEnrichment(exist.Title, exist.EpisodeNum) {
+				current.Title = exist.Title
+			}
+			current.CoverURL = mediautil.NormalizeImageURL(exist.CoverURL)
+			current.Intro = exist.Intro
+			if exist.ContentType != 0 {
+				current.ContentType = exist.ContentType
 			}
 			if current.TotalEpisodes <= 0 {
-				current.TotalEpisodes = epCount
+				current.TotalEpisodes = exist.TotalEpisodes
+			}
+			if exist.EpisodeNum == epNum {
+				current.DurationSec = exist.DurationSec
+			}
+			if pendingIDs[id] || exist.UpdatedAt >= updatedAt {
+				current.EpisodeNum = exist.EpisodeNum
+				current.EpisodeTitle = exist.EpisodeTitle
+				current.PositionSec = exist.PositionSec
+				current.DurationSec = exist.DurationSec
+				current.UpdatedAt = exist.UpdatedAt
 			}
 		}
 		remoteSnapshot = append(remoteSnapshot, current)
-
 		histBatch = append(histBatch, current)
 	}
-	// Every remote row is represented in remoteSnapshot: either as a
-	// newly merged row or as the newer local row retained above.
-	resolvedRemote += len(remoteSnapshot)
+	if len(latestByID) == 0 && !snapshotComplete {
+		return readErr
+	}
 
 	historySettled := s.historySnapshotSettled()
 	s.historyMu.Lock()
@@ -477,34 +381,289 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		s.historyMu.Unlock()
 		return nil
 	}
-	// A complete remote response is authoritative only when no recent mutation
-	// is waiting for upstream visibility and every remote row can be
-	// represented without synthetic metadata. Otherwise merge now and let the
-	// next revalidation converge.
-	authoritative := processed == 0 && len(pendingIDs) == 0 && snapshotComplete && resolvedRemote == len(latestByID) && historySettled
+	// A snapshot can remove local-only rows only after every page is read and
+	// the local write queue and recent playback clock have settled.
+	authoritative := len(pendingIDs) == 0 && snapshotComplete && historySettled
+	var applied bool
 	var storeErr error
 	if authoritative {
-		storeErr = s.store.ReplaceHistoryBatch(remoteSnapshot, session.scope)
+		applied, storeErr = s.store.ReplaceHistoryBatchIfCurrentScope(remoteSnapshot, session.scope)
 	} else if len(histBatch) > 0 {
-		storeErr = s.store.SaveHistoryBatch(histBatch, session.scope)
+		applied, storeErr = s.store.SaveHistoryBatchIfCurrentScope(histBatch, session.scope)
 	}
 	if storeErr != nil {
 		s.historyMu.Unlock()
 		return storeErr
 	}
-
-	list, err := s.store.GetHistory()
-	if err != nil {
+	if !applied && (len(histBatch) > 0 || authoritative) {
 		s.historyMu.Unlock()
-		return err
+		return errSyncSessionChanged
 	}
-	for i := range list {
-		list[i].CoverURL = s.imageURL(list[i].CoverURL)
-	}
-	s.cachedHistory = list
-	s.historyCachedAt = time.Now()
 	s.historyMu.Unlock()
-	return nil
+
+	var metadataIDs []string
+	metadataResolverAvailable := s.seriesBatch != nil || s.series != nil
+	for _, item := range histBatch {
+		coreMetadataMissing := historyTitleNeedsEnrichment(item.Title, item.EpisodeNum) || strings.TrimSpace(item.CoverURL) == "" || item.TotalEpisodes <= 0
+		finalDurationMissing := item.TotalEpisodes > 0 && item.EpisodeNum == item.TotalEpisodes && item.DurationSec <= 0
+		if ((metadataResolverAvailable && coreMetadataMissing) || finalDurationMissing) && !s.store.HistoryDeleted(item.SeriesID) {
+			metadataIDs = append(metadataIDs, item.SeriesID)
+		}
+	}
+	if err := s.store.QueueHistoryMetadata(metadataIDs, session.scope); err != nil {
+		return errors.Join(readErr, err)
+	}
+	pendingMetadataCount, countErr := s.store.PendingHistoryMetadataCount(session.scope)
+	if countErr != nil {
+		return errors.Join(readErr, countErr)
+	}
+	if pendingMetadataCount > 0 {
+		s.scheduleHistoryMetadata(session)
+	}
+	if len(remoteRows) == 0 || !snapshotComplete || pendingMetadataCount > 0 {
+		log.Printf("[history] remote refresh pages=%d rows=%d series=%d merged=%d complete=%t metadata_pending=%d", pagesRead, len(remoteRows), len(latestByID), len(histBatch), snapshotComplete, pendingMetadataCount)
+	}
+	if _, err := s.historyFromStore(); err != nil {
+		return errors.Join(readErr, err)
+	}
+	if len(histBatch) > 0 || authoritative {
+		s.invalidateHistory()
+	}
+	return readErr
+}
+
+func historyMetadataNeedsEnrichment(item HistoryItem) bool {
+	coreMetadataMissing := historyTitleNeedsEnrichment(item.Title, item.EpisodeNum) || strings.TrimSpace(item.CoverURL) == "" || item.TotalEpisodes <= 0
+	finalDurationMissing := item.TotalEpisodes > 0 && item.EpisodeNum == item.TotalEpisodes && item.DurationSec <= 0
+	return coreMetadataMissing || finalDurationMissing
+}
+
+func historyMetadataComplete(item HistoryItem) bool {
+	coreMetadataComplete := !historyTitleNeedsEnrichment(item.Title, item.EpisodeNum) && strings.TrimSpace(item.CoverURL) != "" && item.TotalEpisodes > 0
+	finalDurationComplete := item.EpisodeNum != item.TotalEpisodes || item.DurationSec > 0
+	return coreMetadataComplete && finalDurationComplete
+}
+
+func (s *Service) scheduleHistoryMetadata(session syncSession) {
+	s.historyMetadataMu.Lock()
+	if s.historyMetadataSyncing {
+		s.historyMetadataWake = true
+		s.historyMetadataMu.Unlock()
+		return
+	}
+	s.historyMetadataSyncing = true
+	if s.historyMetadataTimer != nil {
+		s.historyMetadataTimer.Stop()
+		s.historyMetadataTimer = nil
+	}
+	s.historyMetadataMu.Unlock()
+	if !s.background.Go(func(ctx context.Context) {
+		defer func() {
+			s.historyMetadataMu.Lock()
+			s.historyMetadataSyncing = false
+			wake := s.historyMetadataWake
+			s.historyMetadataWake = false
+			s.historyMetadataMu.Unlock()
+			current := s.currentSyncSession()
+			if wake && current.cookies != "" {
+				s.scheduleHistoryMetadata(current)
+			}
+		}()
+		for s.syncSessionCurrent(session) {
+			if err := s.syncHistoryMetadata(ctx, session); err != nil {
+				log.Printf("[history] metadata enrichment failed: %v", err)
+			}
+			next, pending, err := s.store.NextHistoryMetadataAttempt(session.scope)
+			if err != nil {
+				log.Printf("[history] metadata retry state read failed: %v", err)
+				return
+			}
+			if pending {
+				delay := time.Until(next)
+				if delay < 0 {
+					delay = time.Second
+				}
+				s.historyMetadataMu.Lock()
+				s.historyMetadataTimer = time.AfterFunc(delay, func() {
+					if s.syncSessionCurrent(session) {
+						s.scheduleHistoryMetadata(session)
+					}
+				})
+				s.historyMetadataMu.Unlock()
+			}
+			return
+		}
+	}) {
+		s.historyMetadataMu.Lock()
+		s.historyMetadataSyncing = false
+		s.historyMetadataMu.Unlock()
+	}
+}
+
+func (s *Service) syncHistoryMetadata(ctx context.Context, session syncSession) error {
+	var failures []error
+	for {
+		if err := ctx.Err(); err != nil {
+			failures = append(failures, err)
+			break
+		}
+		pending, err := s.store.PendingHistoryMetadata(historyDetailBatchSize, session.scope, time.Now())
+		if err != nil {
+			return errors.Join(append(failures, err)...)
+		}
+		if len(pending) == 0 {
+			break
+		}
+		if !s.syncSessionCurrent(session) {
+			return errors.Join(append(failures, errSyncSessionChanged)...)
+		}
+
+		ids := make([]string, len(pending))
+		for i := range pending {
+			ids[i] = pending[i].SeriesID
+		}
+		var details []model.SeriesDetail
+		var requestErr error
+		if s.seriesBatch != nil {
+			requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			details, requestErr = s.seriesBatch(requestCtx, ids)
+			cancel()
+		} else {
+			requestErr = errors.New("历史元数据批量接口不可用")
+		}
+
+		byID := make(map[string]model.SeriesDetail, len(details))
+		for _, detail := range details {
+			if detail.Series != nil && detail.Series.ID != "" {
+				byID[detail.Series.ID] = detail
+			}
+		}
+		var completed, retry []userstore.PendingHistoryMetadata
+		for _, job := range pending {
+			local, exists := s.store.GetHistoryItem(job.SeriesID)
+			if !exists || s.store.HistoryDeleted(job.SeriesID) {
+				completed = append(completed, job)
+				continue
+			}
+			detail, exists := byID[job.SeriesID]
+			if s.series != nil && (requestErr != nil || !exists || detail.Series == nil) {
+				fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 8*time.Second)
+				series, fallbackErr := s.series(fallbackCtx, job.SeriesID)
+				fallbackCancel()
+				if fallbackErr == nil && series != nil {
+					series.ID = job.SeriesID
+					detail.Series = series
+					detail.Episodes = nil
+					exists = true
+				} else if errors.Is(fallbackErr, hgapi.ErrContentUnavailable) {
+					if err := s.store.MarkHistoryMetadataUnavailable(job, "该剧集已下架", time.Now().Add(7*24*time.Hour)); err != nil {
+						failures = append(failures, err)
+						retry = append(retry, job)
+						continue
+					}
+					completed = append(completed, job)
+					continue
+				} else if fallbackErr != nil {
+					failures = append(failures, fmt.Errorf("历史 %s 单剧详情补全失败: %w", job.SeriesID, fallbackErr))
+				}
+			}
+			if (s.seriesBatch != nil || s.series != nil) && (!exists || detail.Series == nil) {
+				retry = append(retry, job)
+				continue
+			}
+			metadata := HistoryItem{
+				SeriesID:   job.SeriesID,
+				EpisodeNum: local.EpisodeNum,
+			}
+			if detail.Series != nil {
+				metadata.Title = detail.Series.Title
+				metadata.CoverURL = detail.Series.CoverURL
+				metadata.Intro = detail.Series.Description
+				metadata.TotalEpisodes = detail.Series.EpisodeCount
+				metadata.ContentType = int(detail.Series.ContentType)
+			}
+			for _, episode := range detail.Episodes {
+				if episode.Number == local.EpisodeNum {
+					metadata.DurationSec = episode.Duration.Seconds()
+					break
+				}
+			}
+			if metadata.DurationSec <= 0 && (local.EpisodeNum == local.TotalEpisodes || local.DurationSec <= 0) {
+				episodeCtx, episodeCancel := context.WithTimeout(ctx, 8*time.Second)
+				episodes, episodeErr := s.episodes(episodeCtx, job.SeriesID)
+				episodeCancel()
+				if episodeErr == nil && episodes != nil {
+					for _, episode := range episodes.Items {
+						if episode.Number == local.EpisodeNum {
+							metadata.DurationSec = episode.Duration.Seconds()
+							break
+						}
+					}
+				}
+			}
+			applied, err := s.store.EnrichHistoryMetadataIfCurrentScope(job.SeriesID, metadata, session.scope)
+			if err != nil {
+				failures = append(failures, err)
+				retry = append(retry, job)
+				continue
+			}
+			if !applied {
+				if !s.syncSessionCurrent(session) {
+					return errors.Join(append(failures, errSyncSessionChanged)...)
+				}
+				completed = append(completed, job)
+				continue
+			}
+			local, exists = s.store.GetHistoryItem(job.SeriesID)
+			if exists && historyMetadataComplete(local) {
+				completed = append(completed, job)
+			} else {
+				retry = append(retry, job)
+			}
+		}
+		if err := s.store.AckHistoryMetadata(completed); err != nil {
+			failures = append(failures, err)
+		}
+		if len(retry) > 0 {
+			s.retryHistoryMetadata(retry)
+			failures = append(failures, fmt.Errorf("%d 条历史记录仍缺少剧名或封面", len(retry)))
+		}
+		if len(completed) > 0 {
+			if _, err := s.historyFromStore(); err != nil {
+				failures = append(failures, err)
+			} else {
+				s.invalidateHistory()
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (s *Service) retryHistoryMetadata(pending []userstore.PendingHistoryMetadata) {
+	maxAttempts := 0
+	for _, item := range pending {
+		maxAttempts = max(maxAttempts, item.Attempts+1)
+	}
+	delay := 30 * time.Second * time.Duration(1<<min(maxAttempts-1, 6))
+	if delay > 30*time.Minute {
+		delay = 30 * time.Minute
+	}
+	if err := s.store.RetryHistoryMetadata(pending, time.Now().Add(delay)); err != nil {
+		log.Printf("[history] metadata retry state save failed: %v", err)
+	}
+}
+
+func historyTitleNeedsEnrichment(title string, episodeNum int) bool {
+	title = strings.TrimSpace(title)
+	if title == "" || title == "未知短剧" {
+		return true
+	}
+	if !strings.HasPrefix(title, "第") || !strings.HasSuffix(title, "集") {
+		return false
+	}
+	number := strings.TrimSuffix(strings.TrimPrefix(title, "第"), "集")
+	_, err := strconv.Atoi(number)
+	return err == nil
 }
 
 func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error) {
@@ -663,62 +822,12 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) er
 	if !s.syncSessionCurrent(session) {
 		return nil
 	}
-	userCookies, userToken := session.cookies, session.token
-	deviceID, iid, _, _ := s.deviceIdentity()
-	q := url.Values{
-		"aid":             {"8662"},
-		"app_name":        {"novelread"},
-		"version_code":    {"73932"},
-		"device_platform": {"android"},
-		"device_id":       {deviceID},
-		"iid":             {iid},
-	}
-	reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/bookshelf/video/list/v?" + q.Encode()
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	api := s.apiForSession(session)
+	shelfResp, err := api.Favorites(ctx)
 	if err != nil {
 		return err
-	}
-	req.Header.Set("User-Agent", s.userAgentValue())
-	if userCookies != "" {
-		req.Header.Set("Cookie", userCookies)
-	}
-	if userToken != "" {
-		req.Header.Set("x-tt-token", userToken)
-	}
-	req.Header.Set("x-tt-store-region", s.storeRegionValue())
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("收藏书架接口返回 HTTP %d", resp.StatusCode)
 	}
 
-	var shelfResp struct {
-		Code    *int `json:"code"`
-		HasMore bool `json:"has_more"`
-		Data    *struct {
-			HasMore        bool `json:"has_more"`
-			VideoShelfInfo *[]struct {
-				SeriesID   string `json:"series_id"`
-				ModifyTime int64  `json:"modify_time"`
-			} `json:"video_shelf_info"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &shelfResp); err != nil {
-		return fmt.Errorf("收藏书架响应解析失败: %w", err)
-	}
-	if shelfResp.Code == nil || *shelfResp.Code != 0 || shelfResp.Data == nil ||
-		shelfResp.Data.VideoShelfInfo == nil || shelfResp.HasMore || shelfResp.Data.HasMore {
-		return fmt.Errorf("收藏书架返回不完整")
-	}
 	shelf := *shelfResp.Data.VideoShelfInfo
 
 	// The shelf response is authoritative only after every remote ID can be
@@ -1036,78 +1145,10 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 		if !s.syncSessionCurrent(session) {
 			return nil, errSyncSessionChanged
 		}
-		deviceID, iid, cdid, openudid := s.deviceIdentity()
-		pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
-			[2]string{"action_type", "3"},
-			[2]string{"count", "100"},
-			[2]string{"offset", strconv.Itoa(offset)},
-			[2]string{"object_type_list", "6,15,10"},
-		)
-		ticket := time.Now().UnixMilli()
-		rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
-		reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/ugc/action/mget/v1/?" + rawQuery
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		api := s.apiForSession(session)
+		res, err := api.Likes(ctx, offset)
 		if err != nil {
 			return nil, err
-		}
-		for key, value := range sigHeaders {
-			req.Header.Set(key, value)
-		}
-		req.Header.Set("Cookie", session.cookies)
-		if session.token != "" {
-			req.Header.Set("x-tt-token", session.token)
-		}
-		req.Header.Set("User-Agent", s.userAgentValue())
-		req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
-
-		resp, err := s.httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("点赞接口返回 HTTP %d", resp.StatusCode)
-		}
-
-		var res struct {
-			Code    *int `json:"code"`
-			HasMore bool `json:"has_more"`
-			Data    *struct {
-				HasMore       bool `json:"has_more"`
-				NextOffset    int  `json:"next_offset"`
-				MixedDataList []struct {
-					SeriesID       string `json:"series_id"`
-					BookID         string `json:"book_id"`
-					SeriesTitle    string `json:"series_title"`
-					SeriesCoverURL string `json:"series_cover_url"`
-					SeriesIntro    string `json:"series_intro"`
-					VideoData      struct {
-						SeriesID    string `json:"series_id"`
-						Vid         string `json:"vid"`
-						Title       string `json:"title"`
-						Cover       string `json:"cover"`
-						CoverURL    string `json:"cover_url"`
-						ThumbURL    string `json:"thumb_url"`
-						Description string `json:"video_desc"`
-						EpisodeCnt  int    `json:"episode_cnt"`
-						DiggTime    int64  `json:"user_digg_timestamp_ms"`
-						CreateTime  int64  `json:"create_time"`
-						Detail      struct {
-							SeriesTitle string `json:"series_title"`
-						} `json:"video_detail"`
-					} `json:"video_data"`
-				} `json:"mixed_data_list"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(body, &res); err != nil {
-			return nil, err
-		}
-		if res.Code == nil || *res.Code != 0 || res.Data == nil || res.Data.MixedDataList == nil {
-			return nil, fmt.Errorf("点赞接口返回不完整或业务失败")
 		}
 
 		for _, row := range res.Data.MixedDataList {
@@ -1157,101 +1198,9 @@ func (s *Service) requestEpisodeLikeMutation(ctx context.Context, seriesID, epis
 	if err != nil {
 		return err
 	}
-	userCookies, userToken := session.cookies, session.token
-	actionType := 3
-	if !liked {
-		actionType = 4
-	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-
-	raw, err := json.Marshal(map[string]any{
-		"action_category":      1,
-		"action_reason_remark": "like_click",
-		"action_type":          actionType,
-		"business_param": map[string]any{
-			"book_id":          0,
-			"has_aigc_content": false,
-			"modify_count":     0,
-			"video_id":         seriesID,
-			"shark_param": map[string]any{
-				"enter_from":    "MainFragmentActivity",
-				"page_list":     "MainFragmentActivity",
-				"previous_page": "",
-			},
-		},
-		"object_id":   episodeID,
-		"object_type": 6,
-	})
-	if err != nil {
-		return err
-	}
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed)
-	if _, err := writer.Write(raw); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-
-	path := "/novel/articleapi/do_action/v1/"
-	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
-	ticket := time.Now().UnixMilli()
-	rawQuery, sigHeaders := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", compressed.Bytes(), nil)
-	var nonce [4]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(
-		ctx, http.MethodPost,
-		"https://api5-normal-lq.fqnovel.com"+path+"?"+rawQuery,
-		bytes.NewReader(compressed.Bytes()),
-	)
-	if err != nil {
-		return err
-	}
-	for key, value := range sigHeaders {
-		req.Header.Set(key, value)
-	}
-	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("X-SS-DP", "8662")
-	req.Header.Set("Lc", "101")
-	req.Header.Set("X-Reading-Request", fmt.Sprintf("%d-%d", ticket, binary.LittleEndian.Uint32(nonce[:])))
-	req.Header.Set("Cookie", userCookies)
-	if userToken != "" {
-		req.Header.Set("x-tt-token", userToken)
-	}
-	req.Header.Set("User-Agent", s.userAgentValue())
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("点赞接口返回 HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("点赞响应解析失败: %w", err)
-	}
-	if result.Code != 0 {
-		message := strings.TrimSpace(result.Message)
-		if message == "" {
-			message = "unknown error"
-		}
-		return fmt.Errorf("点赞失败: %s", message)
-	}
-	return nil
+	return s.apiForSession(session).SetEpisodeLike(ctx, seriesID, episodeID, liked)
 }
 
 func (s *Service) ToggleReservation(ctx context.Context, seriesID, title, coverURL, note, publishAt string) (bool, error) {
@@ -1312,96 +1261,9 @@ func (s *Service) requestReservationMutation(ctx context.Context, seriesID strin
 	if err != nil {
 		return err
 	}
-	userCookies, userToken := session.cookies, session.token
-	itemID, err := strconv.ParseInt(seriesID, 10, 64)
-	if err != nil || itemID <= 0 {
-		return fmt.Errorf("预约编号无效")
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-
-	raw, err := json.Marshal(map[string]any{
-		"item_id":   itemID,
-		"item_type": 1,
-		"op_type":   opType,
-		"shark_param": map[string]any{
-			"enter_from":    "BulletActivity",
-			"previous_page": "MainFragmentActivity",
-			"page_list":     "MainFragmentActivity,BulletActivity",
-		},
-		"wish_list_all_del": 0,
-	})
-	if err != nil {
-		return err
-	}
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed)
-	if _, err := writer.Write(raw); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-
-	path := "/reading/bookapi/search/uncover_subscribe/v"
-	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
-	ticket := time.Now().UnixMilli()
-	rawQuery, headers := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", compressed.Bytes(), nil)
-	var nonce [4]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		"https://api5-normal-lq.fqnovel.com"+path+"?"+rawQuery,
-		bytes.NewReader(compressed.Bytes()),
-	)
-	if err != nil {
-		return err
-	}
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("X-SS-DP", "8662")
-	req.Header.Set("Lc", "101")
-	req.Header.Set("X-Reading-Request", fmt.Sprintf("%d-%d", time.Now().UnixMilli(), binary.LittleEndian.Uint32(nonce[:])))
-	req.Header.Set("Cookie", userCookies)
-	if userToken != "" {
-		req.Header.Set("x-tt-token", userToken)
-	}
-	req.Header.Set("User-Agent", s.userAgentValue())
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("reservation API returned %d", resp.StatusCode)
-	}
-	var result struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("reservation API returned invalid JSON: %w", err)
-	}
-	if result.Code != 0 {
-		message := strings.TrimSpace(result.Message)
-		if message == "" {
-			message = "unknown error"
-		}
-		return fmt.Errorf("reservation API code %d: %s", result.Code, message)
-	}
-	return nil
+	return s.apiForSession(session).SetReservation(ctx, seriesID, opType)
 }
 
 func (s *Service) GetReservations(ctx context.Context) ([]ReservationItem, error) {
@@ -1570,7 +1432,6 @@ func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]
 	if err != nil {
 		return nil, err
 	}
-	userCookies, userToken := session.cookies, session.token
 	var results []ReservationItem
 	offset := 0
 
@@ -1578,74 +1439,10 @@ func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]
 		if !s.syncSessionCurrent(session) {
 			return nil, errSyncSessionChanged
 		}
-		deviceID, iid, cdid, openudid := s.deviceIdentity()
-		pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
-			[2]string{"order_experiment", "descend"},
-			[2]string{"offset", strconv.Itoa(offset)},
-			// tab_type=13 is the account reservation tab; tab_type=5 is the public
-			// release calendar that shares this endpoint.
-			[2]string{"tab_type", "13"},
-			[2]string{"is_online", strconv.FormatBool(online)},
-		)
-
-		ticket := time.Now().UnixMilli()
-		rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
-		reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/user/subscribe/list/v1/?" + rawQuery
-		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		api := s.apiForSession(session)
+		res, err := api.Reservations(ctx, offset, online)
 		if err != nil {
 			return nil, err
-		}
-		for k, v := range sigHeaders {
-			req.Header.Set(k, v)
-		}
-		req.Header.Set("Cookie", userCookies)
-		if userToken != "" {
-			req.Header.Set("x-tt-token", userToken)
-		}
-		req.Header.Set("User-Agent", s.userAgentValue())
-		req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
-
-		resp, err := s.httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("reservation API returned %d", resp.StatusCode)
-		}
-
-		var res struct {
-			Code *int `json:"code"`
-			Data *struct {
-				HasMore    bool `json:"has_more"`
-				NextOffset int  `json:"next_offset"`
-				Items      []struct {
-					ItemID       string `json:"item_id"`
-					Name         string `json:"name"`
-					SubInfo      string `json:"sub_info"`
-					Cover        string `json:"cover"`
-					IsOnline     bool   `json:"is_online"`
-					Expected     string `json:"expected_rec_text"`
-					ScheduleTime int64  `json:"schedule_publish_time"`
-					PlannedTime  int64  `json:"expected_publish_time"`
-					Row          *struct {
-						ID    string `json:"series_id"`
-						IDStr string `json:"series_id_str"`
-						Title string `json:"title"`
-						Cover string `json:"cover"`
-					} `json:"subscribe_data"`
-				} `json:"subscribe_items"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(body, &res); err != nil {
-			return nil, err
-		}
-		if res.Code == nil || *res.Code != 0 || res.Data == nil || res.Data.Items == nil {
-			return nil, fmt.Errorf("预约接口返回不完整或业务失败")
 		}
 
 		for _, it := range res.Data.Items {

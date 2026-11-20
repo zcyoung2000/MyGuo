@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 	"myguo/internal/store"
 )
 
@@ -28,11 +28,11 @@ const (
 
 var ErrNoDeviceAvailable = errors.New("no spare device available")
 
-type PlaybackResolver func(ctx context.Context, episodeID string, options sdk.PlaybackOptions) (*model.Playback, error)
+type PlaybackResolver func(ctx context.Context, episodeID string, options hgapi.PlaybackOptions) (*model.Playback, error)
 
-type ClientFactory func(profile sdk.ProfileStore) (PlaybackResolver, error)
+type ClientFactory func(profile hgapi.ProfileStore) (PlaybackResolver, error)
 
-type ClientConstructor func(sdk.Options) (*sdk.Client, error)
+type ClientConstructor func(hgapi.Options) (*hgapi.Client, error)
 
 type Manager struct {
 	store            *store.Store
@@ -47,13 +47,13 @@ type Manager struct {
 
 type Option func(*Manager)
 
-func WithClientConstructor(constructor ClientConstructor, transport sdk.Transport) Option {
+func WithClientConstructor(constructor ClientConstructor, transport hgapi.Transport) Option {
 	return func(m *Manager) {
-		m.factory = func(profile sdk.ProfileStore) (PlaybackResolver, error) {
+		m.factory = func(profile hgapi.ProfileStore) (PlaybackResolver, error) {
 			// Pool identities and their failure budget belong to the manager;
 			// SDK recovery must not independently replace a borrowed device.
 			noResets := 0
-			client, err := constructor(sdk.Options{Transport: transport, ProfileStore: profile, DeviceResets: &noResets})
+			client, err := constructor(hgapi.Options{Transport: transport, ProfileStore: profile, DeviceResets: &noResets})
 			if err != nil {
 				return nil, err
 			}
@@ -118,8 +118,8 @@ type profileStore struct {
 	now    func() time.Time
 }
 
-func (p profileStore) Load(context.Context) (*sdk.DeviceProfile, error) {
-	profile := sdk.DeviceProfile{
+func (p profileStore) Load(context.Context) (*hgapi.DeviceProfile, error) {
+	profile := hgapi.DeviceProfile{
 		CDID:      p.device.CDID,
 		OpenUDID:  p.device.OpenUDID,
 		DeviceID:  p.device.DeviceID,
@@ -139,8 +139,8 @@ func (p profileStore) Load(context.Context) (*sdk.DeviceProfile, error) {
 	return &profile, nil
 }
 
-func (p profileStore) Save(context.Context, *sdk.DeviceProfile) error { return nil }
-func (p profileStore) Reset(context.Context) error                    { return nil }
+func (p profileStore) Save(context.Context, *hgapi.DeviceProfile) error { return nil }
+func (p profileStore) Reset(context.Context) error                      { return nil }
 
 func deterministicID(prefix, deviceID string) string {
 	var raw [16]byte
@@ -152,8 +152,8 @@ func deterministicID(prefix, deviceID string) string {
 }
 
 func IsSwitchablePlaybackFailure(err error) bool {
-	return errors.Is(err, sdk.ErrAnonymousLimited) ||
-		errors.Is(err, sdk.ErrRateLimited) ||
+	return errors.Is(err, hgapi.ErrAnonymousLimited) ||
+		errors.Is(err, hgapi.ErrRateLimited) ||
 		errors.Is(err, context.DeadlineExceeded) ||
 		(err != nil && strings.Contains(strings.ToLower(err.Error()), "empty playback"))
 }
@@ -171,8 +171,8 @@ func (m *Manager) ResolveForSession(ctx context.Context, session, episodeID stri
 
 	if deviceID != "" {
 		if resolver, device, err := m.resolverForDevice(deviceID); err == nil {
-			playback, resolveErr := resolver(ctx, episodeID, sdk.PlaybackOptions{})
-			if playback != nil && playback.Protected && len(playback.Streams) > 0 && errors.Is(resolveErr, sdk.ErrDRMProtected) {
+			playback, resolveErr := resolver(ctx, episodeID, hgapi.PlaybackOptions{})
+			if playback != nil && playback.Protected && len(playback.Streams) > 0 && errors.Is(resolveErr, hgapi.ErrDRMProtected) {
 				resolveErr = nil // A usable encrypted model is decrypted by MediaServer.
 			}
 			m.note(session, episodeID, cause, device.DeviceID, resolveErr)
@@ -192,8 +192,8 @@ func (m *Manager) ResolveForSession(ctx context.Context, session, episodeID stri
 		m.releaseWithFailure(session, device.DeviceID, err)
 		return nil, err
 	}
-	playback, resolveErr := resolver(ctx, episodeID, sdk.PlaybackOptions{})
-	if playback != nil && playback.Protected && len(playback.Streams) > 0 && errors.Is(resolveErr, sdk.ErrDRMProtected) {
+	playback, resolveErr := resolver(ctx, episodeID, hgapi.PlaybackOptions{})
+	if playback != nil && playback.Protected && len(playback.Streams) > 0 && errors.Is(resolveErr, hgapi.ErrDRMProtected) {
 		resolveErr = nil
 	}
 	m.note(session, episodeID, cause, device.DeviceID, resolveErr)

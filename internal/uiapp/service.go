@@ -619,7 +619,11 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	provider := a.libraryProvider()
 	a.invalidate()
 	a.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+	timeout := serviceTimeout
+	if tab == libraryHistory && refresh {
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var items []CatalogItem
 	var err error
@@ -655,8 +659,14 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	library.Loading = false
 	if err != nil {
 		library.Error = "数据加载失败，请稍后重试"
+		if tab == libraryHistory {
+			library.Error = historySyncErrorCopy(err)
+		}
 		log.Printf("[library] tab=%d load failed: %v", tab, err)
-		return
+		if len(items) == 0 {
+			a.invalidate()
+			return
+		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if tab == libraryReservations {
@@ -665,10 +675,27 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 		return items[i].Rank < items[j].Rank
 	})
 	a.error = ""
-	library.Items, library.Empty, library.Loaded = items, len(items) == 0, true
+	library.Items, library.Empty, library.Loaded = items, len(items) == 0 && err == nil, true
 	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
 	a.refreshVisibleLibraryLocked(tab)
 	a.invalidate()
+}
+
+func historySyncErrorCopy(err error) string {
+	if err == nil {
+		return ""
+	}
+	var messages []string
+	if strings.Contains(err.Error(), "本机播放进度待上传") {
+		messages = append(messages, "本机播放进度待上传，失败任务会保留并重试")
+	}
+	if strings.Contains(err.Error(), "历史远端") {
+		messages = append(messages, "云端历史读取未完成，已读取和本机记录均已保留")
+	}
+	if len(messages) == 0 {
+		messages = append(messages, "历史同步未完成，已有记录已保留")
+	}
+	return strings.Join(messages, "；")
 }
 func (a *App) libraryProvider() libraryProvider {
 	if a.libraryData != nil {
@@ -717,18 +744,11 @@ func convertCards(cards []ipc.SeriesCard) []CatalogItem {
 }
 
 func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
-	if err != nil {
-		return nil, err
-	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
 		title := item.Title
-		if title == "" {
-			if item.EpisodeNum > 0 {
-				title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
-			} else {
-				title = "未知短剧"
-			}
+		if title == "" || isHistoryPlaceholderTitle(title) {
+			title = "剧名待补全 · " + item.SeriesID
 		}
 		out = append(out, CatalogItem{
 			ID: item.SeriesID, Title: title,
@@ -737,7 +757,16 @@ func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
 			UpdatedAt: item.UpdatedAt, Progress: historyPercent(item.PositionSec, float64(item.DurationSec)), Completed: item.TotalEpisodes > 0 && item.EpisodeNum == item.TotalEpisodes && historyPercent(item.PositionSec, float64(item.DurationSec)) >= 95,
 		})
 	}
-	return out, nil
+	return out, err
+}
+
+func isHistoryPlaceholderTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	if !strings.HasPrefix(title, "第") || !strings.HasSuffix(title, "集") {
+		return false
+	}
+	_, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(title, "第"), "集"))
+	return err == nil
 }
 
 func convertFavorites(items []ipc.FavoriteItem, err error) ([]CatalogItem, error) {

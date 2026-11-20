@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk"
-	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/model"
 )
 
 func anonymousUserProfile(deviceID string) UserProfile {
@@ -22,7 +22,7 @@ func anonymousUserProfile(deviceID string) UserProfile {
 func clearUserDataTx(tx *sql.Tx) error {
 	for _, table := range []string{
 		"history", "favorites", "likes", "reservations",
-		"history_tombstones", "history_clear_state",
+		"history_tombstones", "history_clear_state", "local_history_retention",
 	} {
 		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
 			return err
@@ -33,7 +33,7 @@ func clearUserDataTx(tx *sql.Tx) error {
 
 type SQLiteProfileStore struct {
 	store     *Store
-	savedHook func(*sdk.DeviceProfile)
+	savedHook func(*hgapi.DeviceProfile)
 }
 
 // ProfileStore adapts the SQLite identity tables to the SDK interface.
@@ -41,15 +41,15 @@ func (s *Store) ProfileStore() *SQLiteProfileStore { return &SQLiteProfileStore{
 
 // SetSavedHook lets the desktop service refresh its in-memory identity after
 // the SDK registers or updates the SQLite-backed profile.
-func (p *SQLiteProfileStore) SetSavedHook(hook func(*sdk.DeviceProfile)) {
+func (p *SQLiteProfileStore) SetSavedHook(hook func(*hgapi.DeviceProfile)) {
 	p.savedHook = hook
 }
 
-func (p *SQLiteProfileStore) Load(ctx context.Context) (*sdk.DeviceProfile, error) {
+func (p *SQLiteProfileStore) Load(ctx context.Context) (*hgapi.DeviceProfile, error) {
 	return p.store.LoadDeviceProfile(ctx)
 }
 
-func (p *SQLiteProfileStore) Save(ctx context.Context, profile *sdk.DeviceProfile) error {
+func (p *SQLiteProfileStore) Save(ctx context.Context, profile *hgapi.DeviceProfile) error {
 	if err := p.store.SaveDeviceProfile(ctx, profile); err != nil {
 		return err
 	}
@@ -167,12 +167,12 @@ func updateProfileTx(tx *sql.Tx, p UserProfile) error {
 	return err
 }
 
-func (s *Store) LoadDeviceProfile(context.Context) (*sdk.DeviceProfile, error) {
+func (s *Store) LoadDeviceProfile(context.Context) (*hgapi.DeviceProfile, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var (
-		p       sdk.DeviceProfile
+		p       hgapi.DeviceProfile
 		created int64
 		d       model.Device
 		pad     int
@@ -192,7 +192,7 @@ func (s *Store) LoadDeviceProfile(context.Context) (*sdk.DeviceProfile, error) {
 		&d.Build, &d.Resolution, &d.DPI, &pad, &d.Channel,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, sdk.ErrProfileNotFound
+		return nil, hgapi.ErrProfileNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -208,9 +208,9 @@ func (s *Store) LoadDeviceProfile(context.Context) (*sdk.DeviceProfile, error) {
 	return &p, nil
 }
 
-func (s *Store) SaveDeviceProfile(_ context.Context, profile *sdk.DeviceProfile) error {
+func (s *Store) SaveDeviceProfile(_ context.Context, profile *hgapi.DeviceProfile) error {
 	if profile == nil {
-		return sdk.ErrInvalidOptions
+		return hgapi.ErrInvalidOptions
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -363,10 +363,10 @@ func (s *Store) migrateOwnDeviceJSON() error {
 
 	if _, err := s.LoadDeviceProfile(context.Background()); err == nil {
 		return removeMigratedJSON(path)
-	} else if !errors.Is(err, sdk.ErrProfileNotFound) {
+	} else if !errors.Is(err, hgapi.ErrProfileNotFound) {
 		return err
 	}
-	var profile sdk.DeviceProfile
+	var profile hgapi.DeviceProfile
 	if err := json.Unmarshal(data, &profile); err != nil || profile.CDID == "" {
 		log.Printf("[device] legacy anonymous.json was invalid; removing it")
 		return retireInvalidJSON(path)
