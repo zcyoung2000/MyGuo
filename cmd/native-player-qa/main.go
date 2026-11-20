@@ -34,6 +34,34 @@ type fixtures struct {
 	resolveDelay    time.Duration
 }
 
+// heldNativeStart deterministically reproduces a decoded, buffered first frame
+// whose native clock remains stopped. Only a fresh local asset releases it.
+type heldNativeStart struct {
+	avkit.Player
+	loads atomic.Int32
+	held  atomic.Bool
+}
+
+func (p *heldNativeStart) Load(url string) error {
+	p.loads.Add(1)
+	return p.Player.Load(url)
+}
+func (p *heldNativeStart) Play() {
+	if p.loads.Load() == 1 && p.held.Load() {
+		return
+	}
+	p.Player.Play()
+}
+func (p *heldNativeStart) Snapshot() avkit.Status {
+	s := p.Player.Snapshot()
+	if p.loads.Load() == 1 && s.Ready {
+		p.held.Store(true)
+		p.Player.Pause()
+		s.Position, s.Playing, s.Buffering = 0, false, false
+	}
+	return s
+}
+
 func (b *fixtures) PlaybackScope() string { return "" }
 func (b *fixtures) FlushPendingProgress() {}
 func (b *fixtures) SaveProgress(ctx context.Context, id, ep, title, cover string, num, total int, pos, duration float64) error {
@@ -132,6 +160,9 @@ func main() {
 	trace := flag.Bool("trace", false, "log playback clock once per second")
 	root := flag.String("data", "/tmp/myguo-native-player/qa", "isolated test data")
 	exercisePIP := flag.Bool("exercise-pip", false, "verify native PiP handoff and restore")
+	exerciseFeed := flag.Bool("exercise-feed", false, "verify native autoplay after paused forward and reverse feed selections")
+	exerciseSeek := flag.Bool("exercise-seek", false, "verify paused and playing seeks preserve playback intent")
+	exerciseBufferedStart := flag.Bool("exercise-buffered-start", false, "hold the first decoded frame and verify one local HLS reopen recovers it")
 	quitAfter := flag.Duration("quit-after", 0, "exercise graceful quit after this duration")
 	resolveDelay := flag.Duration("resolve-delay", 0, "delay local source resolution for first-frame material QA")
 	flag.Parse()
@@ -152,7 +183,17 @@ func main() {
 		p.Volume = .02
 		_ = playback.SavePreferences(path, p)
 	}
-	controller := playback.New(b, avkit.NewPlayer, path, playback.Hooks{Changed: app.PlaybackChanged, Fullscreen: native.ToggleWindowFullscreen, System: func(s playback.State) { native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "") }, LibraryChanged: func() {}})
+	factory := avkit.NewPlayer
+	if *exerciseBufferedStart {
+		factory = func() (avkit.Player, error) {
+			p, err := avkit.NewPlayer()
+			if err != nil {
+				return nil, err
+			}
+			return &heldNativeStart{Player: p}, nil
+		}
+	}
+	controller := playback.New(b, factory, path, playback.Hooks{Changed: app.PlaybackChanged, Fullscreen: native.ToggleWindowFullscreen, System: func(s playback.State) { native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "") }, LibraryChanged: func() {}})
 	defer controller.Close()
 	host := uiapp.NewNativeMediaHost(controller)
 	app.SetMediaHost(host)
@@ -195,11 +236,28 @@ func main() {
 		})
 		w.OnClosed(native.Cleanup)
 		w.Show()
+		mygo.App.Focus()
 		w.Focus()
 		if *quitAfter > 0 {
 			time.AfterFunc(*quitAfter, func() { mygo.App.Quit() })
 		}
 		go app.OpenView("recommend")
+		if *exerciseBufferedStart {
+			go func() {
+				deadline := time.Now().Add(8 * time.Second)
+				for time.Now().Before(deadline) {
+					s := controller.Snapshot()
+					if p, ok := s.Engine.(*heldNativeStart); ok && p.loads.Load() == 2 && s.Status.Ready && s.Status.Playing && s.Status.Position > .2 && !s.Loading {
+						log.Printf("[qa-start] buffered first-frame recovery passed elapsedMs=%d loads=%d", s.FirstFrameMS, p.loads.Load())
+						mygo.App.Quit()
+						return
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+				log.Printf("[qa-start] buffered first-frame recovery FAILED: %+v", controller.Snapshot().Status)
+				mygo.App.Quit()
+			}()
+		}
 		if *trace {
 			go func() {
 				for range time.NewTicker(time.Second).C {
@@ -209,6 +267,64 @@ func main() {
 					}
 					log.Printf("[qa-clock] episode=%d position=%.2f duration=%.2f buffered=%.2f paused=%t buffering=%t ended=%t error=%q", s.Playback.EpisodeNum, s.Status.Position, s.Status.Duration, s.Status.Buffered, s.Paused, s.Status.Buffering, s.Status.Ended, s.Error)
 				}
+			}()
+		}
+		if *exerciseSeek {
+			go func() {
+				wait := func(label string, condition func(playback.State) bool) bool {
+					deadline := time.Now().Add(8 * time.Second)
+					for time.Now().Before(deadline) {
+						if condition(controller.Snapshot()) {
+							log.Printf("[qa-seek] %s passed", label)
+							return true
+						}
+						time.Sleep(50 * time.Millisecond)
+					}
+					log.Printf("[qa-seek] %s FAILED: %+v", label, controller.Snapshot().Status)
+					return false
+				}
+				playing := func(s playback.State) bool {
+					return s.Status.Ready && s.Status.Playing && !s.Paused && !s.Status.Buffering
+				}
+				if !wait("initial playback", func(s playback.State) bool { return playing(s) && s.Status.Position > 1 }) {
+					return
+				}
+				controller.Command("pause", nil)
+				if !wait("explicit pause", func(s playback.State) bool { return s.Paused && !s.Status.Playing }) {
+					return
+				}
+				controller.Command("seek", 31.25)
+				pausedAtTarget := func(s playback.State) bool {
+					return s.Paused && !s.Status.Playing && s.Status.Ready && s.Status.Position > 31.2 && s.Status.Position < 31.3
+				}
+				if !wait("paused seek", pausedAtTarget) {
+					return
+				}
+				time.Sleep(400 * time.Millisecond)
+				if !pausedAtTarget(controller.Snapshot()) {
+					log.Print("[qa-seek] pause retained FAILED")
+					return
+				}
+				log.Print("[qa-seek] pause retained passed")
+				controller.Command("play", nil)
+				if !wait("resume at saved target", func(s playback.State) bool { return playing(s) && s.Status.Position > 32 }) {
+					return
+				}
+				controller.Command("seek", 2.0)
+				if !wait("playing backward seek", func(s playback.State) bool { return playing(s) && s.Status.Position > 2.1 && s.Status.Position < 5 }) {
+					return
+				}
+				controller.Command("pause", nil)
+				if !wait("pause after seek", func(s playback.State) bool { return s.Paused && !s.Status.Playing }) {
+					return
+				}
+				position := controller.Snapshot().Status.Position
+				controller.Command("play", nil)
+				if !wait("resume without seek", func(s playback.State) bool { return playing(s) && s.Status.Position > position+.2 }) {
+					return
+				}
+				log.Print("[qa-seek] all passed")
+				mygo.App.Quit()
 			}()
 		}
 		if *exercisePIP {
@@ -253,6 +369,40 @@ func main() {
 				wait("paused seek", func(s playback.State) bool {
 					return s.Paused && s.Status.Ready && s.Status.Position > 31.2 && s.Status.Position < 31.3
 				})
+			}()
+		}
+		if *exerciseFeed {
+			go func() {
+				wait := func(label string, condition func(playback.State) bool) bool {
+					deadline := time.Now().Add(8 * time.Second)
+					for time.Now().Before(deadline) {
+						if condition(controller.Snapshot()) {
+							log.Printf("[qa-feed] %s passed", label)
+							return true
+						}
+						time.Sleep(50 * time.Millisecond)
+					}
+					log.Printf("[qa-feed] %s FAILED: paused=%t status=%+v", label, controller.Snapshot().Paused, controller.Snapshot().Status)
+					return false
+				}
+				playing := func(s playback.State) bool {
+					return s.Status.Ready && s.Status.Playing && !s.Paused && !s.Status.Buffering && s.Status.Position > 1
+				}
+				if !wait("initial autoplay", playing) {
+					return
+				}
+				for _, step := range []struct{ command, id string }{{"next", "710000000000002"}, {"next", "710000000000003"}, {"prev", "710000000000002"}, {"prev", "710000000000001"}} {
+					controller.Command("pause", nil)
+					if !wait("explicit pause", func(s playback.State) bool { return s.Paused && !s.Status.Playing }) {
+						return
+					}
+					controller.Command(step.command, nil)
+					if !wait(step.command+" autoplay "+step.id, func(s playback.State) bool { return s.Book.ID == step.id && playing(s) }) {
+						return
+					}
+				}
+				log.Print("[qa-feed] all autoplay checks passed")
+				mygo.App.Quit()
 			}()
 		}
 

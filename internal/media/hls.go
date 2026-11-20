@@ -28,6 +28,7 @@ func pageItems[T any](page *hgapi.Page[T]) []T { return mediautil.PageItems(page
 
 const (
 	hlsWaitTimeout             = 12 * time.Second
+	hlsStartupCoalesceWindow   = 1250 * time.Millisecond
 	activeHLSMediaRequestGrace = 8 * time.Second
 )
 
@@ -48,6 +49,16 @@ type hlsStream struct {
 	mu                 sync.Mutex
 	err                error
 	lastMediaRequestAt time.Time
+	playlistReadyAt    time.Time
+}
+
+func (stream *hlsStream) playlistStartupDeadline() time.Time {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.playlistReadyAt.IsZero() {
+		stream.playlistReadyAt = time.Now()
+	}
+	return stream.playlistReadyAt.Add(hlsStartupCoalesceWindow)
 }
 
 func (stream *hlsStream) touchMediaRequest() {
@@ -304,6 +315,28 @@ func hlsPlaylistReady(path string) bool {
 func hlsPlaylistComplete(path string) bool {
 	data, err := os.ReadFile(path)
 	return err == nil && strings.Contains(string(data), "#EXT-X-ENDLIST") && hlsPlaylistReady(path)
+}
+
+// AVFoundation reserves three target durations at an EVENT stream's live edge.
+// Leave another three for playback at up to 2x until its next playlist refresh;
+// a manifest with only the live-edge reserve can decode a frame but not play.
+// The handler bounds this coalescing so a slow producer is never held forever.
+// Completed short clips are immediately usable.
+func hlsPlaylistStartupReady(data []byte) bool {
+	if strings.Contains(string(data), "#EXT-X-ENDLIST") {
+		return true
+	}
+	target, duration := 0., 0.
+	for _, line := range strings.Split(string(data), "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "#EXT-X-TARGETDURATION:"); ok {
+			target, _ = strconv.ParseFloat(value, 64)
+		} else if value, ok := strings.CutPrefix(strings.TrimSpace(line), "#EXTINF:"); ok {
+			value, _, _ = strings.Cut(value, ",")
+			seconds, _ := strconv.ParseFloat(value, 64)
+			duration += seconds
+		}
+	}
+	return target > 0 && duration >= 6*target
 }
 
 func mediaFileExists(path string) bool {
@@ -695,13 +728,23 @@ func (ms *MediaServer) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, 
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	for !hlsPlaylistReady(stream.playlistPath) {
+admission:
+	for {
+		if hlsPlaylistReady(stream.playlistPath) {
+			data, _ := os.ReadFile(stream.playlistPath)
+			// Share the deadline across requests. A slow producer must not pay
+			// another startup delay on every subsequent playlist refresh.
+			if hlsPlaylistStartupReady(data) || !time.Now().Before(stream.playlistStartupDeadline()) {
+				break
+			}
+		}
 		select {
 		case <-stream.done:
 			if !hlsPlaylistReady(stream.playlistPath) {
 				http.Error(w, "HLS media ended before a segment was ready", http.StatusServiceUnavailable)
 				return false
 			}
+			break admission
 		case <-waitCtx.Done():
 			if streamErr := stream.wait(waitCtx); streamErr != nil && !errors.Is(streamErr, context.DeadlineExceeded) {
 				log.Printf("[hls] playlist unavailable for %s: %v", stream.key, streamErr)

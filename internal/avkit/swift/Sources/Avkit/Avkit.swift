@@ -12,6 +12,11 @@ import CoreImage
     private var lastPixelBuffer: CVPixelBuffer?
     private var endedObserver: NSObjectProtocol?
     private var itemObservation: NSKeyValueObservation?
+    private var bufferObservation: NSKeyValueObservation?
+    private var timeControlObservation: NSKeyValueObservation?
+    private var playbackStarted = false
+    private var playbackOrigin = 0.0
+    private var startResumed = false
     private var wantsPlay = false
     private var wantsPreroll = false
     private var prerolling = false
@@ -35,6 +40,9 @@ import CoreImage
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         player = AVPlayer()
+        // The local EVENT stream already has an admission/watchdog policy.
+        // AVPlayer's separate live-edge wait can hold an already buffered
+        // first frame at time zero, particularly after promoting preroll.
         player?.automaticallyWaitsToMinimizeStalling = false
         player?.preventsDisplaySleepDuringVideoPlayback = true
         controlsStyle = .none
@@ -43,6 +51,21 @@ import CoreImage
         updatesNowPlayingInfoCenter = false
         videoGravity = .resizeAspect
         pictureInPictureDelegate = self
+        timeControlObservation = player?.observe(\.timeControlStatus, options:[.new]) { [weak self] _,_ in
+            Task { @MainActor [weak self] in
+                guard let self,let player = self.player,let item = player.currentItem,
+                      item.status == .readyToPlay,player.timeControlStatus == .paused,
+                      self.wantsPlay,!self.playbackStarted,!self.startResumed,!self.didEnd,!self.pipActive,
+                      !self.seeking,self.pendingSeek == nil else { return }
+                let duration = item.duration.seconds
+                if duration.isFinite && duration > 0 && player.currentTime().seconds >= duration-0.05 { return }
+                // AVFoundation may settle a completed seek back to paused
+                // after accepting playImmediately. Reconcile that transition
+                // once with the still-active inline play intent.
+                self.startResumed = true
+                self.beginWhenReady()
+            }
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
@@ -52,12 +75,17 @@ import CoreImage
         }
         pause()
         loadGeneration += 1
-        pendingSeek = nil; seeking = false
+        // A growing EVENT playlist can choose a live-edge position even with
+        // EXT-X-START. Establish the episode origin once before play/preroll;
+        // an explicit resume seek can replace it while the item is loading.
+        pendingSeek = 0; seeking = false
         itemObservation?.invalidate(); itemObservation = nil
+        bufferObservation?.invalidate(); bufferObservation = nil
         if let observer = endedObserver { NotificationCenter.default.removeObserver(observer) }
         if let output = videoOutput, let item = player?.currentItem { item.remove(output) }
         didEnd = false
         hadFrame = false
+        playbackStarted = false; playbackOrigin = 0; startResumed = false
         prerolled = false
         lastPixelBuffer = nil
         lastSamplePosition = -1
@@ -76,10 +104,26 @@ import CoreImage
                 self.beginWhenReady()
             }
         }
+        bufferObservation = item.observe(\.loadedTimeRanges, options:[.new]) { [weak self,weak item] _,_ in
+            Task { @MainActor [weak self,weak item] in
+                guard let self,let item,self.player?.currentItem === item,
+                      self.wantsPlay,!self.playbackStarted,!self.didEnd,!self.pipActive,
+                      !self.seeking,self.pendingSeek == nil,self.player?.timeControlStatus != .playing else { return }
+                // A precise seek may finish before its media arrives. Retain
+                // play intent when that data becomes available, rather than
+                // leaving the native clock paused until Go's stall watchdog.
+                self.beginWhenReady()
+            }
+        }
         endedObserver = NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime, object:item, queue:.main) { [weak self] _ in self?.didEnd = true }
     }
     func play() {
         if ProcessInfo.processInfo.environment["MYGUO_AVKIT_TRACE"] == "1" {FileHandle.standardError.write(Data("[avkit] play ready=\(String(describing:player?.currentItem?.status))\n".utf8))}
+        if !wantsPlay && !seeking && pendingSeek == nil {
+            let position = player?.currentTime().seconds ?? 0
+            playbackOrigin = position.isFinite ? max(0,position) : 0
+            playbackStarted = false; startResumed = false
+        }
         didEnd = false; wantsPlay = true; beginWhenReady()
     }
     func pause() {
@@ -123,6 +167,7 @@ import CoreImage
     private func performPendingSeek() {
         guard !seeking,let target = pendingSeek,let player,let item = player.currentItem,item.status == .readyToPlay else { return }
         pendingSeek = nil; seeking = true
+        playbackStarted = false; playbackOrigin = target; startResumed = false
         prerolled = false
         cancelPreroll()
         player.pause()
@@ -157,6 +202,9 @@ import CoreImage
     func snapshot() -> Status {
         let item = player?.currentItem
         let position = player?.currentTime().seconds ?? 0
+        if player?.timeControlStatus == .playing && position > playbackOrigin + 0.05 && !seeking && pendingSeek == nil {
+            playbackStarted = true
+        }
         let duration = item?.duration.seconds ?? 0
         var buffered = 0.0
         for value in item?.loadedTimeRanges ?? [] {
@@ -174,7 +222,7 @@ import CoreImage
                       duration:duration.isFinite ? max(0,duration):0,
                       buffered:buffered.isFinite ? max(0,buffered):0,
                       seekable:seekable,
-                      ready:hadFrame && !seeking && pendingSeek == nil,displayed:isReadyForDisplay,playing:(player?.rate ?? 0)>0,
+                      ready:item?.status == .readyToPlay && hadFrame && !seeking && pendingSeek == nil,displayed:item?.status == .readyToPlay && isReadyForDisplay,playing:player?.timeControlStatus == .playing,
                       buffering:wantsPlay && (seeking || item?.status != .readyToPlay || player?.timeControlStatus == .waitingToPlayAtSpecifiedRate || (item?.isPlaybackBufferEmpty ?? false)),
                       ended:didEnd,pictureInPicture:pipActive,width:Int(size.width),height:Int(size.height),
                       error:item?.error?.localizedDescription ?? player?.error?.localizedDescription ?? "",
@@ -266,6 +314,8 @@ import CoreImage
     func close() throws {
         loadGeneration += 1
         itemObservation?.invalidate(); itemObservation = nil
+        bufferObservation?.invalidate(); bufferObservation = nil
+        timeControlObservation?.invalidate(); timeControlObservation = nil
         pendingSeek = nil;seeking = false
         pause()
         if let observer = endedObserver { NotificationCenter.default.removeObserver(observer) }
