@@ -318,6 +318,43 @@ func TestReservationVisibleListAndCountsShareFilteredData(t *testing.T) {
 	}
 }
 
+func TestReservationsOrderReleasedNewestAndPendingSoonest(t *testing.T) {
+	app := NewTestApp()
+	app.SetInvalidator(func() {})
+	app.libraryData = &fakeLibrary{reservations: []ipc.ReservationItem{
+		{SeriesID: "released-old", IsOnline: true, PublishAt: "20261118"},
+		{SeriesID: "pending-later", PublishAt: "2026-12-02"},
+		{SeriesID: "released-missing", IsOnline: true},
+		{SeriesID: "released-new", IsOnline: true, PublishAt: "2026-11-20T09:00:00+08:00"},
+		{SeriesID: "released-between", IsOnline: true, PublishAt: "2026-11-19T12:00:00"},
+		{SeriesID: "pending-soon", PublishAt: "20261121"},
+		{SeriesID: "released-same-time", IsOnline: true, PublishAt: "2026-11-20T01:00:00Z"},
+		{SeriesID: "released-invalid", IsOnline: true, PublishAt: "待定"},
+		{SeriesID: "pending-missing"},
+	}}
+	app.loadLibrary(libraryReservations)
+	for _, step := range []struct {
+		pending bool
+		want    []string
+	}{
+		{false, []string{"released-new", "released-same-time", "released-between", "released-old", "released-missing", "released-invalid"}},
+		{true, []string{"pending-soon", "pending-later", "pending-missing"}},
+		{false, []string{"released-new", "released-same-time", "released-between", "released-old", "released-missing", "released-invalid"}},
+	} {
+		app.reservationsPending = step.pending
+		app.refreshVisibleLibraryLocked(libraryReservations)
+		items := app.visibleLibrary(libraryReservations)
+		if len(items) != len(step.want) {
+			t.Fatalf("pending=%t: got %d items, want %d", step.pending, len(items), len(step.want))
+		}
+		for i, id := range step.want {
+			if items[i].ID != id {
+				t.Fatalf("pending=%t: item %d = %s, want %s", step.pending, i, items[i].ID, id)
+			}
+		}
+	}
+}
+
 func TestHistoryTabsRefreshCachedItems(t *testing.T) {
 	app := NewTestApp()
 	app.view = "history"

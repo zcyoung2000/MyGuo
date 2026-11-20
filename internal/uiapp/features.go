@@ -265,6 +265,11 @@ func (a *App) OpenActor(id string) {
 }
 func (a *App) SelectRank(content, board string) {
 	a.mu.Lock()
+	if a.rank.Content != content || a.rank.Board != board {
+		a.rank.Items, a.rank.List, a.rank.seenCursors = nil, nil, nil
+		a.rankScrollReset = true
+		a.rankResultVersion++
+	}
 	a.rank.Content, a.rank.Board = content, board
 	a.rank.version++
 	a.rank.Loading = false
@@ -316,6 +321,14 @@ func (a *App) LoadRank(more bool) {
 }
 func (a *App) SelectRelease(calendar bool, date string) {
 	a.mu.Lock()
+	if a.releases.Calendar != calendar || a.releases.Date != date {
+		a.releases.Items = nil
+		a.releaseGrid = nil
+		a.releaseResultVersion++
+		if a.releases.Calendar != calendar {
+			a.releases.Dates = nil
+		}
+	}
 	a.releases.Calendar, a.releases.Date = calendar, date
 	a.releases.version++
 	a.releases.Loading = false
@@ -343,6 +356,9 @@ func (a *App) LoadReleases() {
 		var result ipc.NewReleaseResponse
 		result, err = provider.GetNewReleases(ctx, date)
 		dates, selected = result.Dates, result.CurrentDate
+		if selected == "" {
+			selected = date
+		}
 		for _, it := range result.Items {
 			items = append(items, CatalogItem{ID: it.SeriesID, Title: it.Title, CoverURL: it.CoverURL, EpisodeCount: it.EpisodeCount, Heat: it.Heat, Description: it.Note, Category: it.Category, Upcoming: !it.Online, Reserved: it.Reserved, PublishAt: selected})
 		}
@@ -366,7 +382,7 @@ func (a *App) LoadReleases() {
 	} else {
 		a.releases.Items, a.releases.Dates, a.releases.Error = items, dates, ""
 		a.releaseResultVersion++
-		if a.releases.Date == "" {
+		if calendar {
 			a.releases.Date = selected
 		}
 	}
@@ -898,20 +914,23 @@ type libraryRefresher interface {
 	RefreshReservations(context.Context) ([]ipc.ReservationItem, error)
 }
 
-func reservationBefore(a, b string) bool {
-	parse := func(value string) time.Time {
-		for _, layout := range []string{time.RFC3339, "2006-01-02", "20060102"} {
-			if date, err := time.Parse(layout, value); err == nil {
-				return date
-			}
-		}
-		return time.Time{}
+func reservationBefore(a, b CatalogItem) bool {
+	// The two tabs share one snapshot but use opposite date orders.
+	if a.Upcoming != b.Upcoming {
+		return !a.Upcoming
 	}
-	first, second := parse(a), parse(b)
+	first, _ := parsePublishDate(a.PublishAt)
+	second, _ := parsePublishDate(b.PublishAt)
 	if first.IsZero() {
 		return false
 	}
-	return second.IsZero() || first.Before(second)
+	if second.IsZero() {
+		return true
+	}
+	if a.Upcoming {
+		return first.Before(second)
+	}
+	return first.After(second)
 }
 
 // Cursor history belongs to a result set, so a cycle across several pages stops

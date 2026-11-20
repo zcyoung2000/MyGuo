@@ -72,6 +72,10 @@ func (a *App) Render(c *ui.Context) {
 		a.discoverPageScroll.Y = 0
 		a.catalogScrollReset = false
 	}
+	if a.rankScrollReset {
+		a.rankScroll = ui.ScrollState{}
+		a.rankScrollReset = false
+	}
 	a.beginArtworkFrame()
 	theme := hongguoTheme(c)
 	c.SetTheme(&theme)
@@ -509,10 +513,12 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 				ui.Text(c, formatRelativeTime(item.UpdatedAt)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
 			})
 		} else if a.view == "reservations" {
-			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
-				ui.Text(c, "上线日期").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
-				ui.Text(c, formatPublishDate(item.PublishAt)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.85))
-			})
+			if item.PublishAt != "" {
+				ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
+					ui.Text(c, "上线日期").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
+					ui.Text(c, formatPublishDate(item.PublishAt)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.85))
+				})
+			}
 		} else if a.view == "new" {
 			if item.Upcoming {
 				if item.PublishAt != "" {
@@ -716,13 +722,17 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		})
 	}
 	if tab == libraryReservations {
-		reservations := a.visibleLibrary(libraryReservations)
-		onlineCount, pendingCount := reservationCounts(reservations)
-		total := len(reservations)
+		reservations := library.Items
+		total := libraryCountLabel(library)
+		onlineCount, pendingCount := total, total
+		if library.Loaded || len(reservations) > 0 || library.Empty {
+			online, pending := reservationCounts(reservations)
+			onlineCount, pendingCount = fmt.Sprint(online), fmt.Sprint(pending)
+		}
 		ui.Row(c.Key("res-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				ui.Row(c).Padding(3, 10).Radius(12).Background(ui.RGBA(255, 255, 255, 0.06)).Children(func() {
-					ui.Textf(c, "新剧预约 · 共 %d 部 · 已上线 %d · 待上线 %d", total, onlineCount, pendingCount).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
+					ui.Textf(c, "新剧预约 · 共 %s 部 · 已上线 %s · 待上线 %s", total, onlineCount, pendingCount).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
 				})
 			})
 			resSelected := "online"
@@ -730,8 +740,8 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 				resSelected = "pending"
 			}
 			a.renderSlidingTabs(c, "res-tabs", "res-pending", []slidingTabItem{
-				{"online", fmt.Sprintf("已上线 %d", onlineCount)},
-				{"pending", fmt.Sprintf("待上线 %d", pendingCount)},
+				{"online", fmt.Sprintf("已上线 %s", onlineCount)},
+				{"pending", fmt.Sprintf("待上线 %s", pendingCount)},
 			}, resSelected, func(pKey string) {
 				a.reservationsPending = (pKey == "pending")
 				a.refreshVisibleLibraryLocked(libraryReservations)
@@ -903,11 +913,18 @@ func historyEpisodeBadge(item CatalogItem) string {
 	return ""
 }
 
-func formatPublishDate(value string) string {
+func parsePublishDate(value string) (time.Time, bool) {
 	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02", "20060102"} {
 		if date, err := time.Parse(layout, value); err == nil {
-			return date.Format("2006-01-02")
+			return date, true
 		}
+	}
+	return time.Time{}, false
+}
+
+func formatPublishDate(value string) string {
+	if date, ok := parsePublishDate(value); ok {
+		return date.Format("2006-01-02")
 	}
 	return value
 }

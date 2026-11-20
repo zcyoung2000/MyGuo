@@ -175,6 +175,7 @@ type App struct {
 	discoverPageScroll          ui.ScrollState
 	catalogScroll               ui.ScrollState
 	rankScroll                  ui.ScrollState
+	rankScrollReset             bool
 	actorScroll                 ui.ScrollState
 	playerFixture               bool
 	detailEpisodesList          *ui.ListState
@@ -670,7 +671,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if tab == libraryReservations {
-			return reservationBefore(items[i].PublishAt, items[j].PublishAt)
+			return reservationBefore(items[i], items[j])
 		}
 		return items[i].Rank < items[j].Rank
 	})

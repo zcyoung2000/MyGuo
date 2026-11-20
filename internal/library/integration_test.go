@@ -728,4 +728,40 @@ func TestRemoteReservationsUpgradeOnlineStateAndNotify(t *testing.T) {
 	if len(log.matching("subscribe/list")) != 2 {
 		t.Fatalf("reservation calls = %d, want online and offline", len(log.matching("subscribe/list")))
 	}
+	if _, err := service.syncRemoteReservations(context.Background(), service.currentReservationGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("refresh repeated the release notification: %+v", notifications)
+	}
+}
+
+func TestRemoteReservationsDoNotAnnouncePreviouslyUnseenReleasedSeries(t *testing.T) {
+	const pendingID, releasedID = "710000000000001", "710000000000002"
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		online, _ := strconv.ParseBool(r.URL.Query().Get("is_online"))
+		id := pendingID
+		if online {
+			id = releasedID
+		}
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"subscribe_items": []map[string]any{{
+			"item_id": id, "name": "预约剧", "is_online": online,
+		}}}})
+	}))
+	if _, err := store.ToggleReservation(ReservationItem{SeriesID: pendingID, Title: "待上线预约"}); err != nil {
+		t.Fatal(err)
+	}
+	var notifications []Notification
+	service.notify = func(_ context.Context, notification Notification) {
+		notifications = append(notifications, notification)
+	}
+	for range 2 {
+		results, err := service.syncRemoteReservations(context.Background(), service.currentReservationGeneration())
+		if err != nil || len(results) != 2 {
+			t.Fatalf("reservation sync = %+v, %v", results, err)
+		}
+	}
+	if len(notifications) != 0 {
+		t.Fatalf("old released rows from another device were announced as newly released: %+v", notifications)
+	}
 }

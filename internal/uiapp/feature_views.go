@@ -218,7 +218,8 @@ func (a *App) renderReleases(c *ui.Context) {
 		go a.SelectRelease(key == "calendar", "")
 	})
 	if value.Calendar {
-		ui.Row(c).Wrap().Gap(8).Padding(4, 0).Children(func() {
+		ui.ScrollHorizontal(c.Key("release-calendar-dates")).FillWidth().Height(44).
+			Scrollbars(false).Gap(8).Padding(4, 0).Label("新剧日期").Children(func() {
 			for _, date := range value.Dates {
 				dStr := date
 				selected := dStr == value.Date
@@ -231,9 +232,9 @@ func (a *App) renderReleases(c *ui.Context) {
 						To:    ui.Hex("#b81235"),
 						Angle: 135,
 					}).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
+				} else {
+					hoverBackground(tab, ui.RGBA(255, 255, 255, 0.04), ui.RGBA(255, 255, 255, 0.08))
 				}
-				hoverBackground(tab, ui.RGBA(255, 255, 255, 0.04), ui.RGBA(255, 255, 255, 0.08))
-				tab.Border(1, ui.RGBA(255, 255, 255, 0.08))
 				tab.Role(ui.RoleButton).Label(formatCalendarLabel(dStr)).Focusable()
 				if tab.Clicked() || tab.Shortcut(0, ui.KeyEnter) || tab.Shortcut(0, ui.KeySpace) {
 					go a.SelectRelease(true, dStr)
@@ -264,7 +265,11 @@ func (a *App) renderReleases(c *ui.Context) {
 		return
 	}
 	if len(value.Items) == 0 {
-		a.emptyView(c, "当前新剧热榜暂无剧集", "可以选择其他日期")
+		if value.Calendar {
+			a.emptyView(c, "当日暂无新剧", "可以选择其他日期")
+		} else {
+			a.emptyView(c, "当前新剧热榜暂无剧集", "可以切换到新剧日历")
+		}
 		return
 	}
 	if len(value.Items) <= 3 {

@@ -1386,19 +1386,7 @@ func (s *Service) syncRemoteReservations(ctx context.Context, generation uint64)
 	}
 	prevOnline := make(map[string]bool)
 	for _, r := range prevReservations {
-		if r.IsOnline {
-			prevOnline[r.SeriesID] = true
-		}
-	}
-
-	for _, it := range online {
-		if !prevOnline[it.SeriesID] && len(prevReservations) > 0 {
-			s.notify(ctx, Notification{
-				Title:    "新剧开播提醒",
-				Body:     fmt.Sprintf("您预约的《%s》已正式上线，点击立即观看！", it.Title),
-				SeriesID: it.SeriesID,
-			})
-		}
+		prevOnline[r.SeriesID] = r.IsOnline
 	}
 
 	results := append(online, offline...)
@@ -1423,6 +1411,24 @@ func (s *Service) syncRemoteReservations(ctx context.Context, generation uint64)
 	s.cachedReservations = storeList
 	s.resCachedAt = time.Now()
 	s.resMu.Unlock()
+
+	// Announce only a known pending reservation becoming online, after the
+	// snapshot is committed. An older released row first synced from another
+	// device is not a release event, and failed writes must not repeat alerts.
+	for _, it := range online {
+		wasOnline, known := prevOnline[it.SeriesID]
+		if !known || wasOnline || !it.IsOnline {
+			continue
+		}
+		if s.currentReservationGeneration() != generation || !s.syncSessionCurrent(session) {
+			break
+		}
+		s.notify(ctx, Notification{
+			Title:    "新剧开播提醒",
+			Body:     fmt.Sprintf("您预约的《%s》已正式上线，点击立即观看！", it.Title),
+			SeriesID: it.SeriesID,
+		})
+	}
 
 	return sanitize.Sanitize(storeList), nil
 }
