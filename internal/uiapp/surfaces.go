@@ -10,10 +10,25 @@ import (
 // without Liquid Glass's lens or bright rim. Player controls use native clear
 // glass; ordinary pages sample their own dark UI surface with the same profile.
 const (
-	chromeClarity  = .6
-	contentBlur    = 6
-	contentOpacity = .92
+	chromeClarity    = .6
+	contentBlur      = 6
+	contentOpacity   = .92
+	windowGroundVeil = .65
 )
+
+// WindowBackgroundColor matches the acrylic guide's dark Ground token, including
+// the initial native window background before the first UI frame is presented.
+const WindowBackgroundColor = "#141418"
+
+// windowGroundColor follows mygo-acrylic's GroundColor: native frost under one
+// fixed theme veil. The sidebar and its scroll content add no other background.
+func windowGroundColor(material bool) ui.Color {
+	ground := ui.Hex(WindowBackgroundColor)
+	if material {
+		return ground.Alpha(windowGroundVeil)
+	}
+	return ground
+}
 
 func selectionFill() ui.LinearGradient {
 	return ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 135}

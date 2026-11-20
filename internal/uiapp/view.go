@@ -79,6 +79,9 @@ func (a *App) Render(c *ui.Context) {
 	a.beginArtworkFrame()
 	theme := hongguoTheme(c)
 	c.SetTheme(&theme)
+	// MyGo's system frost needs the acrylic guide's dark Ground veil; an
+	// entirely clear root exposes a bright gray material. Content stays opaque.
+	c.Root().Background(windowGroundColor(c.Vibrancy() && !c.Preferences().ReduceTransparency))
 	width := a.sidebarWidth
 	if width == 0 {
 		width = defaultSidebarWidth
@@ -88,7 +91,7 @@ func (a *App) Render(c *ui.Context) {
 			a.renderBody(c)
 			return
 		}
-		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().Background(c.Theme().Background).OnChange(func() { a.SetSidebarWidth(width) })
+		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().OnChange(func() { a.SetSidebarWidth(width) })
 	})
 }
 
@@ -138,7 +141,7 @@ func hongguoTheme(c *ui.Context) ui.Theme {
 }
 func (a *App) renderSidebar(c *ui.Context) {
 	ui.Box(c.Key("sidebar-container")).Fill().Children(func() {
-		ui.Scroll(c.Key("sidebar")).Scrollbars(false).Fill().Background(ui.RGBA(18, 20, 28, 0.60)).Padding(0, 10, 16, 10).Gap(2).Children(func() {
+		ui.Scroll(c.Key("sidebar")).Scrollbars(false).Fill().Padding(0, 10, 16, 10).Gap(2).Children(func() {
 			// Draggable traffic light spacer (no brand text)
 			ui.Box(c.Key("sidebar-traffic-lights")).Height(44).DragWindow()
 
@@ -156,16 +159,6 @@ func (a *App) renderSidebar(c *ui.Context) {
 			a.sidebarItem(c, "reservations", "预约", reservationIcon)
 			a.sidebarItem(c, "settings", "设置", settingsIcon)
 		})
-
-		if a.ambientActive {
-			ui.Box(c.Key("sidebar-ambient-glow")).Absolute().Top(0).Right(0).Bottom(0).Width(120).
-				PassThrough().
-				LinearGradient(ui.LinearGradient{
-					From:  a.ambientLeft.Alpha(0.45),
-					To:    ui.Transparent,
-					Angle: 270,
-				})
-		}
 	})
 }
 func (a *App) hostedScene() bool {

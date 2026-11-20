@@ -167,7 +167,6 @@ type App struct {
 	playerNativeBackdrop        bool
 	playerTransitionBitmap      *ui.Bitmap
 	ambientActive               bool
-	ambientLeft                 ui.Color
 	ambientTop                  ui.Color
 	feedChannel                 string
 	feedChrome                  FeedChrome
@@ -315,11 +314,10 @@ func (a *App) SetLibraryGrids(grids [4]*ui.GridState) {
 	defer a.mu.Unlock()
 	a.library.Grids = grids
 }
-func (a *App) SetAmbientGlow(active bool, left, top [3]uint8) {
+func (a *App) SetAmbientGlow(active bool, _ [3]uint8, top [3]uint8) {
 	a.mu.Lock()
 	a.ambientActive = active
 	if active {
-		a.ambientLeft = ui.RGB(left[0], left[1], left[2])
 		a.ambientTop = ui.RGB(top[0], top[1], top[2])
 	}
 	invalidate := a.invalidateFn
@@ -884,18 +882,16 @@ func (a *App) PlaybackChanged() {
 	a.mu.Unlock()
 	if host != nil {
 		s := host.Snapshot()
-		left, top := [3]uint8{}, [3]uint8{}
-		active := s.Mode != "idle" && s.Status.Ready && len(s.Status.AmbientLeft) == 3 && len(s.Status.AmbientTop) == 3
+		top := [3]uint8{}
+		active := s.Mode != "idle" && s.Status.Ready && len(s.Status.AmbientTop) == 3
 		if active {
 			for i := range 3 {
-				left[i] = uint8(s.Status.AmbientLeft[i])
 				top[i] = uint8(s.Status.AmbientTop[i])
 			}
 		}
 		a.mu.Lock()
 		a.ambientActive = active
 		if active {
-			a.ambientLeft = ui.RGB(left[0], left[1], left[2])
 			a.ambientTop = ui.RGB(top[0], top[1], top[2])
 		}
 		a.mu.Unlock()

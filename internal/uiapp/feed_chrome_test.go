@@ -78,7 +78,7 @@ func TestNativeFeedChannelsOverlayKeepsMediaAndHidesWithItsScene(t *testing.T) {
 	}
 }
 
-func TestAmbientGlowUpdatesSidebarAndFeedChrome(t *testing.T) {
+func TestAmbientGlowUpdatesFeedChrome(t *testing.T) {
 	app := NewTestApp()
 	shell := NativeShell{App: app}
 	app.OpenView("recommend")

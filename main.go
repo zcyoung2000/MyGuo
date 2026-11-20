@@ -187,7 +187,7 @@ func main() {
 			MinHeight:       640,
 			TitleBarStyle:   mygo.TitleBarHiddenInset,
 			Transparent:     true,
-			BackgroundColor: "transparent",
+			BackgroundColor: uiapp.WindowBackgroundColor,
 			Vibrancy:        mygo.VibrancySidebar,
 			Content:         ui.View(app.Render),
 		})

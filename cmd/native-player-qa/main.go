@@ -200,7 +200,7 @@ func main() {
 	mygo.Theme.SetSource(mygo.ThemeDark)
 	mygo.App.WhenReady(func() {
 		native.Init()
-		w := mygo.NewWindow(mygo.WindowOptions{Title: "原生播放器隔离验收", Width: 1280, Height: 820, MinWidth: 1000, MinHeight: 640, TitleBarStyle: mygo.TitleBarHiddenInset, Transparent: true, BackgroundColor: "transparent", Vibrancy: mygo.VibrancySidebar, Content: ui.View(app.Render)})
+		w := mygo.NewWindow(mygo.WindowOptions{Title: "原生播放器隔离验收", Width: 1280, Height: 820, MinWidth: 1000, MinHeight: 640, TitleBarStyle: mygo.TitleBarHiddenInset, Transparent: true, BackgroundColor: uiapp.WindowBackgroundColor, Vibrancy: mygo.VibrancySidebar, Content: ui.View(app.Render)})
 		native.SetWindow(w)
 		native.SetMediaCommandHandler(app.MediaCommand)
 		native.SetPictureInPictureHandler(host.PictureInPicture)
