@@ -149,44 +149,50 @@ func (a *App) renderDetailHero(c *ui.Context, d Detail, width float32) {
 	if width < 720 {
 		posterWidth = 132
 	}
+	posterHeight := posterWidth * posterAspectRatio
 	ui.Column(c.Key("detail-introduction")).FillWidth().Gap(20).Padding(0, 0, 20, 0).Children(func() {
 		ui.Row(c.Key("detail-hero-row")).FillWidth().Gap(24).AlignItems(ui.Start).Children(func() {
-			a.image(c, d.CoverURL, posterWidth, posterWidth*posterAspectRatio)
-			ui.Column(c.Key("detail-hero-info")).Grow(1).MinWidth(0).Gap(12).Children(func() {
-				ui.Text(c, d.Title).FontSize(26).Bold().MaxLines(2).Tooltip(d.Title)
-				ui.Row(c.Key("detail-stats")).Wrap().Gap(16).AlignItems(ui.Center).Children(func() {
-					if d.Heat != "" {
-						ui.Text(c, d.Heat).FontSize(13).Bold().TextColor(c.Theme().Accent)
-					}
-					if d.FollowCount > 0 {
-						ui.Text(c, formatCountText(d.FollowCount)+"人在追").FontSize(12).TextColor(c.Theme().TextMuted)
-					}
-					if d.PlayCount > 0 {
-						ui.Text(c, formatCountText(d.PlayCount)+"次播放").FontSize(12).TextColor(c.Theme().TextMuted)
-					}
-					if d.LikeCount > 0 {
-						ui.Text(c, formatCountText(d.LikeCount)+"赞").FontSize(12).TextColor(c.Theme().TextMuted)
-					}
-					if d.PublishText != "" {
-						ui.Text(c.Key("detail-publish-date"), d.PublishText).FontSize(11).SingleLine().TextColor(c.Theme().TextMuted)
-					}
-				})
-				ui.Row(c.Key("detail-tags")).Wrap().Gap(7).Children(func() {
-					labels := append(detailProgressPieces(d.StatusText), d.Tags...)
-					if d.EpisodeCount > 0 && !strings.Contains(d.StatusText, "集") {
-						labels = append([]string{fmt.Sprintf("全%d集", d.EpisodeCount)}, labels...)
-					}
-					seen := map[string]bool{}
-					for _, label := range labels {
-						if label != "" && !seen[label] {
-							seen[label] = true
-							ui.Badge(c, label).FontSize(11).Padding(4, 8).Radius(6).Background(ui.RGBA(255, 255, 255, .045)).TextColor(c.Theme().TextMuted)
+			a.image(c, d.CoverURL, posterWidth, posterHeight)
+			// Keep the actions low in the hero with a small inset from the poster's
+			// bottom. MinHeight lets expanded descriptions grow without overlap.
+			ui.Column(c.Key("detail-hero-info")).Grow(1).MinWidth(0).
+				MinHeight(posterHeight - c.Theme().Space(3)).Justify(ui.SpaceBetween).Gap(c.Theme().Space(4)).Children(func() {
+				ui.Column(c.Key("detail-hero-copy")).FillWidth().MinWidth(0).Gap(12).Children(func() {
+					ui.Text(c, d.Title).FontSize(26).Bold().MaxLines(2).Tooltip(d.Title)
+					ui.Row(c.Key("detail-stats")).Wrap().Gap(16).AlignItems(ui.Center).Children(func() {
+						if d.Heat != "" {
+							ui.Text(c, d.Heat).FontSize(13).Bold().TextColor(c.Theme().Accent)
 						}
+						if d.FollowCount > 0 {
+							ui.Text(c, formatCountText(d.FollowCount)+"人在追").FontSize(12).TextColor(c.Theme().TextMuted)
+						}
+						if d.PlayCount > 0 {
+							ui.Text(c, formatCountText(d.PlayCount)+"次播放").FontSize(12).TextColor(c.Theme().TextMuted)
+						}
+						if d.LikeCount > 0 {
+							ui.Text(c, formatCountText(d.LikeCount)+"赞").FontSize(12).TextColor(c.Theme().TextMuted)
+						}
+						if d.PublishText != "" {
+							ui.Text(c.Key("detail-publish-date"), d.PublishText).FontSize(11).SingleLine().TextColor(c.Theme().TextMuted)
+						}
+					})
+					ui.Row(c.Key("detail-tags")).Wrap().Gap(7).Children(func() {
+						labels := append(detailProgressPieces(d.StatusText), d.Tags...)
+						if d.EpisodeCount > 0 && !strings.Contains(d.StatusText, "集") {
+							labels = append([]string{fmt.Sprintf("全%d集", d.EpisodeCount)}, labels...)
+						}
+						seen := map[string]bool{}
+						for _, label := range labels {
+							if label != "" && !seen[label] {
+								seen[label] = true
+								ui.Badge(c, label).FontSize(11).Padding(4, 8).Radius(6).Background(ui.RGBA(255, 255, 255, .045)).TextColor(c.Theme().TextMuted)
+							}
+						}
+					})
+					if d.Description != "" {
+						a.renderDetailDescription(c, d.Description, max(float32(0), width-posterWidth-24))
 					}
 				})
-				if d.Description != "" {
-					a.renderDetailDescription(c, d.Description, max(float32(0), width-posterWidth-24))
-				}
 
 				a.renderDetailActions(c, d)
 			})
