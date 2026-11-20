@@ -6,7 +6,9 @@
 
 ## 项目简介
 
-myguo 现在以 MyGo GPU 自绘的原生 UI 作为应用主体：侧栏导航、搜索、目录、详情、选集以及本地历史/收藏/预约直接调用既有 Go 服务。播放区域保留嵌入 WebView，让有声播放、切集、进度、收藏关联、画中画和媒体控制继续复用成熟链路；媒体仍经由本地 MediaServer 与 OpenHongguo SDK。
+myguo 以 MyGo GPU 自绘的原生 UI 作为应用主体：侧栏导航、搜索、目录、详情、选集以及本地历史/收藏/预约直接调用 Go 服务。视频使用原生 AVKit 播放器，支持切集、续播、画中画和系统媒体控制。仓库内的 `internal/hgapi` 负责上游协议，播放使用批量模型接口、专用 profile 和 Medusa V5；本地 MediaServer 负责缓存、流式传输和解密，不再依赖外部 OpenHongguo SDK。
+
+所有红果业务接口、账号请求和官网扫码协议统一封装在 `internal/hgapi`；业务层负责缓存、账号归属、同步队列和页面数据组合。分层与扩展方式见 [API 架构](docs/api-architecture.md)。
 
 本项目仅供个人技术研究与本地使用，与上游内容平台没有隶属或认可关系。
 
@@ -65,21 +67,12 @@ myguo 可以使用匿名设备配置运行。如需同步个人数据：
 
 ## 架构
 
-```text
-MyGo 原生主体（`ui.View`）
-        |
-        +--> Go 服务 --> OpenHongguo SDK 与请求辅助层
-        |         |
-        |         +--> SQLite 用户数据
-        |
-        +--> 嵌入式播放器 WebView
-                  |
-                  v
-            聚焦播放桥 --> myguo Go 服务
-        |
-        +--> SQLite user data
-        +--> MediaServer and FFmpeg
-```
+- `internal/uiapp` 和 `internal/ipc` 将 MyGo 原生 UI 连接到应用服务。
+- `internal/catalog`、`internal/library` 和 `internal/playback` 负责缓存、SQLite 状态、同步与播放控制。
+- `internal/hgapi` 封装上游接口、请求与响应模型、签名、账号会话和官网扫码授权。
+- `internal/media` 负责 CDN 下载、缓存、流式传输与 FFmpeg 解密；`internal/avkit` 负责原生视频播放。
+
+请求边界、会话策略和新增接口的流程见 [API 架构](docs/api-architecture.md)。
 
 ## 开发
 

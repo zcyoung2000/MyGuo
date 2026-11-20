@@ -6,7 +6,9 @@ A native macOS client for short dramas, built with Go.
 
 ## Overview
 
-myguo now uses a MyGo GPU-drawn native UI as the application shell: sidebar navigation, search, catalogs, series details, episode selection, and local history/favorites/reservations call Go services directly. The player area remains an embedded WebView so audible playback, episode switching, progress, favorites, PiP, and media controls keep their proven browser pipeline. Media still flows through the local MediaServer and OpenHongguo SDK.
+myguo uses a MyGo GPU-drawn native UI: sidebar navigation, search, catalogs, series details, episode selection, and local history/favorites/reservations call Go services directly. Native AVKit handles video playback, episode switching, resume, PiP and system media controls. The repository's `internal/hgapi` owns the upstream protocol, including batch playback models, a dedicated player profile and Medusa V5. The local MediaServer handles caching, streaming and decryption; the external OpenHongguo SDK dependency has been removed.
+
+Hongguo business APIs, account requests and website QR authorization are encapsulated in `internal/hgapi`. Business services own caching, account scope, durable synchronization and page composition. See [API architecture](docs/api-architecture.md) for the boundaries and endpoint extension workflow.
 
 The project is intended for personal technical study and local use. It is not affiliated with or endorsed by the upstream content provider.
 
@@ -65,21 +67,12 @@ Application data is stored under `~/Library/Application Support/myguo/`. SQLite 
 
 ## Architecture
 
-```text
-MyGo native UI (`ui.View`)
-        |
-        +--> Go services --> OpenHongguo SDK and request helpers
-        |         |
-        |         +--> SQLite user data
-        |
-        +--> Embedded player WebView
-                  |
-                  v
-            focused player bridge --> myguo Go services
-        |
-        +--> SQLite user data
-        +--> MediaServer and FFmpeg
-```
+- `internal/uiapp` and `internal/ipc` connect the MyGo native UI to application services.
+- `internal/catalog`, `internal/library` and `internal/playback` own caching, SQLite state, synchronization and playback control.
+- `internal/hgapi` encapsulates upstream endpoints, request and response models, signing, account sessions and website QR authorization.
+- `internal/media` handles CDN downloads, caching, streaming and FFmpeg decryption; `internal/avkit` handles native video playback.
+
+See [API architecture](docs/api-architecture.md) for request boundaries, session policies and the workflow for adding endpoints.
 
 ## Development
 
