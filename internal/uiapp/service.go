@@ -17,26 +17,26 @@ import (
 const serviceTimeout = 15 * time.Second
 
 type CatalogItem struct {
-	Kind                          string
-	BadgeText, Author, Status     string
-	EpisodeID                     string
-	ActorID                       string
-	Upcoming, Reserved, Completed bool
-	PublishAt                     string
-	UpdatedAt                     int64
-	Progress                      float64
-	DurationSec                   int64
-	ResumeEpisode                 int
-	ResumePosition                float64
-	ID                            string
-	Title                         string
-	Description                   string
-	CoverURL                      string
-	EpisodeCount                  int
-	Category                      string
-	Rank                          int
-	Heat                          string
-	Subtitles                     []string
+	Kind                                   string
+	BadgeText, Author, Status              string
+	EpisodeID                              string
+	ActorID                                string
+	Upcoming, Reserved, Completed, Watched bool
+	PublishAt                              string
+	UpdatedAt                              int64
+	Progress                               float64
+	DurationSec                            int64
+	ResumeEpisode                          int
+	ResumePosition                         float64
+	ID                                     string
+	Title                                  string
+	Description                            string
+	CoverURL                               string
+	EpisodeCount                           int
+	Category                               string
+	Rank                                   int
+	Heat                                   string
+	Subtitles                              []string
 }
 
 type CatalogPage struct {
@@ -657,12 +657,17 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	library = a.libraryAt(tab)
 	library.Loading = false
 	if err != nil {
-		library.Error = "数据加载失败，请稍后重试"
-		if tab == libraryHistory {
-			library.Error = historySyncErrorCopy(err)
+		// History synchronization is durable and self-healing: local rows and
+		// pending uploads remain available while the background worker retries.
+		// Keep transport and account-maintenance details out of the history UI.
+		library.Error = ""
+		if tab != libraryHistory {
+			library.Error = "数据加载失败，请稍后重试"
+		} else if len(items) == 0 {
+			library.Error = "暂时无法读取观看历史，请稍后重试"
 		}
 		log.Printf("[library] tab=%d load failed: %v", tab, err)
-		if len(items) == 0 {
+		if len(items) == 0 && tab != libraryHistory {
 			a.invalidate()
 			return
 		}
@@ -674,28 +679,12 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 		return items[i].Rank < items[j].Rank
 	})
 	a.error = ""
-	library.Items, library.Empty, library.Loaded = items, len(items) == 0 && err == nil, true
+	library.Items, library.Empty, library.Loaded = items, len(items) == 0, true
 	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
 	a.refreshVisibleLibraryLocked(tab)
 	a.invalidate()
 }
 
-func historySyncErrorCopy(err error) string {
-	if err == nil {
-		return ""
-	}
-	var messages []string
-	if strings.Contains(err.Error(), "本机播放进度待上传") {
-		messages = append(messages, "本机播放进度待上传，失败任务会保留并重试")
-	}
-	if strings.Contains(err.Error(), "历史远端") {
-		messages = append(messages, "云端历史读取未完成，已读取和本机记录均已保留")
-	}
-	if len(messages) == 0 {
-		messages = append(messages, "历史同步未完成，已有记录已保留")
-	}
-	return strings.Join(messages, "；")
-}
 func (a *App) libraryProvider() libraryProvider {
 	if a.libraryData != nil {
 		return a.libraryData
@@ -828,7 +817,7 @@ func convertDetail(seriesID string, page *ipc.SeriesDetailPageDTO) Detail {
 		episodes = append(episodes, CatalogItem{
 			ID: episode.ID, Title: episode.Title, CoverURL: episode.PosterURL,
 			EpisodeCount: episode.Number, Rank: episode.Number,
-			DurationSec: episode.DurationSec,
+			DurationSec: episode.DurationSec, Watched: episode.Watched,
 		})
 	}
 	return Detail{

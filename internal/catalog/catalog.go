@@ -136,6 +136,7 @@ type EpisodeDTO struct {
 	PosterURL    string `json:"posterUrl,omitempty"`
 	CommentCount int64  `json:"commentCount"`
 	DurationSec  int64  `json:"durationSec,omitempty"`
+	Watched      bool   `json:"watched,omitempty"`
 }
 
 type SeriesDetailDTO struct {

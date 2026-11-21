@@ -196,10 +196,10 @@ func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
 	tt := ui.NewTester(app.Render, 1280, 1200)
 	tt.Frame()
 	title, titleOK := tt.Find("谁说纨绔不能出状元：这一世我要亲手改命")
-	progress, progressOK := tt.Find("3 / 80集")
+	progress, progressOK := tt.Find("看到第3集")
 	timeText, timeOK := tt.Find("2小时前")
 	nextTitle, nextTitleOK := tt.Find("深海来客：红色进化纪元")
-	nextProgress, nextProgressOK := tt.Find("23 / 88集")
+	nextProgress, nextProgressOK := tt.Find("看到第23集")
 	if !titleOK || !progressOK || !timeOK || !nextTitleOK || !nextProgressOK {
 		t.Fatalf("history metadata missing: title=%v progress=%v time=%v nextTitle=%v nextProgress=%v texts=%v", titleOK, progressOK, timeOK, nextTitleOK, nextProgressOK, tt.Texts())
 	}
@@ -218,8 +218,8 @@ func TestHistoryEpisodeBadgeMergesProgressWithFallback(t *testing.T) {
 		item  CatalogItem
 		badge string
 	}{
-		{name: "progress", item: CatalogItem{ID: "progress", EpisodeCount: 82, ResumeEpisode: 7, UpdatedAt: now}, badge: "7 / 82集"},
-		{name: "first episode", item: CatalogItem{ID: "first", EpisodeCount: 82, ResumeEpisode: 1, UpdatedAt: now}, badge: "共82集"},
+		{name: "progress", item: CatalogItem{ID: "progress", EpisodeCount: 82, ResumeEpisode: 7, UpdatedAt: now}, badge: "看到第7集"},
+		{name: "first episode", item: CatalogItem{ID: "first", EpisodeCount: 82, ResumeEpisode: 1, UpdatedAt: now}, badge: "看到第1集"},
 		{name: "missing progress", item: CatalogItem{ID: "missing-progress", EpisodeCount: 82, UpdatedAt: now}, badge: "共82集"},
 		{name: "zero progress", item: CatalogItem{ID: "zero-progress", EpisodeCount: 82, ResumeEpisode: 0, UpdatedAt: now}, badge: "共82集"},
 	}

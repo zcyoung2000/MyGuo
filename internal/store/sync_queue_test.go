@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,6 +47,33 @@ func TestHistoryAckKeepsNewerProgressWithSameTimestamp(t *testing.T) {
 	remaining, err := s.PendingHistoryUploads(10, "A")
 	if err != nil || len(remaining) != 0 {
 		t.Fatalf("confirmed progress not removed: %v, %v", remaining, err)
+	}
+}
+
+func TestHistoryUploadQueueKeepsMultipleEpisodesOfOneSeries(t *testing.T) {
+	s := newQueueStore(t)
+	const seriesID = "710000000000001"
+	for _, item := range []HistoryItem{
+		{SeriesID: seriesID, EpisodeNum: 1, PositionSec: 96, DurationSec: 100, UpdatedAt: 100},
+		{SeriesID: seriesID, EpisodeNum: 2, PositionSec: 12, DurationSec: 100, UpdatedAt: 101},
+	} {
+		if err := s.QueueHistoryUpload(item, fmt.Sprintf("episode-%d", item.EpisodeNum), "A"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := s.PendingHistoryUploads(10, "A")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("queued episodes = %+v, err=%v; both episode intents must survive", items, err)
+	}
+	if items[0].EpisodeNum != 1 || items[1].EpisodeNum != 2 {
+		t.Fatalf("queued episodes = %+v; want episode order 1, 2", items)
+	}
+	if err := s.AckHistoryUploads(items[:1]); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := s.PendingHistoryUploads(10, "A")
+	if err != nil || len(remaining) != 1 || remaining[0].EpisodeNum != 2 {
+		t.Fatalf("ack episode 1 affected episode 2: %+v, err=%v", remaining, err)
 	}
 }
 

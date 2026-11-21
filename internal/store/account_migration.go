@@ -22,10 +22,10 @@ func migrateVerifiedAccountQueues(tx *sql.Tx, scope string, aliases []string) er
 			}
 			query := fmt.Sprintf(`INSERT INTO %s (%s, scope, revision)
 				SELECT %s, ?, revision FROM %s WHERE scope = ?
-				ON CONFLICT(scope, series_id) DO UPDATE SET %s
+				ON CONFLICT(%s) DO UPDATE SET %s
 				WHERE excluded.revision > %s.revision OR
 				(excluded.revision = %s.revision AND excluded.%s > %s.%s)`,
-				queue.name, queue.columns, queue.columns, queue.name, strings.Join(updates, ","),
+				queue.name, queue.columns, queue.columns, queue.name, queue.key, strings.Join(updates, ","),
 				queue.name, queue.name, queue.order, queue.name, queue.order)
 			if _, err := tx.Exec(query, scope, alias); err != nil {
 				return err
@@ -33,6 +33,22 @@ func migrateVerifiedAccountQueues(tx *sql.Tx, scope string, aliases []string) er
 			if _, err := tx.Exec("DELETE FROM "+queue.name+" WHERE scope = ?", alias); err != nil {
 				return err
 			}
+		}
+		if _, err := tx.Exec(`INSERT INTO episode_progress (
+			scope, series_id, episode_num, episode_id, position_sec, duration_sec, updated_at, watched
+		)
+		SELECT ?, series_id, episode_num, episode_id, position_sec, duration_sec, updated_at, watched
+		FROM episode_progress WHERE scope = ?
+		ON CONFLICT(scope, series_id, episode_num) DO UPDATE SET
+			episode_id = CASE WHEN excluded.episode_id != '' THEN excluded.episode_id ELSE episode_progress.episode_id END,
+			position_sec = CASE WHEN excluded.updated_at >= episode_progress.updated_at THEN excluded.position_sec ELSE episode_progress.position_sec END,
+			duration_sec = MAX(episode_progress.duration_sec, excluded.duration_sec),
+			updated_at = MAX(episode_progress.updated_at, excluded.updated_at),
+			watched = MAX(episode_progress.watched, excluded.watched)`, scope, alias); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM episode_progress WHERE scope = ?`, alias); err != nil {
+			return err
 		}
 	}
 	if len(aliases) == 0 {

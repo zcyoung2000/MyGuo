@@ -98,7 +98,7 @@ func TestLoadLibraryShowsErrorWithoutSyntheticRecords(t *testing.T) {
 	app.libraryData = provider
 	app.SetInvalidator(func() {})
 	app.loadLibrary(libraryHistory)
-	if app.library.History.Loading || app.library.History.Error == "" || len(app.library.History.Items) != 0 {
+	if app.library.History.Loading || app.library.History.Error != "暂时无法读取观看历史，请稍后重试" || len(app.library.History.Items) != 0 {
 		t.Fatalf("error history = %+v", app.library.History)
 	}
 }
@@ -113,7 +113,7 @@ func TestLoadHistoryKeepsPartialRowsAlongsideSyncError(t *testing.T) {
 	app.SetInvalidator(func() {})
 	app.loadLibraryWithRefresh(libraryHistory, true)
 	state := app.LibraryState().History
-	if state.Loading || !state.Loaded || state.Empty || state.Error == "" || len(state.Items) != 1 || state.Items[0].Title != "远端已读到" {
+	if state.Loading || !state.Loaded || state.Empty || state.Error != "" || len(state.Items) != 1 || state.Items[0].Title != "远端已读到" {
 		t.Fatalf("partial history state = %+v", state)
 	}
 }
@@ -147,7 +147,7 @@ func TestHistoryPartialSyncErrorLeavesCardsVisible(t *testing.T) {
 	}
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
-	if !tt.HasText("云端历史读取未完成，已读取和本机记录均已保留") || !tt.HasText("远端已读到") || !tt.HasText("立即重试") {
+	if !tt.HasText("远端已读到") || tt.HasText("云端历史读取未完成，已读取和本机记录均已保留") || tt.HasText("立即重试") {
 		t.Fatalf("partial sync render texts=%v", tt.Texts())
 	}
 }

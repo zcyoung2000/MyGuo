@@ -8,6 +8,10 @@ func TestVerifiedAccountAliasRecoversOwnedHistoryOnly(t *testing.T) {
 	if err := s.QueueHistoryUpload(item, "710000000000101", "user:legacy"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.Exec(`INSERT INTO episode_progress (scope, series_id, episode_num, episode_id, position_sec, duration_sec, updated_at, watched)
+		VALUES ('user:legacy', ?, 1, '710000000000101', 96, 100, 100, 1)`, item.SeriesID); err != nil {
+		t.Fatal(err)
+	}
 	other := item
 	other.SeriesID = "710000000000002"
 	if err := s.QueueHistoryUpload(other, "710000000000102", ""); err != nil {
@@ -30,6 +34,10 @@ func TestVerifiedAccountAliasRecoversOwnedHistoryOnly(t *testing.T) {
 	foreign, _ := s.PendingHistoryUploads(10, "user:other")
 	if len(old) != 0 || len(current) != 1 || len(unowned) != 1 || len(foreign) != 1 {
 		t.Fatal("queues crossed owners or were lost")
+	}
+	progress, err := s.EpisodeProgress(item.SeriesID, "user:canonical")
+	if err != nil || len(progress) != 1 || !progress[0].Watched || progress[0].PositionSec != 96 {
+		t.Fatalf("verified alias lost episode completion: %+v, err=%v", progress, err)
 	}
 }
 

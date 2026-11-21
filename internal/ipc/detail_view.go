@@ -17,6 +17,7 @@ import (
 	"myguo/internal/hgapi/model"
 	"myguo/internal/resourcecache"
 	"myguo/internal/sanitize"
+	userstore "myguo/internal/store"
 )
 
 type ActorInfo struct {
@@ -177,11 +178,48 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 // library for every response, without mutating the shared cached DTO.
 func (s *HongguoService) withSeriesUserState(page *SeriesDetailPageDTO) *SeriesDetailPageDTO {
 	result := *page
+	result.Episodes = append([]EpisodeDTO(nil), page.Episodes...)
 	result.IsFavorite = s.store.IsFavorite(result.ID)
 	result.Reserved = s.store.HasReservation(result.ID)
+	historyEpisode := 0
+	historyPosition, historyDuration := 0.0, 0.0
 	if history, ok := s.store.GetHistoryItem(result.ID); ok {
 		result.ResumeEpisode = history.EpisodeNum
 		result.ResumePosition = history.PositionSec
+		historyEpisode = history.EpisodeNum
+		historyPosition, historyDuration = history.PositionSec, history.DurationSec
+	}
+	byNumber := make(map[int]userstore.EpisodeProgress)
+	if progress, err := s.store.EpisodeProgress(result.ID); err == nil {
+		byNumber = make(map[int]userstore.EpisodeProgress, len(progress))
+		for _, item := range progress {
+			byNumber[item.EpisodeNum] = item
+		}
+	}
+	for i := range result.Episodes {
+		ep := &result.Episodes[i]
+		item, hasEpisodeProgress := byNumber[ep.Number]
+		duration := float64(ep.DurationSec)
+		position := 0.0
+		watched := false
+		if hasEpisodeProgress {
+			position = item.PositionSec
+			watched = item.Watched
+			if duration <= 0 {
+				duration = item.DurationSec
+			}
+		}
+		// The legacy series summary only identifies the current episode. It
+		// cannot prove that earlier episodes were completed, so use it for the
+		// current episode only. This prevents jumping to episode 112 from
+		// graying episodes 1 through 111.
+		if ep.Number == historyEpisode && !hasEpisodeProgress {
+			position = historyPosition
+			if duration <= 0 {
+				duration = historyDuration
+			}
+		}
+		ep.Watched = watched || duration > 0 && position >= duration*.95
 	}
 	return &result
 }

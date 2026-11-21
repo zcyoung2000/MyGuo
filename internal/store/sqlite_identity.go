@@ -21,7 +21,7 @@ func anonymousUserProfile(deviceID string) UserProfile {
 
 func clearUserDataTx(tx *sql.Tx) error {
 	for _, table := range []string{
-		"history", "favorites", "likes", "reservations",
+		"history", "episode_progress", "favorites", "likes", "reservations",
 		"history_tombstones", "history_clear_state", "local_history_retention",
 	} {
 		if _, err := tx.Exec("DELETE FROM " + table); err != nil {

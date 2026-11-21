@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"myguo/internal/hgapi/model"
+	userstore "myguo/internal/store"
 )
 
 func TestNextPlayableSeason(t *testing.T) {
@@ -38,6 +39,65 @@ func TestParseAndCacheIDList(t *testing.T) {
 	}
 	if got := cacheIDList(ids); got != "100,200" {
 		t.Fatalf("cacheIDList() = %q, want %q", got, "100,200")
+	}
+}
+
+func TestSeriesDetailOnlyGraysEpisodesWithKnownCompletion(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const seriesID = "710000000000001"
+	if _, err := store.SavePlaybackProgress(userstore.HistoryItem{
+		SeriesID: seriesID, EpisodeNum: 1, PositionSec: 96, DurationSec: 100,
+		TotalEpisodes: 112, UpdatedAt: 100,
+	}, "710000000000101", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SavePlaybackProgress(userstore.HistoryItem{
+		SeriesID: seriesID, EpisodeNum: 112, PositionSec: 3, DurationSec: 100,
+		TotalEpisodes: 112, UpdatedAt: 101,
+	}, "710000000000212", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &HongguoService{store: store, media: &MediaServer{}}
+	page := &SeriesDetailPageDTO{SeriesDetailDTO: SeriesDetailDTO{
+		ID: seriesID,
+		Episodes: []EpisodeDTO{
+			{ID: "710000000000101", Number: 1, DurationSec: 100},
+			{ID: "710000000000212", Number: 112, DurationSec: 100},
+		},
+	}}
+	result := service.withSeriesUserState(page)
+	if !result.Episodes[0].Watched || result.Episodes[1].Watched {
+		t.Fatalf("episode states = %+v; want only completed episode 1 gray", result.Episodes)
+	}
+}
+
+func TestSeriesDetailDoesNotInferEarlierCompletionFromJumpedEpisode(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const seriesID = "710000000000001"
+	if err := store.SaveHistory(userstore.HistoryItem{
+		SeriesID: seriesID, EpisodeNum: 112, PositionSec: 3, DurationSec: 100,
+		TotalEpisodes: 112, UpdatedAt: 101,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := &HongguoService{store: store, media: &MediaServer{}}
+	result := service.withSeriesUserState(&SeriesDetailPageDTO{SeriesDetailDTO: SeriesDetailDTO{
+		ID:       seriesID,
+		Episodes: []EpisodeDTO{{Number: 1, DurationSec: 100}, {Number: 112, DurationSec: 100}},
+	}})
+	if result.Episodes[0].Watched || result.Episodes[1].Watched {
+		t.Fatalf("episode states = %+v; a jumped partial episode must not infer completion", result.Episodes)
 	}
 }
 

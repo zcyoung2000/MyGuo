@@ -746,7 +746,7 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		return
 	}
 
-	if library.Error != "" {
+	if library.Error != "" && !(tab == libraryHistory && len(library.Items) > 0) {
 		if len(library.Items) == 0 {
 			a.errorView(c, library.Error, func() { go a.RefreshLibrary(tab) })
 			return
@@ -896,9 +896,11 @@ func formatEpisode(number int) string {
 }
 
 func historyEpisodeBadge(item CatalogItem) string {
-	if item.ResumeEpisode > 1 && item.EpisodeCount > 0 {
-		watched := min(item.ResumeEpisode, item.EpisodeCount)
-		return fmt.Sprintf("%d / %d集", watched, item.EpisodeCount)
+	if item.Completed {
+		return "已看完"
+	}
+	if item.ResumeEpisode > 0 && item.EpisodeCount > 0 {
+		return fmt.Sprintf("看到第%d集", min(item.ResumeEpisode, item.EpisodeCount))
 	}
 	if item.EpisodeCount > 0 {
 		return fmt.Sprintf("共%d集", item.EpisodeCount)

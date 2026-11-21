@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"myguo/internal/mediautil"
+	userstore "myguo/internal/store"
 )
 
 const seriesProgressTimeout = 8 * time.Second
@@ -22,7 +23,7 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 	if !mediautil.ValidContentID(seriesID) {
 		return local, fmt.Errorf("历史 ID 无效")
 	}
-	remote, err := s.fetchSeriesProgress(ctx, seriesID)
+	remote, remoteEpisodes, err := s.fetchSeriesProgress(ctx, seriesID)
 	s.historyMu.Lock()
 	defer s.historyMu.Unlock()
 	local, hasLocal := s.store.GetHistoryItem(seriesID)
@@ -31,6 +32,30 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 	}
 	if err != nil || remote == nil {
 		return local, err
+	}
+	localEpisodes, err := s.store.EpisodeProgress(seriesID, session.scope)
+	if err != nil {
+		return local, err
+	}
+	localByNumber := make(map[int]userstore.EpisodeProgress, len(localEpisodes))
+	for _, item := range localEpisodes {
+		localByNumber[item.EpisodeNum] = item
+	}
+	for index := range remoteEpisodes {
+		older, exists := localByNumber[remoteEpisodes[index].EpisodeNum]
+		if exists && older.UpdatedAt > remoteEpisodes[index].UpdatedAt {
+			remoteEpisodes[index].PositionSec = older.PositionSec
+			remoteEpisodes[index].UpdatedAt = older.UpdatedAt
+		}
+		if remoteEpisodes[index].DurationSec <= 0 && exists {
+			remoteEpisodes[index].DurationSec = older.DurationSec
+		}
+		remoteEpisodes[index].Watched = remoteEpisodes[index].Watched || exists && older.Watched || remoteEpisodes[index].DurationSec > 0 && remoteEpisodes[index].PositionSec >= remoteEpisodes[index].DurationSec*.95
+	}
+	if len(remoteEpisodes) > 0 {
+		if _, err := s.store.SaveEpisodeProgressBatchIfCurrentScope(remoteEpisodes, session.scope); err != nil {
+			return local, err
+		}
 	}
 	merged := mergeProgress(local, *remote)
 	if hasLocal {
@@ -120,39 +145,58 @@ func enrichProgress(newer, older HistoryItem) HistoryItem {
 	return newer
 }
 
-func (s *Service) fetchSeriesProgress(ctx context.Context, seriesID string) (*HistoryItem, error) {
+func (s *Service) fetchSeriesProgress(ctx context.Context, seriesID string) (*HistoryItem, []userstore.EpisodeProgress, error) {
 	ctx = s.bindSyncSession(ctx)
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, seriesProgressTimeout)
 	defer cancel()
 	page, err := s.apiForSession(session).History(ctx, 0, seriesID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var latest *HistoryItem
+	byEpisode := make(map[int]userstore.EpisodeProgress)
 	for _, row := range page.Items {
 		if row.SeriesID != seriesID {
 			continue
 		}
+		episodeNum := row.VidIndex + 1
+		if episodeNum <= 0 {
+			continue
+		}
+		updatedAt := remoteProgressUpdatedAt(row)
+		episode := userstore.EpisodeProgress{
+			SeriesID: seriesID, EpisodeNum: episodeNum,
+			PositionSec: float64(row.CurrentPlayTime) / 1000, UpdatedAt: updatedAt,
+		}
+		if current, ok := byEpisode[episodeNum]; !ok || episode.UpdatedAt >= current.UpdatedAt {
+			byEpisode[episodeNum] = episode
+		}
 		item := HistoryItem{
 			SeriesID:      row.SeriesID,
 			Title:         "未知短剧",
-			EpisodeNum:    row.VidIndex + 1,
-			EpisodeTitle:  fmt.Sprintf("第%d集", row.VidIndex+1),
+			EpisodeNum:    episodeNum,
+			EpisodeTitle:  fmt.Sprintf("第%d集", episodeNum),
 			PositionSec:   float64(row.CurrentPlayTime) / 1000,
 			TotalEpisodes: row.EpisodeCount,
-			UpdatedAt:     remoteProgressUpdatedAt(row),
+			UpdatedAt:     updatedAt,
 			ContentType:   1004,
 		}
-		if item.EpisodeNum <= 0 {
-			item.EpisodeNum = 1
-			item.EpisodeTitle = "第1集"
+		if latest == nil || item.UpdatedAt >= latest.UpdatedAt {
+			latest = &item
 		}
-		return &item, nil
 	}
-	return nil, nil
+	if latest == nil {
+		return nil, nil, nil
+	}
+	episodes := make([]userstore.EpisodeProgress, 0, len(byEpisode))
+	for _, item := range byEpisode {
+		episodes = append(episodes, item)
+	}
+	return latest, episodes, nil
 }
 
 func remoteProgressUpdatedAt(row remoteHistoryRow) int64 {

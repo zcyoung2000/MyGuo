@@ -291,8 +291,10 @@ func (a *App) renderDetailEpisodeRow(c *ui.Context, episodes []CatalogItem, star
 			ep := episodes[i]
 			active := a.resume.ResumeEpisode == ep.EpisodeCount
 			button := ui.Button(c.Key(fmt.Sprintf("ep-%d", ep.EpisodeCount)), "").Label(fmt.Sprintf("第%d集", ep.EpisodeCount)).Width(width).Height(detailEpisodeHeight).Padding(10, 12).Radius(9).Border(1, c.Theme().Border).OnClick(func() { go a.ChooseEpisode(ep.EpisodeCount) })
-			if active {
+			if active && !ep.Watched {
 				button.Background(c.Theme().Selection).Border(1, c.Theme().Accent.Alpha(.5)).TextColor(c.Theme().Accent)
+			} else if ep.Watched {
+				button.Background(ui.RGBA(255, 255, 255, .055)).Border(1, ui.RGBA(255, 255, 255, .08)).TextColor(c.Theme().TextMuted)
 			} else {
 				button.Background(ui.RGBA(255, 255, 255, .035))
 			}

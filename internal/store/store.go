@@ -40,6 +40,20 @@ type HistoryItem struct {
 	ContentType   int     `json:"contentType,omitempty"`
 }
 
+// EpisodeProgress keeps the local playback clock for one episode. A progress
+// row is treated as watched only when playback reached at least 95% of its
+// known duration; opening or briefly scrolling past a recommendation is not
+// enough to gray an episode in the detail list.
+type EpisodeProgress struct {
+	SeriesID    string
+	EpisodeID   string
+	EpisodeNum  int
+	PositionSec float64
+	DurationSec float64
+	UpdatedAt   int64
+	Watched     bool
+}
+
 type FavoriteItem struct {
 	SeriesID      string `json:"seriesId"`
 	Title         string `json:"title"`
@@ -407,6 +421,20 @@ func (s *Store) initSchema() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_history_updated ON history(updated_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_history_content_type ON history(content_type);
+
+	CREATE TABLE IF NOT EXISTS episode_progress (
+		scope TEXT NOT NULL DEFAULT '',
+		series_id TEXT NOT NULL,
+		episode_num INTEGER NOT NULL,
+		episode_id TEXT NOT NULL DEFAULT '',
+		position_sec REAL NOT NULL DEFAULT 0,
+		duration_sec REAL NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL DEFAULT 0,
+		watched INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (scope, series_id, episode_num)
+	);
+	CREATE INDEX IF NOT EXISTS idx_episode_progress_series
+		ON episode_progress(scope, series_id, episode_num);
 
 	CREATE TABLE IF NOT EXISTS history_tombstones (
 		series_id TEXT PRIMARY KEY,
@@ -1349,6 +1377,9 @@ func (s *Store) DeleteHistory(seriesID string, scopes ...string) error {
 	if _, err := tx.Exec(`DELETE FROM history WHERE series_id = ?`, seriesID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM episode_progress WHERE scope = ? AND series_id = ?`, s.syncScopeLocked(scopes), seriesID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM local_history_retention WHERE series_id = ?`, seriesID); err != nil {
 		return err
 	}
@@ -1422,6 +1453,9 @@ func (s *Store) ClearHistory(scopes ...string) error {
 	if _, err := tx.Exec(`DELETE FROM history`); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM episode_progress WHERE scope = ?`, s.syncScopeLocked(scopes)); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM local_history_retention`); err != nil {
 		return err
 	}
@@ -1483,7 +1517,7 @@ func queueHistoryUploadTx(tx *sql.Tx, item HistoryItem, episodeID, scope string)
 			series_id, episode_id, title, cover_url, episode_num, episode_title,
 			position_sec, duration_sec, total_episodes, updated_at, intro, content_type, scope, revision
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(scope, series_id) DO UPDATE SET
+		ON CONFLICT(scope, series_id, episode_num) DO UPDATE SET
 			episode_id = excluded.episode_id,
 			title = excluded.title,
 			cover_url = excluded.cover_url,
@@ -1529,12 +1563,42 @@ func (s *Store) SavePlaybackProgressContext(ctx context.Context, item HistoryIte
 	if err = saveHistoryTx(tx, item, scope); err != nil {
 		return HistoryItem{}, err
 	}
+	if item.EpisodeNum > 0 {
+		if err := saveEpisodeProgressTx(tx, EpisodeProgress{
+			SeriesID: item.SeriesID, EpisodeID: episodeID, EpisodeNum: item.EpisodeNum,
+			PositionSec: item.PositionSec, DurationSec: item.DurationSec, UpdatedAt: item.UpdatedAt,
+		}, scope); err != nil {
+			return HistoryItem{}, err
+		}
+	}
 	var stored HistoryItem
 	err = tx.QueryRow(`SELECT series_id,title,cover_url,episode_num,episode_title,position_sec,duration_sec,total_episodes,updated_at,intro,content_type FROM history WHERE series_id=?`, item.SeriesID).Scan(&stored.SeriesID, &stored.Title, &stored.CoverURL, &stored.EpisodeNum, &stored.EpisodeTitle, &stored.PositionSec, &stored.DurationSec, &stored.TotalEpisodes, &stored.UpdatedAt, &stored.Intro, &stored.ContentType)
 	if err != nil {
 		return HistoryItem{}, err
 	}
-	if err = queueHistoryUploadTx(tx, stored, episodeID, scope); err != nil {
+	// Keep the episode-specific clock from item, while carrying forward any
+	// metadata that was already known in the compact series row. Playback
+	// events can arrive before the UI has populated title or cover fields.
+	upload := item
+	if upload.Title == "" {
+		upload.Title = stored.Title
+	}
+	if upload.CoverURL == "" {
+		upload.CoverURL = stored.CoverURL
+	}
+	if upload.EpisodeTitle == "" {
+		upload.EpisodeTitle = stored.EpisodeTitle
+	}
+	if upload.TotalEpisodes <= 0 {
+		upload.TotalEpisodes = stored.TotalEpisodes
+	}
+	if upload.Intro == "" {
+		upload.Intro = stored.Intro
+	}
+	if upload.ContentType == 0 {
+		upload.ContentType = stored.ContentType
+	}
+	if err = queueHistoryUploadTx(tx, upload, episodeID, scope); err != nil {
 		return HistoryItem{}, err
 	}
 	if err = tx.Commit(); err != nil {

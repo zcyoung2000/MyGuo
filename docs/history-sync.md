@@ -18,6 +18,12 @@ for the same episode. For a final episode with missing duration, the metadata
 worker checks the episode details. If duration remains unavailable, completion
 stays unconfirmed.
 
+Per-episode clocks are stored separately from the one-row-per-series resume
+summary. A detail page grays only episodes whose known duration reached 95%.
+Jumping directly to a later episode does not infer completion for earlier
+episodes, and the same episode progress is merged across local playback and
+the account-scoped cloud snapshot.
+
 ## Existing bidirectional synchronization
 
 - `SaveProgress` persists authentic playback progress, invalidates the history
@@ -45,10 +51,13 @@ stays unconfirmed.
   in an internal suppression record, with a recheck after seven days. Its
   actual playback progress is retained. Metadata maintenance and unavailable
   content do not turn a successful history read into a user-facing error.
-- The UI displays partial results with a retryable sync error for real read or
-  upload failures. Metadata changes
-  invalidate the history view; absent or failed cover art is labelled so a
-  broken poster is visible rather than silently treated as a valid image.
+- The UI displays partial results without exposing account-ownership,
+  unavailable-content, transport, or retry details as a persistent banner.
+  The worker logs the failure and keeps the durable upload or metadata task for
+  background retry. A completely empty failed read still gets a normal load
+  error state. Metadata changes invalidate the history view; absent or failed
+  cover art is labelled so a broken poster is visible rather than silently
+  treated as a valid image.
 - Legacy history upload and delete tasks with no account scope cannot safely
   be sent. Startup and cloud refresh retire them automatically in a transaction,
   without assigning them to the active account or showing a warning. Visible

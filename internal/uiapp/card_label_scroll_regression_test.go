@@ -87,7 +87,7 @@ func TestHistoryProgressBadgeSurvivesLabelCleanup(t *testing.T) {
 	}}}
 	tester := ui.NewTester(app.renderBody, 1200, 900)
 	tester.Frame()
-	if !tester.HasText("3 / 80集") {
+	if !tester.HasText("看到第3集") {
 		t.Fatalf("history progress badge missing: %v", tester.Texts())
 	}
 }

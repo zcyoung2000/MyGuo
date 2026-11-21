@@ -10,20 +10,20 @@ import (
 // These definitions also migrate queues from versions with a series-only key.
 // Unowned legacy intents must never inherit a new login. They are retired by
 // CleanupLegacyHistoryMutations after preserving any visible local progress.
-var syncQueues = []struct{ name, columns, fields, order string }{
+var syncQueues = []struct{ name, columns, fields, order, key string }{
 	{"pending_history_uploads", "series_id, episode_id, title, cover_url, episode_num, episode_title, position_sec, duration_sec, total_episodes, updated_at, intro, content_type", `
 		series_id TEXT NOT NULL, episode_id TEXT NOT NULL DEFAULT '',
 		title TEXT NOT NULL DEFAULT '', cover_url TEXT NOT NULL DEFAULT '',
 		episode_num INTEGER NOT NULL DEFAULT 1, episode_title TEXT NOT NULL DEFAULT '',
 		position_sec REAL NOT NULL DEFAULT 0, duration_sec REAL NOT NULL DEFAULT 0,
 		total_episodes INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0,
-		intro TEXT NOT NULL DEFAULT '', content_type INTEGER NOT NULL DEFAULT 1004`, "updated_at"},
+		intro TEXT NOT NULL DEFAULT '', content_type INTEGER NOT NULL DEFAULT 1004`, "updated_at", "scope, series_id, episode_num"},
 	{"pending_history_deletes", "series_id, episode_id, episode_num, deleted_at", `
 		series_id TEXT NOT NULL, episode_id TEXT NOT NULL DEFAULT '',
-		episode_num INTEGER NOT NULL DEFAULT 1, deleted_at INTEGER NOT NULL DEFAULT 0`, "deleted_at"},
+		episode_num INTEGER NOT NULL DEFAULT 1, deleted_at INTEGER NOT NULL DEFAULT 0`, "deleted_at", "scope, series_id"},
 	{"pending_favorite_ops", "series_id, added, updated_at", `
 		series_id TEXT NOT NULL, added INTEGER NOT NULL DEFAULT 1,
-		updated_at INTEGER NOT NULL DEFAULT 0`, "updated_at"},
+		updated_at INTEGER NOT NULL DEFAULT 0`, "updated_at", "scope, series_id"},
 }
 
 func (s *Store) initSyncQueues() error {
@@ -43,9 +43,13 @@ func (s *Store) initSyncQueues() error {
 		if _, err := tx.Exec("ALTER TABLE " + queue.name + " RENAME TO " + queue.name + "_unowned"); err != nil {
 			return err
 		}
+		key := queue.key
+		if key == "" {
+			key = "scope, series_id"
+		}
 		if _, err := tx.Exec("CREATE TABLE " + queue.name + " (" + queue.fields + `,
 			scope TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY(scope, series_id))`); err != nil {
+			PRIMARY KEY(` + key + `))`); err != nil {
 			return err
 		}
 		if _, err := tx.Exec("INSERT INTO " + queue.name + " (" + queue.columns + ") SELECT " + queue.columns + " FROM " + queue.name + "_unowned"); err != nil {
@@ -57,6 +61,9 @@ func (s *Store) initSyncQueues() error {
 		if _, err := tx.Exec("CREATE INDEX idx_" + queue.name + "_" + strings.TrimSuffix(queue.order, "_at") + " ON " + queue.name + "(scope, " + queue.order + ")"); err != nil {
 			return err
 		}
+	}
+	if err := migratePendingHistoryUploadEpisodeKey(tx); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS sync_revision_sequence (
 		id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL DEFAULT 0
@@ -91,6 +98,58 @@ func (s *Store) initSyncQueues() error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func migratePendingHistoryUploadEpisodeKey(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT name, pk FROM pragma_table_info('pending_history_uploads') ORDER BY pk`)
+	if err != nil {
+		return err
+	}
+	var key []string
+	for rows.Next() {
+		var name string
+		var position int
+		if err := rows.Scan(&name, &position); err != nil {
+			rows.Close()
+			return err
+		}
+		if position > 0 {
+			key = append(key, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if strings.Join(key, ",") == "scope,series_id,episode_num" {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE pending_history_uploads RENAME TO pending_history_uploads_series_key`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE TABLE pending_history_uploads (
+		series_id TEXT NOT NULL, episode_id TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL DEFAULT '', cover_url TEXT NOT NULL DEFAULT '',
+		episode_num INTEGER NOT NULL DEFAULT 1, episode_title TEXT NOT NULL DEFAULT '',
+		position_sec REAL NOT NULL DEFAULT 0, duration_sec REAL NOT NULL DEFAULT 0,
+		total_episodes INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0,
+		intro TEXT NOT NULL DEFAULT '', content_type INTEGER NOT NULL DEFAULT 1004,
+		scope TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY(scope, series_id, episode_num))`); err != nil {
+		return err
+	}
+	columns := "series_id, episode_id, title, cover_url, episode_num, episode_title, position_sec, duration_sec, total_episodes, updated_at, intro, content_type, scope, revision"
+	if _, err := tx.Exec(`INSERT INTO pending_history_uploads (` + columns + `) SELECT ` + columns + ` FROM pending_history_uploads_series_key`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE pending_history_uploads_series_key`); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_pending_history_uploads_updated ON pending_history_uploads(scope, updated_at)`)
+	return err
 }
 
 func (s *Store) QueueHistoryMetadata(seriesIDs []string, scope string) error {
@@ -373,6 +432,7 @@ func nextSyncRevision(tx *sql.Tx) (int64, error) {
 
 type syncIntent struct {
 	scope, seriesID string
+	episodeNum      int
 	revision        int64
 }
 
@@ -385,7 +445,13 @@ func (s *Store) ackSyncIntents(table string, intents []syncIntent) error {
 	}
 	defer tx.Rollback()
 	for _, intent := range intents {
-		if _, err := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE scope = ? AND series_id = ? AND revision = ?`, table), intent.scope, intent.seriesID, intent.revision); err != nil {
+		query := fmt.Sprintf(`DELETE FROM %s WHERE scope = ? AND series_id = ? AND revision = ?`, table)
+		args := []any{intent.scope, intent.seriesID, intent.revision}
+		if table == "pending_history_uploads" {
+			query = fmt.Sprintf(`DELETE FROM %s WHERE scope = ? AND series_id = ? AND episode_num = ? AND revision = ?`, table)
+			args = []any{intent.scope, intent.seriesID, intent.episodeNum, intent.revision}
+		}
+		if _, err := tx.Exec(query, args...); err != nil {
 			return err
 		}
 	}
@@ -395,7 +461,7 @@ func (s *Store) ackSyncIntents(table string, intents []syncIntent) error {
 func (s *Store) AckHistoryUploads(items []PendingHistoryUpload) error {
 	intents := make([]syncIntent, 0, len(items))
 	for _, item := range items {
-		intents = append(intents, syncIntent{item.Scope, item.SeriesID, item.Revision})
+		intents = append(intents, syncIntent{scope: item.Scope, seriesID: item.SeriesID, episodeNum: item.EpisodeNum, revision: item.Revision})
 	}
 	return s.ackSyncIntents("pending_history_uploads", intents)
 }
@@ -403,7 +469,7 @@ func (s *Store) AckHistoryUploads(items []PendingHistoryUpload) error {
 func (s *Store) AckHistoryDeletes(items []PendingHistoryDelete) error {
 	intents := make([]syncIntent, 0, len(items))
 	for _, item := range items {
-		intents = append(intents, syncIntent{item.Scope, item.SeriesID, item.Revision})
+		intents = append(intents, syncIntent{scope: item.Scope, seriesID: item.SeriesID, revision: item.Revision})
 	}
 	return s.ackSyncIntents("pending_history_deletes", intents)
 }
@@ -411,7 +477,7 @@ func (s *Store) AckHistoryDeletes(items []PendingHistoryDelete) error {
 func (s *Store) AckFavoriteOps(items []PendingFavoriteOp) error {
 	intents := make([]syncIntent, 0, len(items))
 	for _, item := range items {
-		intents = append(intents, syncIntent{item.Scope, item.SeriesID, item.Revision})
+		intents = append(intents, syncIntent{scope: item.Scope, seriesID: item.SeriesID, revision: item.Revision})
 	}
 	return s.ackSyncIntents("pending_favorite_ops", intents)
 }

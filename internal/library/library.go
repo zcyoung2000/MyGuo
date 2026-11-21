@@ -322,6 +322,26 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	}
 	var histBatch []HistoryItem
 	remoteSnapshot := make([]HistoryItem, 0, len(latestByID))
+	remoteEpisodeProgress := make(map[string]userstore.EpisodeProgress)
+	for _, row := range remoteRows {
+		epNum := row.VidIndex + 1
+		if row.SeriesID == "" || epNum <= 0 {
+			continue
+		}
+		updatedAt := row.LastWatchTime / 1000
+		if updatedAt <= 0 {
+			updatedAt = time.Now().Unix()
+		}
+		key := fmt.Sprintf("%s:%d", row.SeriesID, epNum)
+		progress := userstore.EpisodeProgress{
+			SeriesID: row.SeriesID, EpisodeNum: epNum,
+			PositionSec: float64(row.CurrentPlayTime) / 1000,
+			UpdatedAt:   updatedAt,
+		}
+		if previous, ok := remoteEpisodeProgress[key]; !ok || progress.UpdatedAt >= previous.UpdatedAt {
+			remoteEpisodeProgress[key] = progress
+		}
+	}
 	for _, it := range latestByID {
 		id := it.SeriesID
 		epNum := it.VidIndex + 1
@@ -400,6 +420,20 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		return errSyncSessionChanged
 	}
 	s.historyMu.Unlock()
+
+	progressSnapshot := make([]userstore.EpisodeProgress, 0, len(remoteEpisodeProgress))
+	for _, item := range remoteEpisodeProgress {
+		progressSnapshot = append(progressSnapshot, item)
+	}
+	if authoritative {
+		if _, err := s.store.ReplaceEpisodeProgressIfCurrentScope(progressSnapshot, session.scope); err != nil {
+			return errors.Join(readErr, err)
+		}
+	} else if len(progressSnapshot) > 0 {
+		if _, err := s.store.SaveEpisodeProgressBatchIfCurrentScope(progressSnapshot, session.scope); err != nil {
+			return errors.Join(readErr, err)
+		}
+	}
 
 	var metadataIDs []string
 	metadataResolverAvailable := s.seriesBatch != nil || s.series != nil
