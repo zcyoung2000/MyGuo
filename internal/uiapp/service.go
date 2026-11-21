@@ -163,6 +163,9 @@ type App struct {
 	playerDanmakuList           ui.ListState
 	playerDanmaku               danmakuLayout
 	playerDanmakuHover          danmakuHover
+	playerPointer               ui.Point
+	playerPointerScene          uint64
+	playerPointerKnown          bool
 	playerFrameKey              string
 	playerNativeBackdrop        bool
 	playerTransitionBitmap      *ui.Bitmap

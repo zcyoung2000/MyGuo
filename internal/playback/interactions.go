@@ -2,9 +2,11 @@ package playback
 
 import "time"
 
+const playerChromeIdleTimeout = 2 * time.Second
+
 // surfaceClick runs in the actor so rapid clicks use the latest state, even
-// before the next UI snapshot. Visible playing -> clean playing -> paused with
-// controls; clicking a paused picture resumes clean playback.
+// before the next UI snapshot. In a series player, picture taps only toggle
+// chrome. In the recommendation feed, they toggle playback.
 func (c *Controller) surfaceClick() {
 	if c.state.Mode == Idle {
 		return
@@ -12,27 +14,48 @@ func (c *Controller) surfaceClick() {
 	if c.state.Panel != "" {
 		c.state.Panel = ""
 		c.state.Preferences.Clear = false
+		c.chromeActivity = time.Now()
 		c.system()
 		return
 	}
-	if c.state.Error != "" {
-		c.state.Preferences.Clear = false
-		c.state.Paused = false
-		c.retrySelection()
-		return
-	}
 	if c.state.Mode == Feed {
-		c.setPaused(true)
+		c.state.Preferences.Clear = false
+		if c.state.Error != "" {
+			c.state.Paused = false
+			c.retrySelection()
+			return
+		}
+		c.setPaused(!c.state.Paused && !c.state.Status.Ended)
 		return
 	}
-	if c.state.Paused || c.state.Status.Ended {
-		c.setPaused(false)
-		c.state.Preferences.Clear = true
-	} else if c.state.Preferences.Clear {
-		c.setPaused(true)
-	} else {
-		c.state.Preferences.Clear = true
+	c.state.Preferences.Clear = !c.state.Preferences.Clear
+	c.chromeActivity = time.Now()
+}
+
+func (c *Controller) notePlayerActivity() {
+	if c.state.Mode != Series {
+		return
 	}
+	c.markChromeActivity()
+	c.state.Preferences.Clear = false
+}
+
+func (c *Controller) markChromeActivity() {
+	if c.state.Mode != Series {
+		return
+	}
+	c.chromeActivity = time.Now()
+}
+
+func (c *Controller) hideIdleChrome(now time.Time) bool {
+	if c.state.Mode != Series || c.state.Panel != "" || c.state.Preferences.Clear || c.chromeActivity.IsZero() {
+		return false
+	}
+	if now.Sub(c.chromeActivity) < playerChromeIdleTimeout {
+		return false
+	}
+	c.state.Preferences.Clear = true
+	return true
 }
 
 func (c *Controller) retrySelection() {
@@ -54,6 +77,7 @@ func (c *Controller) retrySelection() {
 }
 
 func (c *Controller) setPaused(paused bool) {
+	c.markChromeActivity()
 	s := c.current
 	if s != nil {
 		s.clockAdvanced = time.Time{}

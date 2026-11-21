@@ -44,6 +44,9 @@ func (p *nativeUIPlayer) Command(command string, value any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.commands = append(p.commands, command)
+	if command != "surface" && command != "clear" && command != "activity" && p.state.Mode == playback.Series {
+		p.state.Preferences.Clear = false
+	}
 	if p.values == nil {
 		p.values = map[string]any{}
 	}
@@ -71,21 +74,16 @@ func (p *nativeUIPlayer) Command(command string, value any) {
 	case "surface":
 		if p.state.Panel != "" {
 			p.state.Panel = ""
-			return
-		}
-		if p.state.Mode == playback.Feed {
-			p.state.Paused = true
-			p.state.Status.Playing = false
 			p.state.Preferences.Clear = false
 			return
 		}
-		if p.state.Paused || p.state.Status.Ended {
-			p.state.Paused, p.state.Preferences.Clear = false, true
-		} else if p.state.Preferences.Clear {
-			p.state.Paused, p.state.Preferences.Clear = true, false
-		} else {
-			p.state.Preferences.Clear = true
+		if p.state.Mode == playback.Feed {
+			p.state.Paused = !p.state.Paused && !p.state.Status.Ended
+			p.state.Status.Playing = !p.state.Paused
+			p.state.Preferences.Clear = false
+			return
 		}
+		p.state.Preferences.Clear = !p.state.Preferences.Clear
 	case "clear":
 		if clear, ok := value.(bool); ok {
 			p.state.Preferences.Clear = clear

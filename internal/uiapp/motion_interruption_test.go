@@ -39,3 +39,44 @@ func TestArtworkRevealStaysPaintOnly(t *testing.T) {
 		t.Fatal("artwork reveal must remain a 320ms non-motion fade")
 	}
 }
+
+func TestPlayerChromeTransitionFadesInAndOut(t *testing.T) {
+	visible := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.Root().Background(ui.RGB(0, 0, 0))
+		if visible {
+			ui.Box(c.Key("player-chrome-motion-fixture")).Absolute().Left(20).Top(20).Size(40, 40).
+				Background(ui.RGB(255, 0, 0)).Transition(playerChromeTransition)
+		}
+	}, 100, 100)
+	tt.Frame()
+	visible = true
+	tt.Frame()
+	start := chromeTransitionRed(t, tt)
+	tt.Advance(playerChromeTransition.Duration / 2)
+	midIn := chromeTransitionRed(t, tt)
+	tt.Advance(playerChromeTransition.Duration)
+	endIn := chromeTransitionRed(t, tt)
+	if !(start < midIn && midIn < endIn) {
+		t.Fatalf("chrome did not fade in progressively: %d, %d, %d", start, midIn, endIn)
+	}
+	visible = false
+	tt.Frame()
+	start = chromeTransitionRed(t, tt)
+	tt.Advance(playerChromeTransition.Duration / 2)
+	midOut := chromeTransitionRed(t, tt)
+	tt.Advance(playerChromeTransition.Duration)
+	endOut := chromeTransitionRed(t, tt)
+	if !(start > midOut && midOut > endOut) {
+		t.Fatalf("chrome did not fade out progressively: %d, %d, %d", start, midOut, endOut)
+	}
+	if tt.FramePending() {
+		t.Fatal("player chrome transition kept requesting frames after it settled")
+	}
+}
+
+func chromeTransitionRed(t *testing.T, tt *ui.Tester) uint32 {
+	t.Helper()
+	r, _, _, _ := tt.Image().At(30, 30).RGBA()
+	return r
+}

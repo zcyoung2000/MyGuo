@@ -1,13 +1,15 @@
 package uiapp
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/playback"
 )
 
-func TestNativeFeedPictureClickPausesAndKeepsControls(t *testing.T) {
+func TestNativeFeedPictureClickPausesThenResumesAndKeepsControls(t *testing.T) {
 	p := newNativeUIPlayer()
 	a := NewTestApp()
 	a.SetMediaHost(&MediaHost{controller: p})
@@ -30,14 +32,75 @@ func TestNativeFeedPictureClickPausesAndKeepsControls(t *testing.T) {
 	if !p.state.Paused || p.state.Preferences.Clear || !tt.HasText("播放进度") || !tt.HasText("推荐频道") {
 		t.Fatalf("first tap: clear=%v paused=%v seek=%v channels=%v commands=%v stage=%+v", p.state.Preferences.Clear, p.state.Paused, tt.HasText("播放进度"), tt.HasText("推荐频道"), p.commands, stage)
 	}
+	if picture, ok := tt.AccessByRole(ui.RoleButton, "播放画面"); !ok || picture.Description != "点击继续播放" {
+		t.Fatal("paused picture does not advertise the resume action")
+	}
 	tt.ClickAt(x, y)
 	tt.Frame()
 	tt.Advance(200 * time.Millisecond)
-	if !p.state.Paused || p.state.Preferences.Clear || !tt.HasText("播放进度") || !tt.HasText("推荐频道") {
-		t.Fatal("second feed picture tap changed the paused state or hid controls")
+	if p.state.Paused || !p.state.Status.Playing || p.state.Preferences.Clear || !tt.HasText("播放进度") || !tt.HasText("推荐频道") {
+		t.Fatal("second feed picture tap did not resume playback with controls visible")
+	}
+	if picture, ok := tt.AccessByRole(ui.RoleButton, "播放画面"); !ok || picture.Description != "点击暂停" {
+		t.Fatal("playing picture does not advertise the pause action")
 	}
 	if len(p.commands) < 2 || p.commands[len(p.commands)-1] != "surface" {
 		t.Fatalf("picture taps did not use the surface command: %v", p.commands)
+	}
+}
+
+func TestNativeSeriesPictureOnlyTogglesControlsAndCenterButtonTogglesPlayback(t *testing.T) {
+	p := newNativeUIPlayer()
+	a := NewTestApp()
+	a.SetMediaHost(&MediaHost{controller: p})
+	a.OpenView("recommend")
+	p.state.Mode = playback.Series
+	p.state.Paused = false
+	p.state.Status.Playing = true
+	tt := ui.NewTester(a.Render, 1280, 820)
+	tt.Advance(200 * time.Millisecond)
+	if tt.HasText("已暂停") {
+		t.Fatal("redundant paused status text is still visible")
+	}
+	if _, ok := tt.AccessByRole(ui.RoleButton, "暂停视频"); !ok {
+		t.Fatal("playing series has no accessible center pause button")
+	}
+	stage, ok := tt.Find("播放画面")
+	if !ok {
+		t.Fatal("missing picture click target")
+	}
+	center, _ := tt.AccessByRole(ui.RoleButton, "暂停视频")
+	if math.Abs(float64(center.Bounds.X+center.Bounds.W/2-(stage.X+stage.W/2))) > 2 || math.Abs(float64(center.Bounds.Y+center.Bounds.H/2-(stage.Y+stage.H/2))) > 2 {
+		t.Fatalf("play/pause button is not centered over the video: button=%+v stage=%+v", center.Bounds, stage)
+	}
+	x, y := stage.X+stage.W*.24, stage.Y+stage.H*.5
+	tt.ClickAt(x, y)
+	tt.Frame()
+	if !p.state.Preferences.Clear || p.state.Paused || !p.state.Status.Playing {
+		t.Fatalf("picture click changed playback instead of hiding controls: %+v", p.state)
+	}
+	tt.Move(x+8, y+8)
+	tt.Frame()
+	if !p.state.Preferences.Clear || p.state.Paused || !p.state.Status.Playing {
+		t.Fatalf("pointer movement revealed controls or interrupted playback: %+v", p.state)
+	}
+	tt.ClickAt(x, y)
+	tt.Frame()
+	if p.state.Preferences.Clear || p.state.Paused || !p.state.Status.Playing {
+		t.Fatalf("picture click changed playback instead of showing controls: %+v", p.state)
+	}
+	if err := tt.Click("暂停视频"); err != nil {
+		t.Fatal(err)
+	}
+	if !p.state.Paused || p.state.Status.Playing || p.commands[len(p.commands)-1] != "toggle" {
+		t.Fatalf("center button did not pause video: state=%+v commands=%v", p.state, p.commands)
+	}
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "播放视频"); !ok {
+		t.Fatal("center button icon/name did not follow the paused state")
+	}
+	if _, ok := tt.AccessByRole(ui.RoleButton, "暂停视频"); ok {
+		t.Fatal("paused video still exposes the pause action")
 	}
 }
 

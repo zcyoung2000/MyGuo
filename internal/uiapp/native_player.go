@@ -52,13 +52,14 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 		stage := ui.Box(c.Key("player-stage")).Absolute().Fill().Clip()
 		stage.Children(func() {
 			a.renderNativePlayerVideo(c, s)
-			ui.ButtonBase(c.Key("player-video-toggle")).Absolute().Fill().Label("播放画面").Description(playerSurfaceDescription(s)).TabStop(false).Background(ui.Transparent).OnClick(func() {
+			surface := ui.ButtonBase(c.Key("player-video-toggle")).Absolute().Fill().Label("播放画面").Description(playerSurfaceDescription(s)).TabStop(false).Background(ui.Transparent).OnClick(func() {
 				if c.KeyDown(ui.KeySpace) || c.KeyDown(ui.KeyEnter) {
 					command("toggle", nil)
 				} else {
 					command("surface", nil)
 				}
 			})
+			a.trackSeriesPlayerPointer(surface, s, command)
 			if s.Preferences.Danmaku.Enabled && s.Status.Ready {
 				a.renderNativeDanmaku(c, s)
 			}
@@ -68,6 +69,9 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 		if !clear {
 			dock := ui.Column(c.Key("player-controls-overlay")).Absolute().Left(18).Right(18).Bottom(16).MinWidth(0).PassThrough().Transition(playerChromeTransition)
 			dock.Children(func() { editing = a.renderNativePlayerControls(c, s, command) })
+			if s.Mode == playback.Series && s.Panel == "" {
+				a.renderSeriesPlaybackButton(c, s, command)
+			}
 			titleBottom := float32(148)
 			if dock.Bounds().H > 0 {
 				titleBottom = dock.Bounds().H + 32
@@ -83,9 +87,6 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 			if s.Panel != "" {
 				a.renderNativePlayerPanel(c, s, drawerWidth, command)
 			}
-		}
-		if s.Paused && s.Status.Ready && !s.Loading {
-			ui.Text(c.Key("player-paused"), "已暂停").Absolute().Left(24).Top(84).Padding(6, 10).Radius(12).Background(ui.RGBA(0, 0, 0, .3)).TextColor(ui.RGBA(255, 255, 255, .8)).PassThrough()
 		}
 		if s.Notice != "" {
 			ui.Row(c.Key("player-notice")).Absolute().Top(86).Left(18).Right(18).Justify(ui.Center).Children(func() {
@@ -124,24 +125,64 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 
 }
 
+func (a *App) trackSeriesPlayerPointer(surface ui.Element, s playback.State, command func(string, any)) {
+	if s.Mode != playback.Series {
+		a.playerPointerKnown = false
+		return
+	}
+	x, y, over := surface.PointerPosition()
+	if !over {
+		a.playerPointerKnown = false
+		return
+	}
+	if !a.playerPointerKnown || a.playerPointerScene != s.Scene {
+		a.playerPointer = ui.Point{X: x, Y: y}
+		a.playerPointerScene = s.Scene
+		a.playerPointerKnown = true
+		return
+	}
+	if a.playerPointer.X == x && a.playerPointer.Y == y {
+		return
+	}
+	a.playerPointer = ui.Point{X: x, Y: y}
+	command("activity", nil)
+}
+
 func playerSurfaceDescription(s playback.State) string {
 	if s.Panel != "" {
 		return "点击收起面板"
 	}
-	if s.Error != "" {
-		return "点击继续播放"
-	}
 	if s.Mode == playback.Feed {
-		return "点击暂停"
+		return chooseText(s.Paused || s.Status.Ended || s.Error != "", "点击继续播放", "点击暂停")
 	}
-	if s.Paused || s.Status.Ended {
-		return "点击继续播放并收起控件"
+	if s.Error != "" {
+		return "点击显示或隐藏控件，播放按钮可重试"
 	}
-	if s.Preferences.Clear {
-		return "点击暂停并显示控件"
-	}
-	return "点击收起控件，继续播放"
+	return "点击显示或隐藏控件"
 }
+
+var (
+	playerPlayIcon  = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>`))
+	playerPauseIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z" fill="currentColor"/></svg>`))
+)
+
+func (a *App) renderSeriesPlaybackButton(c *ui.Context, s playback.State, command func(string, any)) {
+	paused := s.Paused || s.Status.Ended || s.Error != ""
+	label := chooseText(paused, "播放视频", "暂停视频")
+	icon := playerPauseIcon
+	if paused {
+		icon = playerPlayIcon
+	}
+	button := ui.ButtonBase(c.Key("player-center-toggle")).Absolute().LeftPercent(50).TopPercent(50).TranslatePercent(-50, -50).
+		Size(72, 72).Padding(0).Radius(36).Border(1, ui.RGBA(255, 255, 255, .3)).
+		Background(ui.RGBA(12, 13, 17, .62)).Label(label).Tooltip(label).Focusable().
+		OnClick(func() { command("toggle", nil) }).Transition(playerChromeTransition)
+	button = hoverBackground(button, ui.RGBA(12, 13, 17, .62), ui.RGBA(30, 31, 38, .82))
+	button.Children(func() {
+		ui.Icon(c, icon).Size(30, 30).TextColor(ui.RGB(255, 255, 255))
+	})
+}
+
 func chooseText(value bool, yes, no string) string {
 	if value {
 		return yes
@@ -213,7 +254,12 @@ func (a *App) renderNativePlayerControls(c *ui.Context, s playback.State, comman
 		ui.Row(c.Key("player-danmaku-row")).Gap(8).AlignItems(ui.Center).MinWidth(0).PassThrough().Children(func() {
 			a.playerAction(c, "player-danmaku-toggle", chooseText(s.Preferences.Danmaku.Enabled, "弹幕开", "弹幕关"), func() { command("danmaku", nil) })
 			draft := a.playerDraft
-			input := a.chromeSurface(ui.TextInput(c.Key("player-danmaku-input"), &draft).Grow(1).MinWidth(64).Height(32).Padding(6, 10).Radius(16)).Placeholder("发一条弹幕，一起看剧").Label("弹幕内容").Disabled(s.Sending).OnChange(func() { a.mu.Lock(); a.playerDraft = draft; a.mu.Unlock() })
+			input := a.chromeSurface(ui.TextInput(c.Key("player-danmaku-input"), &draft).Grow(1).MinWidth(64).Height(32).Padding(6, 10).Radius(16)).Placeholder("发一条弹幕，一起看剧").Label("弹幕内容").Disabled(s.Sending).OnChange(func() {
+				a.mu.Lock()
+				a.playerDraft = draft
+				a.mu.Unlock()
+				command("activity", nil)
+			})
 			focused = input.FocusWithin()
 			send := func() {
 				if a.media != nil && a.media.controller != nil {

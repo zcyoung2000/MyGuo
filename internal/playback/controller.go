@@ -186,6 +186,7 @@ type Controller struct {
 	sequence                          uint64
 	sentSequence                      uint64
 	lastSave, lastSystem, lastPreload time.Time
+	chromeActivity                    time.Time
 	preloadVersion                    int64
 	preloadLoading                    bool
 	preloadAdmitted                   bool
@@ -326,6 +327,10 @@ func (c *Controller) reset(mode Mode, session int64) {
 	c.clearEpisodeUI()
 	c.state = State{Scene: c.scene, Mode: mode, Session: session, Preferences: c.state.Preferences, Channel: c.state.Channel, HasMore: true, Paused: false}
 	c.state.Preferences.Clear = false
+	c.chromeActivity = time.Time{}
+	if mode == Series {
+		c.chromeActivity = time.Now()
+	}
 	c.account = c.backend.PlaybackScope()
 	if binder, ok := c.backend.(interface {
 		BindPlaybackContext(context.Context, string) context.Context
@@ -381,6 +386,10 @@ func (c *Controller) selectSlot(card ipc.SeriesCard, number int, resume float64,
 }
 func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resume float64, direction int, forceQuality bool) {
 	c.preloadAdmitted = false
+	if c.state.Mode == Series {
+		c.chromeActivity = time.Now()
+		c.state.Preferences.Clear = false
+	}
 	c.uiSelection++
 	c.saveCurrent()
 	// Snapshot once before retiring a surface; a frozen outgoing frame keeps
@@ -672,6 +681,7 @@ func (c *Controller) tick(now time.Time) {
 		c.publish()
 		return
 	}
+	c.hideIdleChrome(now)
 	s := c.current
 	if s != nil && !s.retryAt.IsZero() && !s.loading && !now.Before(s.retryAt) {
 		log.Printf("[native-player] retry source series=%q attempt=%d", s.seriesID, s.resolveAttempts+1)
@@ -719,7 +729,7 @@ func (c *Controller) tick(now time.Time) {
 			c.state.Paused == status.Playing && (status.Playing || previousStatus.Playing) {
 			c.state.Paused = !status.Playing
 			if c.state.Paused {
-				c.state.Preferences.Clear = false
+				c.notePlayerActivity()
 			}
 			c.saveCurrent()
 			c.system()
@@ -828,6 +838,13 @@ func (c *Controller) clearEpisodeUI() {
 }
 func (c *Controller) Command(command string, value any) {
 	c.post(func() {
+		if command == "activity" {
+			c.markChromeActivity()
+			return
+		}
+		if command != "surface" && command != "clear" {
+			c.notePlayerActivity()
+		}
 		s := c.current
 		switch command {
 		case "play", "pause", "toggle", "surface", "next", "prev", "channel":

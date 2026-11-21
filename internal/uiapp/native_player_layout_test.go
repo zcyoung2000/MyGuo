@@ -98,8 +98,10 @@ func TestNativePlayerShortcutsDoNotCaptureTypingAndEnterSendsCurrentDraft(t *tes
 	tt.Key(0, ui.KeyF)
 	tt.Key(0, ui.KeyP)
 	tt.Key(0, ui.KeyLeft)
-	if len(player.commands) != 0 {
-		t.Fatalf("typing invoked video shortcuts: %v", player.commands)
+	for _, command := range player.commands {
+		if command != "activity" {
+			t.Fatalf("typing invoked a playback shortcut: %v", player.commands)
+		}
 	}
 	tt.Key(0, ui.KeyEnter)
 	if len(player.sent) != 1 || player.sent[0] == "" {
