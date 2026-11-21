@@ -33,14 +33,16 @@ import (
 
 const (
 	DefaultVideoQuality     = "720p"
-	MaxEpisodeCacheBytes    = int64(2 * 1024 * 1024 * 1024) // 2 GB limit for episodes
-	TargetEpisodeCacheBytes = int64(1536 * 1024 * 1024)     // 1.5 GB target after eviction
-	MaxImageCacheBytes      = int64(500 * 1024 * 1024)      // 500 MB limit for images
-	TargetImageCacheBytes   = int64(350 * 1024 * 1024)      // 350 MB target after eviction
-	MaxHLSCacheBytes        = int64(1024 * 1024 * 1024)     // 1 GB limit for local HLS renditions
-	TargetHLSCacheBytes     = int64(768 * 1024 * 1024)      // 768 MB target after eviction
-	MinFreeCacheDiskBytes   = uint64(512 * 1024 * 1024)     // Reserve space for the OS and in-progress MP4 writes
-	MaxImageDownloadBytes   = int64(20 * 1024 * 1024)       // Large enough for high-resolution posters while bounding a hostile response.
+	TotalCacheLimitBytes    = int64(1 * 1024 * 1024 * 1024)
+	TotalCacheTargetBytes   = int64(850 * 1024 * 1024)
+	MaxEpisodeCacheBytes    = int64(900 * 1024 * 1024) // safety caps for one cache class
+	TargetEpisodeCacheBytes = int64(700 * 1024 * 1024)
+	MaxImageCacheBytes      = int64(180 * 1024 * 1024)
+	TargetImageCacheBytes   = int64(120 * 1024 * 1024)
+	MaxHLSCacheBytes        = int64(900 * 1024 * 1024)
+	TargetHLSCacheBytes     = int64(700 * 1024 * 1024)
+	MinFreeCacheDiskBytes   = uint64(512 * 1024 * 1024) // Reserve space for the OS and in-progress MP4 writes
+	MaxImageDownloadBytes   = int64(20 * 1024 * 1024)   // Large enough for high-resolution posters while bounding a hostile response.
 )
 
 var videoQualities = []string{"1080p", "720p", "540p", "480p", "360p"}
@@ -1967,7 +1969,47 @@ func (ms *MediaServer) triggerCacheEviction() {
 		}
 		ms.hlsMu.Unlock()
 		evictHLSCache(filepath.Join(ms.cacheDir, "episodes", "hls"), MaxHLSCacheBytes, TargetHLSCacheBytes, activeHLS)
+		ms.evictTotalCache(pinnedPaths, activeHLS)
 	}) {
 		ms.evicting.Store(false)
+	}
+}
+
+// evictTotalCache enforces the user-visible 1 GB ceiling across video, HLS
+// and artwork. It removes the least recently touched unpinned files first;
+// progress databases and pending sync intents live outside this media root.
+func (ms *MediaServer) evictTotalCache(pinnedFiles, activeHLS map[string]struct{}) {
+	entries := make([]cacheFileEntry, 0)
+	var total int64
+	_ = filepath.Walk(ms.cacheDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		total += info.Size()
+		if strings.HasPrefix(filepath.Base(path), "tmp_") {
+			return nil
+		}
+		if _, pinned := pinnedFiles[path]; pinned {
+			return nil
+		}
+		for dir := range activeHLS {
+			if strings.HasPrefix(path, dir+string(os.PathSeparator)) {
+				return nil
+			}
+		}
+		entries = append(entries, cacheFileEntry{path: path, size: info.Size(), modTime: info.ModTime()})
+		return nil
+	})
+	if total <= TotalCacheLimitBytes {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].modTime.Before(entries[j].modTime) })
+	for _, entry := range entries {
+		if total <= TotalCacheTargetBytes {
+			break
+		}
+		if err := os.Remove(entry.path); err == nil {
+			total -= entry.size
+		}
 	}
 }

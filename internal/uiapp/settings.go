@@ -371,7 +371,7 @@ func (a *App) renderSettings(c *ui.Context) {
 
 		ui.Text(c, "存储管理").FontSize(12).Bold().TextColor(c.Theme().TextMuted)
 		a.settingsCard(c, "settings-storage", func() {
-			a.settingsItemRow(c, "cache-row", "本地媒体缓存", "清除本地已解密的视频切片缓存与封面海报格式转换临时文件", formatCacheSize(state.CacheSize), "清理缓存", "subtle", a.ClearSettingsCache)
+			a.settingsItemRow(c, "cache-row", "本地媒体缓存", "上限 1 GB，超出后优先清理最久未使用的视频与封面缓存；观看记录和待同步进度会保留", formatCacheSize(state.CacheSize), "清理缓存", "subtle", a.ClearSettingsCache)
 		})
 
 		if state.Error != "" {

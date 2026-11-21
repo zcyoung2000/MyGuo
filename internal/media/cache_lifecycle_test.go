@@ -119,6 +119,43 @@ func TestHLSStartupCleanupKeepsOnlyCompleteRenditions(t *testing.T) {
 	}
 }
 
+func TestTotalCacheEvictionUsesLRUAndKeepsPinnedFiles(t *testing.T) {
+	root := t.TempDir()
+	old := filepath.Join(root, "old-video.mp4")
+	newer := filepath.Join(root, "new-video.mp4")
+	pinned := filepath.Join(root, "pinned-video.mp4")
+	for _, path := range []string{old, newer, pinned} {
+		if err := os.WriteFile(path, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(path, 400*1024*1024); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(old, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newer, oldTime.Add(time.Hour), oldTime.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pinned, oldTime.Add(2*time.Hour), oldTime.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := &MediaServer{cacheDir: root}
+	ms.evictTotalCache(map[string]struct{}{pinned: {}}, nil)
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("oldest cache file survived, err=%v", err)
+	}
+	if _, err := os.Stat(pinned); err != nil {
+		t.Fatalf("pinned cache file was removed: %v", err)
+	}
+	if _, err := os.Stat(newer); err != nil {
+		t.Fatalf("newer cache file was removed unexpectedly: %v", err)
+	}
+}
+
 func TestFeedRetirementPreservesCacheCompletedBeforeWriterExit(t *testing.T) {
 	for _, mode := range []string{"already complete", "completes during retirement", "interrupted"} {
 		t.Run(mode, func(t *testing.T) {
