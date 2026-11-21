@@ -1,13 +1,66 @@
 package playback
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
+
+	"myguo/internal/ipc"
 )
+
+func TestPartialPlaybackMarksEpisodeWatchedAcrossEpisodeChanges(t *testing.T) {
+	shared := &ipc.SeriesDetailDTO{ID: "book", EpisodeCount: 4, Episodes: []ipc.EpisodeDTO{
+		{Number: 1, Playable: true}, {Number: 2, Playable: true},
+		{Number: 3, Playable: true}, {Number: 4, Playable: true, Watched: true},
+	}}
+	b := &testBackend{detail: func(context.Context, string) (*ipc.SeriesDetailDTO, error) { return shared, nil }}
+	c, _ := newControllerTest(t, b)
+	c.Play("book", 1, 0, 1)
+	waitSource(t, c, "book", 1)
+	eventually(t, func() bool {
+		s := c.Snapshot()
+		return len(s.Episodes) == 4 && s.Episodes[0].Watched && s.Episodes[3].Watched
+	})
+	before := c.Snapshot()
+	c.Command("episode", 2)
+	waitSource(t, c, "book", 2)
+	eventually(t, func() bool {
+		s := c.Snapshot()
+		return len(s.Episodes) == 4 && s.Episodes[0].Watched && s.Episodes[1].Watched
+	})
+	after := c.Snapshot()
+	if after.Episodes[2].Watched || !after.Episodes[3].Watched {
+		t.Fatalf("skipped or remote episode state changed: %+v", after.Episodes)
+	}
+	if before.Episodes[1].Watched || shared.Episodes[0].Watched || shared.Episodes[1].Watched {
+		t.Fatal("watch updates mutated a published snapshot or backend metadata")
+	}
+}
+
+func TestDelayedEpisodeMetadataKeepsObservedPlayback(t *testing.T) {
+	release := make(chan struct{})
+	b := &testBackend{detail: func(ctx context.Context, id string) (*ipc.SeriesDetailDTO, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return &ipc.SeriesDetailDTO{ID: id, EpisodeCount: 2, Episodes: []ipc.EpisodeDTO{{Number: 1, Playable: true}, {Number: 2, Playable: true}}}, nil
+		}
+	}}
+	c, _ := newControllerTest(t, b)
+	c.Play("book", 1, 0, 1)
+	waitSource(t, c, "book", 1)
+	eventually(t, func() bool { return c.Snapshot().Status.Position > 0 })
+	close(release)
+	eventually(t, func() bool {
+		s := c.Snapshot()
+		return len(s.Episodes) == 2 && s.Episodes[0].Watched && !s.Episodes[1].Watched
+	})
+}
 
 type storageTestError int
 

@@ -5,7 +5,51 @@ import (
 	"errors"
 	"syscall"
 	"time"
+
+	"myguo/internal/ipc"
 )
+
+func (c *Controller) episodeWatchState(seriesID string, episodes []ipc.EpisodeDTO) []ipc.EpisodeDTO {
+	if c.watchedEpisodes == nil {
+		c.watchedEpisodes = make(map[string]map[int]bool)
+	}
+	if c.watchedEpisodes[seriesID] == nil {
+		c.watchedEpisodes[seriesID] = make(map[int]bool)
+	}
+	seen := c.watchedEpisodes[seriesID]
+	result := append([]ipc.EpisodeDTO(nil), episodes...)
+	for index := range result {
+		ep := &result[index]
+		if ep.Watched {
+			seen[ep.Number] = true
+		}
+		ep.Watched = seen[ep.Number]
+	}
+	return result
+}
+
+func (c *Controller) markEpisodeWatched(seriesID string, number int) {
+	if c.watchedEpisodes[seriesID][number] {
+		return
+	}
+	if c.watchedEpisodes == nil {
+		c.watchedEpisodes = make(map[string]map[int]bool)
+	}
+	if c.watchedEpisodes[seriesID] == nil {
+		c.watchedEpisodes[seriesID] = make(map[int]bool)
+	}
+	c.watchedEpisodes[seriesID][number] = true
+	for _, slot := range c.slots {
+		if slot.seriesID == seriesID && slot.detail != nil {
+			copy := *slot.detail
+			copy.Episodes = c.episodeWatchState(seriesID, copy.Episodes)
+			slot.detail = &copy
+		}
+	}
+	if c.state.Book.ID == seriesID {
+		c.state.Episodes = c.episodeWatchState(seriesID, c.state.Episodes)
+	}
+}
 
 func storageErrorCode(err error) int {
 	var coded interface{ Code() int }

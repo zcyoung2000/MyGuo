@@ -59,7 +59,7 @@ func TestReconcileSeriesProgressKeepsNewerLocalProgress(t *testing.T) {
 	}
 }
 
-func TestReconcileSeriesProgressDoesNotInferCompletionFromEpisodeNumber(t *testing.T) {
+func TestReconcileSeriesProgressMarksRemotePartialEpisodesWatched(t *testing.T) {
 	const seriesID = "710000000000001"
 	service, store := newSyncTestService(t, seriesProgressHandler([]map[string]any{
 		{"series_id": seriesID, "vid_index": 0, "current_play_time": 3000, "last_watch_time": 1000, "episode_cnt": 112},
@@ -74,8 +74,8 @@ func TestReconcileSeriesProgressDoesNotInferCompletionFromEpisodeNumber(t *testi
 		t.Fatalf("remote episode progress = %+v, err=%v", progress, err)
 	}
 	for _, item := range progress {
-		if item.Watched {
-			t.Fatalf("episode %d was inferred complete from a later episode", item.EpisodeNum)
+		if !item.Watched {
+			t.Fatalf("remote partial episode %d was not marked watched", item.EpisodeNum)
 		}
 	}
 }

@@ -173,6 +173,7 @@ type Controller struct {
 	root                              context.Context
 	cancel                            context.CancelFunc
 	slots                             map[string]*slot
+	watchedEpisodes                   map[string]map[int]bool
 	current                           *slot
 	floating                          avkit.Player
 	pendingIndex                      int
@@ -313,6 +314,7 @@ func (c *Controller) reset(mode Mode, session int64) {
 		c.floating = nil
 	}
 	c.slots = map[string]*slot{}
+	c.watchedEpisodes = map[string]map[int]bool{}
 	c.current = nil
 	c.desired = ""
 	c.feed = nil
@@ -490,6 +492,11 @@ func (c *Controller) resolve(card ipc.SeriesCard, number int, resume float64, ep
 			if c.scene != scene || c.slots[key] != s || ctx.Err() != nil || err != nil || detail == nil {
 				return
 			}
+			// User state can change while metadata is loading. Merge it with
+			// episodes observed in this scene and keep backend-owned DTOs intact.
+			copy := *detail
+			copy.Episodes = c.episodeWatchState(card.ID, detail.Episodes)
+			detail = &copy
 			s.detail = detail
 			s.card = ipc.SeriesCard{ID: detail.ID, Title: detail.Title, Description: detail.Description, CoverURL: detail.CoverURL, EpisodeCount: detail.EpisodeCount, Status: detail.Status}
 			if c.desired == key {
@@ -703,6 +710,9 @@ func (c *Controller) tick(now time.Time) {
 			}
 		}
 		c.state.Status = status
+		if status.Ready && status.Position > 0 && !s.seekPending {
+			c.markEpisodeWatched(s.seriesID, s.number)
+		}
 		if !s.playStarted && status.Ready && status.Playing && status.Position > .05 {
 			s.playStarted = true
 			c.state.Loading = false

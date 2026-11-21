@@ -6,7 +6,7 @@ import (
 )
 
 // saveEpisodeProgressTx preserves a per-episode clock alongside the compact
-// one-row-per-series history summary. Completed status is monotonic locally;
+// one-row-per-series history summary. Watched status is monotonic locally;
 // rewinding or replaying an episode must not make it appear unwatched.
 func saveEpisodeProgressTx(tx *sql.Tx, item EpisodeProgress, scope string) error {
 	if item.SeriesID == "" || item.EpisodeNum <= 0 || item.PositionSec <= 0 {
@@ -26,7 +26,7 @@ func saveEpisodeProgressTx(tx *sql.Tx, item EpisodeProgress, scope string) error
 			updated_at = MAX(episode_progress.updated_at, excluded.updated_at),
 			watched = MAX(episode_progress.watched, excluded.watched)
 	`, scope, item.SeriesID, item.EpisodeNum, item.EpisodeID, item.PositionSec, item.DurationSec, item.UpdatedAt,
-		boolInt(item.Watched || item.DurationSec > 0 && item.PositionSec >= item.DurationSec*.95))
+		boolInt(item.Watched || item.PositionSec > 0))
 	return err
 }
 
@@ -50,7 +50,9 @@ func (s *Store) EpisodeProgress(seriesID string, scopes ...string) ([]EpisodePro
 		if err := rows.Scan(&item.SeriesID, &item.EpisodeNum, &item.EpisodeID, &item.PositionSec, &item.DurationSec, &item.UpdatedAt, &watched); err != nil {
 			return nil, err
 		}
-		item.Watched = watched != 0
+		// Older databases only set this flag near completion. Their positive
+		// playback clocks are already sufficient evidence of a viewed episode.
+		item.Watched = watched != 0 || item.PositionSec > 0
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -75,9 +77,10 @@ func (s *Store) SaveEpisodeProgressBatchIfCurrentScope(items []EpisodeProgress, 
 	return true, tx.Commit()
 }
 
-// ReplaceEpisodeProgressIfCurrentScope applies a complete cloud snapshot. The
-// caller must only use it after every remote history page has been read and
-// pending local writes have settled.
+// ReplaceEpisodeProgressIfCurrentScope applies a complete cloud snapshot after
+// the history summary has been replaced. The cloud may only retain the latest
+// episode of a series, so keep earlier local episode clocks for surviving series.
+// The caller must read every remote page and let pending local writes settle.
 func (s *Store) ReplaceEpisodeProgressIfCurrentScope(items []EpisodeProgress, scope string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,7 +92,7 @@ func (s *Store) ReplaceEpisodeProgressIfCurrentScope(items []EpisodeProgress, sc
 		return false, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM episode_progress WHERE scope = ?`, scope); err != nil {
+	if _, err := tx.Exec(`DELETE FROM episode_progress WHERE scope = ? AND series_id NOT IN (SELECT series_id FROM history)`, scope); err != nil {
 		return false, err
 	}
 	for _, item := range items {

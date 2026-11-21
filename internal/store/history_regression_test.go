@@ -40,7 +40,7 @@ func TestHistoryDurationBelongsToWatchedEpisode(t *testing.T) {
 	}
 }
 
-func TestPlaybackProgressKeepsEpisodeCompletionSeparateFromSeriesResume(t *testing.T) {
+func TestPlaybackProgressMarksPartialEpisodesWatchedSeparatelyFromSeriesResume(t *testing.T) {
 	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
 	s, err := NewStore(t.TempDir())
 	if err != nil {
@@ -70,16 +70,15 @@ func TestPlaybackProgressKeepsEpisodeCompletionSeparateFromSeriesResume(t *testi
 	if len(progress) != 2 {
 		t.Fatalf("episode progress = %+v, want one row per played episode", progress)
 	}
-	if !progress[0].Watched || progress[1].Watched {
-		t.Fatalf("episode completion = %+v, want episode 1 complete and episode 112 partial", progress)
+	if !progress[0].Watched || !progress[1].Watched {
+		t.Fatalf("episode states = %+v, want both played episodes marked watched", progress)
 	}
 	history, ok := s.GetHistoryItem(seriesID)
 	if !ok || history.EpisodeNum != 112 || history.PositionSec != 3 {
 		t.Fatalf("series resume = %+v, found=%t; want latest partial episode", history, ok)
 	}
 
-	// Completion is monotonic for an episode: a later rewind must not make a
-	// previously completed episode look unfinished.
+	// Rewinding does not make a viewed episode appear unplayed.
 	if _, err := s.SavePlaybackProgress(HistoryItem{
 		SeriesID: seriesID, EpisodeNum: 1, PositionSec: 8, DurationSec: 100,
 		TotalEpisodes: 112, UpdatedAt: 102,
@@ -88,6 +87,6 @@ func TestPlaybackProgressKeepsEpisodeCompletionSeparateFromSeriesResume(t *testi
 	}
 	progress, err = s.EpisodeProgress(seriesID, "user:test")
 	if err != nil || len(progress) != 2 || !progress[0].Watched {
-		t.Fatalf("rewound completion = %+v, err=%v; completion was lost", progress, err)
+		t.Fatalf("rewound progress = %+v, err=%v; watched state was lost", progress, err)
 	}
 }

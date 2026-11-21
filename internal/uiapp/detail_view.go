@@ -294,7 +294,7 @@ func (a *App) renderDetailEpisodeRow(c *ui.Context, episodes []CatalogItem, star
 			if active && !ep.Watched {
 				button.Background(c.Theme().Selection).Border(1, c.Theme().Accent.Alpha(.5)).TextColor(c.Theme().Accent)
 			} else if ep.Watched {
-				button.Background(ui.RGBA(255, 255, 255, .055)).Border(1, ui.RGBA(255, 255, 255, .08)).TextColor(c.Theme().TextMuted)
+				button.Background(ui.RGBA(255, 255, 255, .055)).Border(1, ui.RGBA(255, 255, 255, .08)).TextColor(c.Theme().TextMuted).Description("已看过")
 			} else {
 				button.Background(ui.RGBA(255, 255, 255, .035))
 			}

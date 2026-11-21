@@ -40,10 +40,8 @@ type HistoryItem struct {
 	ContentType   int     `json:"contentType,omitempty"`
 }
 
-// EpisodeProgress keeps the local playback clock for one episode. A progress
-// row is treated as watched only when playback reached at least 95% of its
-// known duration; opening or briefly scrolling past a recommendation is not
-// enough to gray an episode in the detail list.
+// EpisodeProgress keeps the playback clock for one episode. Watched means the
+// episode has been played, even partially; it does not mean it was completed.
 type EpisodeProgress struct {
 	SeriesID    string
 	EpisodeID   string

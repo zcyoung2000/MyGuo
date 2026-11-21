@@ -42,7 +42,7 @@ func TestParseAndCacheIDList(t *testing.T) {
 	}
 }
 
-func TestSeriesDetailOnlyGraysEpisodesWithKnownCompletion(t *testing.T) {
+func TestSeriesDetailGraysPartialEpisodesWithoutInferringUnplayedEpisodes(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -68,16 +68,22 @@ func TestSeriesDetailOnlyGraysEpisodesWithKnownCompletion(t *testing.T) {
 		ID: seriesID,
 		Episodes: []EpisodeDTO{
 			{ID: "710000000000101", Number: 1, DurationSec: 100},
+			{ID: "710000000000102", Number: 2, DurationSec: 100},
 			{ID: "710000000000212", Number: 112, DurationSec: 100},
 		},
 	}}
 	result := service.withSeriesUserState(page)
-	if !result.Episodes[0].Watched || result.Episodes[1].Watched {
-		t.Fatalf("episode states = %+v; want only completed episode 1 gray", result.Episodes)
+	if !result.Episodes[0].Watched || result.Episodes[1].Watched || !result.Episodes[2].Watched {
+		t.Fatalf("episode states = %+v; want both played episodes gray and skipped episode 2 unchanged", result.Episodes)
+	}
+	for _, ep := range page.Episodes {
+		if ep.Watched {
+			t.Fatal("user progress mutated shared metadata")
+		}
 	}
 }
 
-func TestSeriesDetailDoesNotInferEarlierCompletionFromJumpedEpisode(t *testing.T) {
+func TestSeriesDetailGraysOnlyThePlayedEpisodeFromLegacyHistory(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -96,8 +102,8 @@ func TestSeriesDetailDoesNotInferEarlierCompletionFromJumpedEpisode(t *testing.T
 		ID:       seriesID,
 		Episodes: []EpisodeDTO{{Number: 1, DurationSec: 100}, {Number: 112, DurationSec: 100}},
 	}})
-	if result.Episodes[0].Watched || result.Episodes[1].Watched {
-		t.Fatalf("episode states = %+v; a jumped partial episode must not infer completion", result.Episodes)
+	if result.Episodes[0].Watched || !result.Episodes[1].Watched {
+		t.Fatalf("episode states = %+v; only the jumped-to episode has been viewed", result.Episodes)
 	}
 }
 

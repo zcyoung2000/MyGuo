@@ -88,5 +88,10 @@ func (s *HongguoService) GetHotSearch(ctx context.Context) (HotSearchDTO, error)
 
 func (s *HongguoService) GetSeriesDetail(ctx context.Context, seriesID string) (*SeriesDetailDTO, error) {
 	value, err := s.catalogService().GetSeriesDetail(ctx, seriesID)
-	return sanitizeIPC(value), err
+	if err != nil || value == nil {
+		return sanitizeIPC(value), err
+	}
+	s.reconcileSeriesProgress(ctx, seriesID)
+	page := s.withSeriesUserState(&SeriesDetailPageDTO{SeriesDetailDTO: *value})
+	return sanitizeIPC(&page.SeriesDetailDTO), nil
 }

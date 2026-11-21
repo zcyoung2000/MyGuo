@@ -18,7 +18,18 @@ func (a *App) UpdateResumeProgress(payload ResumeProgress) {
 	a.resumeSequence = payload.Sequence
 	a.resume = CatalogItem{ID: payload.SeriesID, ResumeEpisode: payload.EpisodeNum, ResumePosition: payload.Position}
 	a.resumeFromPlayback = true
+	if payload.Position > 0 {
+		a.markDetailEpisodeWatchedLocked(payload.EpisodeNum)
+	}
 	a.invalidate()
+}
+
+func (a *App) markDetailEpisodeWatchedLocked(number int) {
+	for index := range a.detail.Episodes {
+		if a.detail.Episodes[index].EpisodeCount == number {
+			a.detail.Episodes[index].Watched = true
+		}
+	}
 }
 
 func (a *App) resetResumeLocked(seriesID string) {

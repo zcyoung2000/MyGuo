@@ -50,7 +50,7 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 		if remoteEpisodes[index].DurationSec <= 0 && exists {
 			remoteEpisodes[index].DurationSec = older.DurationSec
 		}
-		remoteEpisodes[index].Watched = remoteEpisodes[index].Watched || exists && older.Watched || remoteEpisodes[index].DurationSec > 0 && remoteEpisodes[index].PositionSec >= remoteEpisodes[index].DurationSec*.95
+		remoteEpisodes[index].Watched = remoteEpisodes[index].Watched || exists && older.Watched || remoteEpisodes[index].PositionSec > 0
 	}
 	if len(remoteEpisodes) > 0 {
 		if _, err := s.store.SaveEpisodeProgressBatchIfCurrentScope(remoteEpisodes, session.scope); err != nil {

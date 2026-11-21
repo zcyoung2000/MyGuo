@@ -29,9 +29,11 @@ func (a *App) renderNativeEpisodes(c *ui.Context, s playback.State, command func
 				}
 				number := index + 1
 				playable := true
+				watched := false
 				if len(s.Episodes) > index {
 					number = s.Episodes[index].Number
 					playable = s.Episodes[index].Playable
+					watched = s.Episodes[index].Watched
 				}
 				label := fmt.Sprint(number)
 				active := s.Playback != nil && s.Playback.EpisodeNum == number
@@ -42,6 +44,9 @@ func (a *App) renderNativeEpisodes(c *ui.Context, s playback.State, command func
 						command("episode", number)
 					}
 				}).Grow(1).Height(38).Disabled(!playable)
+				if watched {
+					b.Opacity(.55).Description("已看过")
+				}
 				if active {
 					b.Background(ui.RGBA(254, 44, 85, .24)).Border(1, ui.Hex("#fe2c55"))
 				}

@@ -537,11 +537,26 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 	// Metadata can arrive after the user has already opened the reviews tab.
 	// Keep that independent request and its expanded replies across a refresh.
 	reviews := DetailReviews{}
+	viewed := make(map[int]bool)
 	if a.detail.ID == seriesID {
 		reviews = a.detail.Reviews
+		if a.resumeFromPlayback {
+			for _, ep := range a.detail.Episodes {
+				if ep.Watched {
+					viewed[ep.EpisodeCount] = true
+				}
+			}
+		}
 	}
 	a.detail = convertDetail(seriesID, page)
 	a.detail.Reviews = reviews
+	for index := range a.detail.Episodes {
+		ep := &a.detail.Episodes[index]
+		ep.Watched = ep.Watched || viewed[ep.EpisodeCount]
+	}
+	if a.resumeFromPlayback && a.resume.ID == seriesID && a.resume.ResumePosition > 0 {
+		a.markDetailEpisodeWatchedLocked(a.resume.ResumeEpisode)
+	}
 	if page.ResumeEpisode > 0 && (a.resume.ID != seriesID || !a.resumeFromPlayback) {
 		a.resume = CatalogItem{ID: seriesID, ResumeEpisode: page.ResumeEpisode, ResumePosition: page.ResumePosition}
 	}
