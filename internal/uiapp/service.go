@@ -396,6 +396,9 @@ func (a *App) OpenView(view string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.view == view && a.started {
+		if view == "recommend" && a.mediaOn {
+			a.closeMediaLocked()
+		}
 		return
 	}
 	a.navigateLocked(navigationEntry{View: view}, true)
@@ -470,11 +473,11 @@ func (a *App) favoriteProvider() favoriteProvider {
 }
 func (a *App) ChooseEpisode(num int) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	loaded := num > 0 && a.media != nil && !a.detail.Loading && a.detail.ID != "" && !a.detail.Upcoming
 	if loaded {
 		a.detailScrollReset = true
 	}
-	a.mu.Unlock()
 	if !loaded {
 		return
 	}

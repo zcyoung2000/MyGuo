@@ -194,6 +194,28 @@ func TestSurfaceClickDismissesPanelBeforeChangingPlayback(t *testing.T) {
 	}
 }
 
+func TestStartingSeriesFromFeedUsesSeriesEpisodeNavigation(t *testing.T) {
+	c, _ := newControllerTest(t, &testBackend{})
+	c.ShowFeed("漫剧")
+	waitSource(t, c, "A", 1)
+	c.Command("pause", nil)
+	c.Play("A", 2, -1, 7)
+	s := waitSource(t, c, "A", 2)
+	if s.Mode != Series || s.Session != 7 || s.Paused || s.Panel != "" || s.FeedCount != 0 {
+		t.Fatalf("explicit episode selection kept a feed session: %+v", s)
+	}
+	c.Command("next", nil)
+	s = waitSource(t, c, "A", 3)
+	if s.Mode != Series || s.Session != 7 {
+		t.Fatal("next left the selected series instead of advancing its episode")
+	}
+	c.Command("prev", nil)
+	s = waitSource(t, c, "A", 2)
+	if s.Mode != Series || s.Session != 7 {
+		t.Fatal("previous left the selected series instead of advancing its episode")
+	}
+}
+
 func TestRapidSurfaceClicksUseTheLatestActorState(t *testing.T) {
 	c, _ := newControllerTest(t, &testBackend{})
 	c.Play("A", 1, 0, 1)

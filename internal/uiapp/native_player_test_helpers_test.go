@@ -34,6 +34,10 @@ func (p *nativeUIPlayer) Play(id string, number int, position float64, session i
 	p.state.Mode = playback.Series
 	p.state.Session = session
 	p.state.Book.ID = id
+	p.state.Panel = ""
+	p.state.Paused = false
+	p.state.Preferences.Clear = false
+	p.state.Status.Playing = true
 	d := *p.state.Playback
 	d.SeriesID = id
 	d.EpisodeNum = number

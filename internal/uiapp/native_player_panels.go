@@ -35,7 +35,13 @@ func (a *App) renderNativeEpisodes(c *ui.Context, s playback.State, command func
 				}
 				label := fmt.Sprint(number)
 				active := s.Playback != nil && s.Playback.EpisodeNum == number
-				b := panelAction(c, fmt.Sprintf("player-episode:%d", number), label, func() { command("episode", number) }).Grow(1).Height(38).Disabled(!playable)
+				b := panelAction(c, fmt.Sprintf("player-episode:%d", number), label, func() {
+					if s.Mode == playback.Feed {
+						a.playFeedEpisode(s.Book.ID, number)
+					} else {
+						command("episode", number)
+					}
+				}).Grow(1).Height(38).Disabled(!playable)
 				if active {
 					b.Background(ui.RGBA(254, 44, 85, .24)).Border(1, ui.Hex("#fe2c55"))
 				}

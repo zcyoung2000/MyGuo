@@ -113,7 +113,9 @@ func (a *App) CloseMediaSession(session int64) {
 func (a *App) closeMediaLocked() {
 	a.mediaOn = false
 	a.resetResumeLocked(a.detail.ID)
-	if a.view == "detail" && !a.testMode && a.detail.ID != "" {
+	if a.view == "recommend" && a.media != nil {
+		a.media.RecommendChannel(a.feedChannel)
+	} else if a.view == "detail" && !a.testMode && a.detail.ID != "" {
 		if a.media != nil {
 			a.media.Stop()
 		}
@@ -136,10 +138,13 @@ func (a *App) PlayDetail() {
 	a.playLocked(num, position)
 }
 func (a *App) playLocked(num int, position float64) {
+	a.playSeriesLocked(a.detail.ID, num, position)
+}
+func (a *App) playSeriesLocked(seriesID string, num int, position float64) {
 	if a.media != nil {
 		a.mediaOn = true
 		a.mediaSession++
-		a.media.Play(a.detail.ID, num, position, a.mediaSession)
+		a.media.Play(seriesID, num, position, a.mediaSession)
 	}
 	a.invalidate()
 }
@@ -238,11 +243,7 @@ func (a *App) NavigateHistory(delta int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.mediaOn {
-		a.mediaOn = false
-		if a.media != nil {
-			a.media.Stop()
-		}
-		a.invalidate()
+		a.closeMediaLocked()
 		return
 	}
 	next := a.navIndex + delta
