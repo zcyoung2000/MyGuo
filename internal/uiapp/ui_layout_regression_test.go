@@ -3,6 +3,7 @@ package uiapp
 import (
 	"fmt"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,11 +59,100 @@ func TestResponsiveDramaGeometryMatchesAcrossNativePages(t *testing.T) {
 	}
 	step := float64(second.X - first.X)
 	width := float64(first.W)
-	if width < 150 || step-width < 20 || step-width > 22 {
+	if width < 150 || step-width < float64(dramaCardGap)-1 || step-width > float64(dramaCardGap)+1 {
 		t.Fatalf("responsive cards do not share stable columns: width=%.1f step=%.1f", width, step)
 	}
 	if posterAspectRatio != float32(4)/float32(3) {
 		t.Fatalf("poster aspect ratio changed: %v", posterAspectRatio)
+	}
+}
+
+func TestPosterHorizontalGapMatchesAcrossContentScreens(t *testing.T) {
+	views := []string{"discover", "search", "history", "favorites", "likes", "reservations", "new", "actor", "detail"}
+	for _, view := range views {
+		t.Run(view, func(t *testing.T) {
+			items := make([]CatalogItem, 8)
+			for index := range items {
+				items[index] = CatalogItem{
+					ID: fmt.Sprintf("%s-%d", view, index), EpisodeID: fmt.Sprintf("episode-%d", index),
+					Title: fmt.Sprintf("%s 间距样本 %d", view, index), EpisodeCount: 16,
+					PublishAt: "2026-11-20", Upcoming: view == "reservations" || view == "favorites" || view == "likes",
+					Category: "真人短剧", Heat: "280万热度", UpdatedAt: 1700000000,
+				}
+			}
+			app := NewTestApp()
+			app.view = view
+			switch view {
+			case "discover":
+				app.catalog.Items = items
+			case "search":
+				app.search.Items = items
+			case "history":
+				app.library.History = Library{Loaded: true, Items: items}
+			case "favorites":
+				app.library.Favorites = Library{Loaded: true, Items: items}
+			case "likes":
+				app.library.Likes = Library{Loaded: true, Items: items}
+			case "reservations":
+				app.library.Reserved = Library{Loaded: true, Items: items}
+				app.reservationsPending = true
+			case "new":
+				app.releases.Items = items
+			case "actor":
+				app.actor.Profile = &ipc.ActorProfileDTO{UserID: "actor", Name: "间距样本演员"}
+				app.actor.Works = items
+			case "detail":
+				app.detailTab = detailTabRelated
+				app.detail = Detail{ID: "series", Title: "相关作品间距", Adaptations: DetailCollection{Items: items}}
+			}
+
+			tester := ui.NewTester(app.Render, 1280, 900)
+			tester.Frame()
+			first, firstOK := tester.Find(posterLabel(items[0]))
+			second, secondOK := tester.Find(posterLabel(items[1]))
+			if !firstOK || !secondOK {
+				t.Fatalf("first poster row missing: first=%v second=%v texts=%v", firstOK, secondOK, tester.Texts())
+			}
+			gap := float64(second.X - first.X - first.W)
+			if math.Abs(gap-float64(dramaCardGap)) > 1 {
+				t.Fatalf("poster horizontal gap = %.1f, want %.1f: first=%+v second=%+v", gap, dramaCardGap, first, second)
+			}
+
+			var nextPoster ui.Rect
+			nextFound := false
+			for _, item := range items[1:] {
+				poster, ok := tester.Find(posterLabel(item))
+				if ok && poster.Y > first.Y && (!nextFound || poster.Y < nextPoster.Y) {
+					nextPoster, nextFound = poster, true
+				}
+			}
+			if !nextFound {
+				t.Fatal("next poster row missing")
+			}
+			lastLine := fmt.Sprintf("%d集 · %s", items[0].EpisodeCount, items[0].Heat)
+			switch view {
+			case "history":
+				lastLine = formatRelativeTime(items[0].UpdatedAt)
+			case "favorites", "likes":
+				lastLine = items[0].Title
+			case "reservations":
+				lastLine = formatPublishDate(items[0].PublishAt)
+			case "new":
+				lastLine = items[0].Heat
+			}
+			metadata, metadataOK := tester.Find(lastLine)
+			if view == "favorites" || view == "likes" {
+				metadata, metadataOK = tester.Find("single-line-title")
+			}
+			if !metadataOK {
+				t.Fatalf("last card line %q missing: %v", lastLine, tester.Texts())
+			}
+			verticalGap := float64(nextPoster.Y - metadata.Y - metadata.H)
+			if verticalGap < 18 || verticalGap > 22 {
+				t.Fatalf("next poster gutter = %.1f DIP after %q, want 18-22: metadata=%+v next=%+v", verticalGap, lastLine, metadata, nextPoster)
+			}
+			exportAuditScreenshot(t, tester, "spacing-"+view)
+		})
 	}
 }
 
@@ -91,6 +181,7 @@ func TestNativePagesShareNavigationRhythm(t *testing.T) {
 			if header.Bounds.Y > card.Y {
 				t.Fatalf("header rhythm drifted: header=%+v card=%+v", header, card)
 			}
+			exportAuditScreenshot(t, tt, "spacing-"+test.view)
 		})
 	}
 }

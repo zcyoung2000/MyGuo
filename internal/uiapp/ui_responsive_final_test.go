@@ -247,8 +247,9 @@ func TestNewReleasesKeepCatalogDensityWhenFull(t *testing.T) {
 	if first.W > 230 {
 		t.Fatalf("full releases changed catalog density: first=%+v", first)
 	}
-	if third.X < first.X+2*(first.W+18) || third.X > first.X+2*(first.W+24) {
-		t.Fatalf("full releases did not use the normal column step: first=%+v third=%+v", first, third)
+	gap := (third.X-first.X)/2 - first.W
+	if absFloat(gap-dramaCardGap) > 1 {
+		t.Fatalf("full releases poster gap = %.1f, want %.1f: first=%+v third=%+v", gap, dramaCardGap, first, third)
 	}
 }
 

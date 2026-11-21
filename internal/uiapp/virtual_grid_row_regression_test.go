@@ -39,8 +39,8 @@ func TestReservationRowsHaveSpaceForAllMetadata(t *testing.T) {
 		t.Fatalf("reservation row bounds missing: date=%v poster=%v texts=%v", dateOK, nextPosterOK, tester.Texts())
 	}
 	rowGap := float64(nextPoster.Y - (date.Y + date.H))
-	if rowGap < 20 || rowGap > 28 {
-		t.Fatalf("reservation row gap = %.1f, want 20-28: date=%+v nextPoster=%+v", rowGap, date, nextPoster)
+	if rowGap < 19 || rowGap > 21 {
+		t.Fatalf("reservation row gap = %.1f, want 19-21: date=%+v nextPoster=%+v", rowGap, date, nextPoster)
 	}
 	cancel, cancelOK := tester.Find("取消预约")
 	if !cancelOK {

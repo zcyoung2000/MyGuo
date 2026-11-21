@@ -107,7 +107,7 @@ func TestNewCardRowHeightShrinksAfterLabelRemoval(t *testing.T) {
 		t.Fatalf("new card content missing: poster=%v heat=%v", posterOK, heatOK)
 	}
 	contentHeight := heat.Y + heat.H - poster.Y
-	expectedHeight := poster.W*posterAspectRatio + catalogRowGap + 2*catalogTextLineHeight
+	expectedHeight := poster.H + 2*catalogRowGap + catalogTextLineHeight + heat.H
 	if diff := contentHeight - expectedHeight; diff < -2 || diff > 2 {
 		t.Fatalf("new card content did not shrink: content=%.1f expected=%.1f poster=%+.1f heat=%+.1f", contentHeight, expectedHeight, poster, heat)
 	}

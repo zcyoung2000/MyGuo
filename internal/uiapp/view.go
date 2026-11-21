@@ -444,18 +444,18 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 			a.image(c, item.CoverURL, width, width*4/3)
 			if a.view == "history" {
 				if item.CoverURL == "" {
-					ui.Badge(c.Key("history-cover-pending"), "封面待补全").Absolute().Bottom(8).Left(8)
+					ui.Badge(c.Key("history-cover-pending"), "封面待补全").Absolute().Bottom(catalogOverlayInset).Left(catalogOverlayInset)
 				} else if a.ArtworkFailed(item.CoverURL) {
-					ui.Badge(c.Key("history-cover-failed"), "封面加载失败").Absolute().Bottom(8).Left(8)
+					ui.Badge(c.Key("history-cover-failed"), "封面加载失败").Absolute().Bottom(catalogOverlayInset).Left(catalogOverlayInset)
 				}
 			}
 			if topLeftBadge != "" {
-				ui.Badge(c.Key("badge-tl"), topLeftBadge).Absolute().Top(6).Left(6).
+				ui.Badge(c.Key("badge-tl"), topLeftBadge).Absolute().Top(catalogOverlayInset).Left(catalogOverlayInset).
 					Padding(2, 6).Radius(4).Background(ui.Transparent).Material(artworkMaterial()).
 					Bold().TextColor(ui.Hex("#ffffff"))
 			}
 			if bottomRightBadge != "" {
-				ui.Row(c.Key("badge-br")).Absolute().Bottom(6).Right(6).
+				ui.Row(c.Key("badge-br")).Absolute().Bottom(catalogOverlayInset).Right(catalogOverlayInset).
 					Padding(2, 6).Radius(4).Material(artworkMaterial()).
 					Children(func() {
 						ui.Text(c, bottomRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
@@ -521,7 +521,7 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 				if item.Reserved {
 					label = "取消预约"
 				}
-				if ui.Button(c, label).Clicked() {
+				if ui.Button(c, label).Height(catalogReservationButtonHeight).Padding(0, 12).Radius(14).Clicked() {
 					go a.ToggleItemReservation(item)
 				}
 			} else {
@@ -554,7 +554,7 @@ func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32)
 				if item.Reserved {
 					label = "取消预约"
 				}
-				if ui.Button(c, label).Clicked() {
+				if ui.Button(c, label).Height(catalogReservationButtonHeight).Padding(0, 12).Radius(14).Clicked() {
 					go a.ToggleItemReservation(item)
 				}
 			}

@@ -133,7 +133,7 @@ func TestCollectionPostersFillColumnsAndPreserveAspectRatio(t *testing.T) {
 				t.Fatal("first grid row missing")
 			}
 			posterWidth, posterHeight := float64(first.W), float64(first.W*4/3)
-			if math.Abs(posterHeight/posterWidth-4.0/3) > .04 || math.Abs(float64(second.X-first.X)-posterWidth-20) > 4 {
+			if math.Abs(posterHeight/posterWidth-4.0/3) > .04 || math.Abs(float64(second.X-first.X)-posterWidth-float64(dramaCardGap)) > 4 {
 				t.Fatalf("poster does not fill its column at 3:4: %.0fx%.0f column step=%.1f", posterWidth, posterHeight, second.X-first.X)
 			}
 		})

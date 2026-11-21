@@ -11,8 +11,8 @@ import (
 const (
 	posterAspectRatio    float32 = float32(4) / float32(3)
 	dramaMinCardWidth    float32 = 160
-	dramaCardGap         float32 = 14
-	cardGridVerticalGap  float32 = 10
+	dramaCardGap         float32 = 16
+	cardGridVerticalGap  float32 = 20
 	catalogFooterHeight  float32 = 40
 	pageContentTopSpace  float32 = 14
 	pageContentBottomPad float32 = 12
@@ -92,7 +92,7 @@ func dramaSkeleton(c *ui.Context, count int, width float32) {
 func posterGridSkeleton(c *ui.Context, count int, width float32, contentHeight func(cardWidth float32) float32) {
 	skeleton := pagePlaceholder(c)
 	cardWidth := dramaCardWidth(width)
-	cardHeight := cardWidth*posterAspectRatio + catalogTextLineHeight*2 + catalogRowGap*2
+	cardHeight := cardWidth*posterAspectRatio + catalogTextLineHeight + catalogMetadataLineHeight + catalogRowGap*2
 	if contentHeight != nil {
 		cardHeight = contentHeight(cardWidth)
 	}
@@ -107,7 +107,7 @@ func posterGridSkeleton(c *ui.Context, count int, width float32, contentHeight f
 						skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(posterHeight).
 							AspectRatio(posterAspectRatio).Role(ui.RoleImage).Label("加载海报占位")
 						skeleton.text(c.Key("title"), 13, catalogTextLineHeight/13).WidthPercent(92)
-						skeleton.text(c.Key("metadata"), 12, catalogTextLineHeight/12).WidthPercent(boneWidth(index))
+						skeleton.text(c.Key("metadata"), 12, catalogMetadataLineHeight/12).WidthPercent(boneWidth(index))
 					})
 				}
 			})

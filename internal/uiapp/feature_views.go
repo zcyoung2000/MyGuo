@@ -286,7 +286,7 @@ func (a *App) releaseCardGrid(c *ui.Context, items []CatalogItem) {
 	_, windowHeight := c.Size()
 	posterWidth := newReleasePosterWidth(float32(windowHeight))
 	ui.Column(c.Key("releases-sparse-content")).FillWidth().Children(func() {
-		ui.Column(c.Key(fmt.Sprintf("release-result:%d", a.releaseResultVersion))).FillWidth().Gap(18).Transition(resultTransition).Children(func() {
+		ui.Column(c.Key(fmt.Sprintf("release-result:%d", a.releaseResultVersion))).FillWidth().Gap(cardGridVerticalGap).Transition(resultTransition).Children(func() {
 			for _, item := range items {
 				a.releaseFeatureRow(c, item, posterWidth)
 			}
@@ -301,7 +301,7 @@ func (a *App) releaseSkeleton(c *ui.Context, value ReleaseState) {
 		posterHeight := posterWidth * posterAspectRatio
 		skeleton := pagePlaceholder(c)
 		ui.Column(c.Key("releases-sparse-content")).FillWidth().Children(func() {
-			ui.Column(c.Key("release-skeleton")).FillWidth().Gap(18).Children(func() {
+			ui.Column(c.Key("release-skeleton")).FillWidth().Gap(cardGridVerticalGap).Children(func() {
 				for range min(3, max(1, len(value.Dates))) {
 					ui.Row(c).FillWidth().Gap(18).AlignItems(ui.Stretch).MinHeight(posterHeight).Children(func() {
 						skeleton.bone(c.Key("poster"), 10).Width(posterWidth).Height(posterHeight).
@@ -465,7 +465,7 @@ func (a *App) renderActor(c *ui.Context) {
 		}
 		first := row * columns
 		a.posterRow(c, actor.Works[first:min(first+columns, len(actor.Works))], width)
-	}).Grow(1).TrackScroll(&a.actorScroll).Scrollbars(false)
+	}).Grow(1).Gap(cardGridVerticalGap).TrackScroll(&a.actorScroll).Scrollbars(false)
 
 }
 func (a *App) renderCollection(c *ui.Context, label string, value DetailCollection, retry func()) {

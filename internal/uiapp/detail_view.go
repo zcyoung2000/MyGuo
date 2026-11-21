@@ -380,7 +380,7 @@ func (a *App) renderDetailCollection(c *ui.Context, label string, value DetailCo
 		gap := float32(16)
 		columns := max(1, int((width+gap)/(150*max(1, c.Preferences().TextScale)+gap)))
 		cardWidth := (width - float32(columns-1)*gap) / float32(columns)
-		ui.Grid(c).Columns(columns).FillWidth().GapX(gap).GapY(22).Children(func() {
+		ui.Grid(c).Columns(columns).FillWidth().GapX(dramaCardGap).GapY(cardGridVerticalGap).Children(func() {
 			for _, item := range value.Items {
 				a.catalogCardSized(c, item, cardWidth)
 			}

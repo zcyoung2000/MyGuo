@@ -58,7 +58,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 		a.continuePageInView(c, "catalog-page-end", pageFillVersion{a.catalogGenre(), catalog.Cursor, len(catalog.Items)}, 0,
 			a.discoverPageScroll.MaxY <= 0 && catalog.resultsCurrent && catalog.HasMore && !catalog.Loading && !catalog.LoadingMore && catalog.Error == "", a.LoadMoreCatalog)
 
-	}).Grow(1).Scrollbars(false).TrackScroll(&a.discoverPageScroll).Label("discover-page-scroll")
+	}).Grow(1).Gap(cardGridVerticalGap).Scrollbars(false).TrackScroll(&a.discoverPageScroll).Label("discover-page-scroll")
 }
 
 func (a *App) renderCatalogHeader(c *ui.Context) {
@@ -100,8 +100,8 @@ func (a *App) catalogFilterSummary(catalog Catalog) string {
 }
 
 func (a *App) discoverSkeleton(c *ui.Context, width float32) {
-	rowHeight := a.collectionRowHeight(c, dramaCardWidth(width), []CatalogItem{{}}) +
-		dramaCardWidth(width)*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap
+	cardWidth := dramaCardWidth(width)
+	rowHeight := cardWidth*posterAspectRatio + catalogTextLineHeight + catalogMetadataLineHeight + 2*catalogRowGap
 	posterGridSkeleton(c, 12, width, func(float32) float32 { return rowHeight })
 }
 
