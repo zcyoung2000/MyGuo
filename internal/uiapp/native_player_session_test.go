@@ -105,3 +105,28 @@ func TestFeedEpisodeChoiceRejectsStaleAndUnavailableEpisodes(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomaticFeedContinuationHidesChannelsAndBackRestoresFeed(t *testing.T) {
+	a, p, host, tt := feedEpisodeTester(t)
+	p.state.Scene = 42
+	a.ContinueFeedEpisode(41, "123456", 2)
+	if a.PlayerVisible() {
+		t.Fatal("stale automatic continuation opened a player")
+	}
+	a.ContinueFeedEpisode(42, "123456", 2)
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	s := p.Snapshot()
+	if !a.PlayerVisible() || s.Mode != playback.Series || s.Playback.EpisodeNum != 2 || tt.HasText("推荐频道") {
+		t.Fatalf("automatic continuation retained discovery chrome: %+v", s)
+	}
+	if _, ok := tt.AccessByRole(ui.RoleButton, "暂停视频"); !ok {
+		t.Fatal("series playback controls missing")
+	}
+	a.ClosePlayer(s.Session)
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.desired["channel"] != "漫剧" || !tt.HasText("推荐频道") {
+		t.Fatal("back did not return to original feed channel")
+	}
+}

@@ -27,7 +27,7 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 	_, systemVideo := s.Engine.(interface{ VideoPlayer() *ui.VideoPlayer })
 	// Windows video is in the GPU UI surface, so controls sample that surface.
 	// Only a macOS AVKit view needs material from beneath the UI window.
-	a.playerNativeBackdrop = !systemVideo && s.Engine != nil && s.Status.Ready && s.Status.Displayed && s.Error == "" && !s.Status.PictureInPicture
+	a.playerNativeBackdrop = !systemVideo && s.Engine != nil && !nativePlayerPosterVisible(s) && !s.Status.PictureInPicture
 	host := a.media
 	command := func(cmd string, value any) {
 		if host != nil {

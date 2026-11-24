@@ -162,6 +162,7 @@ func main() {
 	root := flag.String("data", "/tmp/myguo-native-player/qa", "isolated test data")
 	exercisePIP := flag.Bool("exercise-pip", false, "verify native PiP handoff and restore")
 	exerciseFeed := flag.Bool("exercise-feed", false, "verify native autoplay after paused forward and reverse feed selections")
+	exerciseContinuation := flag.Bool("exercise-continuation", false, "verify native feed EOF enters a series session and back restores its channel")
 	exerciseSeek := flag.Bool("exercise-seek", false, "verify paused and playing seeks preserve playback intent")
 	exerciseBufferedStart := flag.Bool("exercise-buffered-start", false, "hold the first decoded frame and verify one local HLS reopen recovers it")
 	quitAfter := flag.Duration("quit-after", 0, "exercise graceful quit after this duration")
@@ -194,7 +195,9 @@ func main() {
 			return &heldNativeStart{Player: p}, nil
 		}
 	}
-	controller := playback.New(b, factory, path, playback.Hooks{Changed: app.PlaybackChanged, Fullscreen: native.ToggleWindowFullscreen, System: func(s playback.State) { native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "") }, LibraryChanged: func() {}})
+	controller := playback.New(b, factory, path, playback.Hooks{Changed: app.PlaybackChanged, Closed: app.ClosePlayer, Fullscreen: native.ToggleWindowFullscreen, System: func(s playback.State) { native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "") }, LibraryChanged: func() {}, ContinueFeed: func(scene uint64, id string, number int) {
+		go app.ContinueFeedEpisode(scene, id, number)
+	}})
 	defer controller.Close()
 	host := uiapp.NewNativeMediaHost(controller)
 	app.SetMediaHost(host)
@@ -243,6 +246,31 @@ func main() {
 			time.AfterFunc(*quitAfter, func() { mygo.App.Quit() })
 		}
 		go app.OpenView("recommend")
+		if *exerciseContinuation {
+			go func() {
+				deadline := time.Now().Add(20 * time.Second)
+				seenFeed, requestedBack := false, false
+				for time.Now().Before(deadline) {
+					s := controller.Snapshot()
+					if s.Mode == playback.Feed && s.HasDisplayedFrame && s.Playback != nil && s.Playback.EpisodeNum == 1 {
+						seenFeed = true
+					}
+					if seenFeed && !requestedBack && s.Mode == playback.Series && s.HasDisplayedFrame && s.Playback != nil && s.Playback.EpisodeNum == 2 && app.PlayerVisible() {
+						log.Printf("[qa-continuation] native EOF entered series episode=2 session=%d", s.Session)
+						requestedBack = true
+						controller.Command("close", nil)
+					}
+					if requestedBack && s.Mode == playback.Feed && !app.PlayerVisible() && s.HasDisplayedFrame {
+						log.Printf("[qa-continuation] back restored recommendation channel; PASSED")
+						mygo.App.Quit()
+						return
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+				log.Printf("[qa-continuation] FAILED mode=%s status=%+v", controller.Snapshot().Mode, controller.Snapshot().Status)
+				mygo.App.Quit()
+			}()
+		}
 		if *exerciseBufferedStart {
 			go func() {
 				deadline := time.Now().Add(8 * time.Second)

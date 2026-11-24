@@ -2,7 +2,7 @@
   "name": "MyGuo",
   "slug": "myguo",
   "identifier": "com.myguo.app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "macos": {
     "icon": "resources/AppIcon.icon",
     "minimumSystemVersion": "13.0"

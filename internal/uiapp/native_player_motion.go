@@ -70,7 +70,7 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 					ui.NativeView(c.Key("avkit-surface"), s.Engine).Absolute().Fill().PassThrough()
 				}
 			}
-			if !s.Status.Ready || !s.Status.Displayed || s.Error != "" {
+			if nativePlayerPosterVisible(s) {
 				if poster := a.Artwork(s.Book.CoverURL); poster != nil {
 					ui.Image(c.Key("player-poster"), poster).Absolute().Fill().Fit(ui.Contain).PassThrough()
 				}
@@ -87,4 +87,8 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 			})
 		}
 	})
+}
+
+func nativePlayerPosterVisible(s playback.State) bool {
+	return s.Error != "" || (!s.HasDisplayedFrame && (!s.Status.Ready || !s.Status.Displayed))
 }

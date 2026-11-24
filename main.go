@@ -148,6 +148,9 @@ func main() {
 		LibraryChanged: app.LibraryChanged,
 		Closed:         app.ClosePlayer,
 		Fullscreen:     native.ToggleWindowFullscreen,
+		ContinueFeed: func(scene uint64, seriesID string, number int) {
+			go app.ContinueFeedEpisode(scene, seriesID, number)
+		},
 		System: func(s playback.State) {
 			native.SetFeedScrollCapture(s.Mode != playback.Idle && s.Panel == "")
 			active := s.Mode != playback.Idle && s.Playback != nil

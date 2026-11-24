@@ -6,12 +6,25 @@ import "myguo/internal/playback"
 // recommendation page underneath lets the regular back action restore its
 // channel, while series playback gets episode navigation and its own controls.
 func (a *App) playFeedEpisode(seriesID string, number int) {
+	a.playFeedEpisodeFromScene(0, seriesID, number)
+}
+
+// ContinueFeedEpisode handles controller-driven episode navigation without
+// letting a late callback reopen a feed the user has already left or refreshed.
+func (a *App) ContinueFeedEpisode(scene uint64, seriesID string, number int) {
+	a.playFeedEpisodeFromScene(scene, seriesID, number)
+}
+
+func (a *App) playFeedEpisodeFromScene(scene uint64, seriesID string, number int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.media == nil || a.mediaOn || a.view != "recommend" || number < 1 {
 		return
 	}
 	s := a.media.Snapshot()
+	if scene != 0 && s.Scene != scene {
+		return
+	}
 	if s.Mode != playback.Feed || s.Book.ID == "" || s.Book.ID != seriesID ||
 		(s.Book.EpisodeCount > 0 && number > s.Book.EpisodeCount) {
 		return

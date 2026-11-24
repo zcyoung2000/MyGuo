@@ -66,6 +66,7 @@ type Hooks struct {
 	System         func(State)
 	Closed         func(int64)
 	Fullscreen     func()
+	ContinueFeed   func(uint64, string, int)
 }
 
 type State struct {
@@ -109,6 +110,9 @@ type State struct {
 	TransitionID       uint64
 	TransitionFrame    []byte
 	FirstFrameMS       int64
+	// A seek may temporarily clear native readiness while the last decoded
+	// picture remains visible. Only a new selection resets this display latch.
+	HasDisplayedFrame bool
 }
 
 type ReplyPage struct {
@@ -431,6 +435,7 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 	c.state.TransitionID = c.uiSelection
 	c.state.TransitionFrame = frame
 	c.state.FirstFrameMS = 0
+	c.state.HasDisplayedFrame = false
 	key := fmt.Sprintf("%s/%d/%s", card.ID, number, c.state.Preferences.Quality)
 	c.desired = key
 	// Drop obsolete decoders before allocating the new selection.
@@ -724,6 +729,9 @@ func (c *Controller) tick(now time.Time) {
 			}
 		}
 		c.state.Status = status
+		if status.Ready && status.Displayed && status.Error == "" {
+			c.state.HasDisplayedFrame = true
+		}
 		if status.Ready && status.Position > 0 && !s.seekPending {
 			c.markEpisodeWatched(s.seriesID, s.number)
 		}
@@ -1095,6 +1103,12 @@ func (c *Controller) nextEpisode(delta int) {
 				c.selectSlot(*next, 1, 0, 1)
 			})
 		}()
+		return
+	}
+	if c.state.Mode == Feed && c.hooks.ContinueFeed != nil {
+		// Episode navigation leaves discovery and starts the same independent
+		// series session as an explicit episode choice. The UI owns its back path.
+		c.hooks.ContinueFeed(c.scene, s.seriesID, n)
 		return
 	}
 	c.selectSlot(s.card, n, -1, delta)
