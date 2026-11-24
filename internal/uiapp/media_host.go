@@ -27,7 +27,6 @@ type nativePlayerController interface {
 	ToggleLike()
 	MoreComments()
 	LoadReplies(string)
-	SendDanmaku(string, string)
 	LikeDanmaku(string, bool)
 }
 

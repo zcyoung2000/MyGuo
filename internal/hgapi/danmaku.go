@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	danmakuWindowMs   = 30_000
-	danmakuMaxWindow  = 600_000
-	danmakuMaxTextLen = 200
+	danmakuWindowMs  = 30_000
+	danmakuMaxWindow = 600_000
 )
 
 type Danmaku struct {
@@ -31,13 +30,6 @@ type Danmaku struct {
 type DanmakuPage struct {
 	Items  []Danmaku `json:"items"`
 	NextMs int64     `json:"nextMs"`
-}
-
-type DanmakuSendResult struct {
-	ID     string `json:"id,omitempty"`
-	UserID string `json:"userId,omitempty"`
-	Text   string `json:"text,omitempty"`
-	TimeMs int64  `json:"timeMs,omitempty"`
 }
 
 type danmakuAPIResponse struct {
@@ -225,67 +217,6 @@ func (c *SessionClient) GetDanmaku(ctx context.Context, seriesID, episodeID stri
 		return page, nil
 	}
 	return nil, fmt.Errorf("弹幕接口不可用")
-}
-
-func (c *SessionClient) SendDanmaku(ctx context.Context, seriesID, episodeID, text string, timeMs int64, replyTo string) (*DanmakuSendResult, error) {
-	if !validContentID(seriesID) || !validContentID(episodeID) {
-		return nil, fmt.Errorf("无效弹幕归属 ID")
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, fmt.Errorf("弹幕内容不能为空")
-	}
-	if utf8.RuneCountInString(text) > danmakuMaxTextLen {
-		return nil, fmt.Errorf("弹幕内容最长 %d 个字符", danmakuMaxTextLen)
-	}
-	if timeMs < 0 {
-		timeMs = 0
-	}
-	replyTo = strings.TrimSpace(replyTo)
-
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	outer := map[string]any{
-		"ignore_urge_rule": false,
-		"book_id":          seriesID,
-		"offset":           timeMs,
-		"group_type":       1,
-		"comment_type":     20,
-		"sort":             1,
-		"item_id":          episodeID,
-		"text":             text,
-		"business_param": map[string]any{
-			"commit_source": 20,
-			"group_id":      episodeID,
-			"group_type":    1,
-			"text":          text,
-			"aid":           "8662",
-		},
-	}
-	if replyTo != "" {
-		outer["reply_to"] = replyTo
-	}
-	raw, err := c.postCommentAPI(ctx, "/novel/commentapi/comment/add/v1/", outer, "601", "1000", true)
-	if err != nil {
-		return nil, err
-	}
-	var res danmakuAPIResponse
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return nil, fmt.Errorf("发送弹幕响应解析失败: %w", err)
-	}
-	if res.Code != 0 {
-		message := strings.TrimSpace(res.Msg)
-		if message == "" {
-			message = fmt.Sprintf("%d", res.Code)
-		}
-		return nil, fmt.Errorf("发送弹幕失败: %s", message)
-	}
-	return &DanmakuSendResult{
-		ID:     res.Data.Comment.CommentID,
-		UserID: "",
-		Text:   text,
-		TimeMs: timeMs,
-	}, nil
 }
 
 func (c *SessionClient) LikeDanmaku(ctx context.Context, episodeID, danmakuID string, liked bool) (bool, error) {

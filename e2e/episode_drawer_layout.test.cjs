@@ -10,11 +10,10 @@ const CONTROL_BUTTON_GAP = 14;
 const RIGHT_CONTROL_WIDTHS = new Map([
   ['quality', 51],
   ['speed', 40],
-  ['danmaku', 32],
-  ['danmaku-settings', 32],
   ['drawer-toggle', 64],
   ['pip', 32],
-  ['fullscreen', 32]
+  ['fullscreen', 32],
+  ['danmaku-settings', 32]
 ]);
 
 function loadFunction(context, name) {

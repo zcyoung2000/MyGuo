@@ -17,7 +17,6 @@
       this.getVideo = options.getVideo || (() => null);
       this.getContext = options.getContext || (() => null);
       this.fetchPage = options.fetchPage;
-      this.sendItem = options.sendItem || null;
       this.likeItem = options.likeItem || null;
       this.onError = options.onError || (() => {});
 
@@ -47,7 +46,6 @@
       this.cursorMs = -1;
       this.lastTimeMs = -1;
       this.lastVideo = null;
-      this.localSeq = 0;
       this.frame = 0;
       this.destroyed = false;
       this.tick = this.tick.bind(this);
@@ -390,55 +388,7 @@
     pruneOld(timeMs) {
       if (this.items.length === 0) return;
       const cutoff = timeMs - KEEP_BEHIND_MS;
-      this.items = this.items.filter(item => item.local || item.timeMs >= cutoff);
-    }
-
-    discardLocal(item) {
-      this.items = this.items.filter(candidate => candidate !== item);
-      this.seenDisplay.delete(item.id);
-      for (const active of [...this.active]) {
-        if (active.id === item.id) this.removeActive(active);
-      }
-    }
-
-    async send(text, timeMs) {
-      text = String(text || '').trim();
-      if (!text || !this.sendItem) return null;
-      const context = this.getContext();
-      if (!context) return null;
-      const local = {
-        id: `local-${Date.now()}-${++this.localSeq}`,
-        userId: 'local',
-        text,
-        timeMs: Math.max(0, Math.floor(timeMs)),
-        color: '#ffffff',
-        likeCount: 0,
-        liked: false,
-        showDigg: false,
-        showAddOne: false,
-        local: true,
-      };
-      this.items.push(local);
-      this.items.sort((a, b) => a.timeMs - b.timeMs);
-      this.launch(local);
-      let result;
-      try {
-        result = await this.sendItem(context.seriesId, context.episodeId, text, local.timeMs);
-      } catch (err) {
-        this.discardLocal(local);
-        throw err;
-      }
-      if (result?.id && this.sendItem) {
-        const localID = local.id;
-        local.id = result.id;
-        local.showDigg = true;
-        local.local = false;
-        local.userId = result.userId || local.userId;
-        this.seen.add(local.id);
-        this.seenDisplay.delete(localID);
-        this.seenDisplay.add(local.id);
-      }
-      return result || local;
+      this.items = this.items.filter(item => item.timeMs >= cutoff);
     }
   }
 

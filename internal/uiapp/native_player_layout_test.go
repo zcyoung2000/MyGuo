@@ -35,10 +35,23 @@ func TestNativePlayerLayoutAndPanelMatrix(t *testing.T) {
 				if !ok || stage.W < 220 || math.Abs(float64(stage.Y)) > 1 || math.Abs(float64(stage.Y+stage.H-float32(size[1]))) > 1 || math.Abs(float64(stage.X+stage.W-float32(size[0]))) > 1 {
 					t.Fatalf("video squeezed: %+v", stage)
 				}
-				for _, label := range []string{"播放进度", "弹幕内容", "发送", "全屏", "画中画"} {
+				var rowTop, rowBottom float32
+				for i, label := range []string{"播放进度", "弹幕设置", "弹幕开", "全屏", "画中画"} {
 					rect, ok := tt.Find(label)
 					if !ok || rect.W <= 0 || rect.H <= 0 || rect.X < 0 || rect.Y < 0 || rect.X+rect.W > float32(size[0])+1 || rect.Y+rect.H > float32(size[1])+1 {
 						t.Fatalf("control %q clipped: %+v", label, rect)
+					}
+					if label != "播放进度" {
+						if i == 1 {
+							rowTop, rowBottom = rect.Y, rect.Y+rect.H
+						} else if rect.Y < rowTop || rect.Y+rect.H > rowBottom {
+							t.Fatalf("control %q left the single control row: rect=%+v row=[%g,%g]", label, rect, rowTop, rowBottom)
+						}
+					}
+				}
+				for _, gone := range []string{"弹幕内容", "发送"} {
+					if _, ok := tt.Find(gone); ok {
+						t.Fatalf("danmaku sending control %q remains", gone)
 					}
 				}
 				if _, ok := tt.AccessByRole(ui.RoleButton, "刷新"); ok {
@@ -89,27 +102,17 @@ func TestNativeDanmakuLanesAvoidCatchupAndSeekClockStaysStillWhenPaused(t *testi
 	}
 }
 
-func TestNativePlayerShortcutsDoNotCaptureTypingAndEnterSendsCurrentDraft(t *testing.T) {
+func TestNativePlayerShortcutsStillReachPlayback(t *testing.T) {
 	player := newNativeUIPlayer()
 	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{controller: player})
 	app.OpenView("recommend")
 	tt := ui.NewTester(app.Render, 1280, 820)
-	if err := tt.Click("弹幕内容"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Type("这一集很好看")
+	tt.Advance(300 * time.Millisecond)
+	tt.Key(0, ui.KeyB)
 	tt.Key(0, ui.KeyF)
-	tt.Key(0, ui.KeyP)
-	tt.Key(0, ui.KeyLeft)
-	for _, command := range player.commands {
-		if command != "activity" {
-			t.Fatalf("typing invoked a playback shortcut: %v", player.commands)
-		}
-	}
-	tt.Key(0, ui.KeyEnter)
-	if len(player.sent) != 1 || player.sent[0] == "" {
-		t.Fatalf("Enter did not send native draft: %v", player.sent)
+	if len(player.commands) < 2 || player.commands[len(player.commands)-2] != "danmaku" || player.commands[len(player.commands)-1] != "fullscreen" {
+		t.Fatalf("playback shortcuts lost: %v", player.commands)
 	}
 }
 
@@ -117,7 +120,7 @@ func TestNativeDanmakuHoverOffersActionsAndKeepsVideoClickAvailable(t *testing.T
 	p := newNativeUIPlayer()
 	p.state.Paused = true
 	p.state.Status.Playing = false
-	p.state.DanmakuItems = []ipc.Danmaku{{ID: "hover", Text: "原生悬停互动", TimeMs: 46000, ShowDigg: true, ShowAddOne: true}}
+	p.state.DanmakuItems = []ipc.Danmaku{{ID: "hover", Text: "原生悬停互动", TimeMs: 46000, ShowDigg: true}}
 	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{controller: p})
 	app.OpenView("recommend")
@@ -134,14 +137,8 @@ func TestNativeDanmakuHoverOffersActionsAndKeepsVideoClickAvailable(t *testing.T
 	y := video.Y + 10 + layout.lineHeight/2
 	tt.Move(x, y)
 	tt.Advance(20 * time.Millisecond)
-	add, ok := tt.Find("+1")
-	if !ok {
-		t.Fatal("hover actions not shown")
-	}
-	tt.Move(add.X+add.W/2, add.Y+add.H/2)
-	tt.Click("+1")
-	if len(p.sent) != 1 || p.sent[0] != "原生悬停互动" {
-		t.Fatalf("hover +1 lost text: %v", p.sent)
+	if _, ok := tt.Find("+1"); ok {
+		t.Fatal("danmaku sending action remains")
 	}
 	tt.Move(stage.X+10, stage.Y+stage.H-20)
 	tt.Advance(20 * time.Millisecond)
@@ -304,5 +301,33 @@ func TestDanmakuUsesBlackMarginsAndReservesControls(t *testing.T) {
 	clear := nativeDanmakuRect(stage, s)
 	if clear.W != area.W || clear.H <= area.H {
 		t.Fatal("clear-screen mode did not restore the canvas")
+	}
+}
+
+func TestNativeDanmakuToggleAndSettingsStayOnTheSingleControlRow(t *testing.T) {
+	player := newNativeUIPlayer()
+	player.state.Preferences.Danmaku.Enabled = true
+	app := NewTestApp()
+	app.SetMediaHost(&MediaHost{controller: player})
+	app.OpenView("recommend")
+	tt := ui.NewTester(app.Render, 1280, 820)
+	tt.Advance(300 * time.Millisecond)
+	if _, ok := tt.Find("弹幕开"); !ok {
+		t.Fatal("danmaku toggle missing")
+	}
+	if err := tt.Click("弹幕开"); err != nil {
+		t.Fatal(err)
+	}
+	if len(player.commands) == 0 || player.commands[len(player.commands)-1] != "danmaku" {
+		t.Fatalf("danmaku toggle did not reach the controller: %v", player.commands)
+	}
+	if err := tt.Click("弹幕设置"); err != nil {
+		t.Fatal(err)
+	}
+	if player.state.Panel != "danmaku" {
+		t.Fatalf("danmaku settings did not open: %q", player.state.Panel)
+	}
+	if _, ok := tt.Find("显示弹幕"); !ok {
+		t.Fatal("danmaku settings panel content missing")
 	}
 }

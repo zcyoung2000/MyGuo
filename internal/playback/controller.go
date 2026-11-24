@@ -40,7 +40,6 @@ type Backend interface {
 	GetEpisodeComments(context.Context, string, string, string) (*ipc.CommentPageDTO, error)
 	GetEpisodeCommentReplies(context.Context, string, string, string, string) (*ipc.CommentPageDTO, error)
 	GetDanmaku(context.Context, string, string, int64, int64) (*ipc.DanmakuPage, error)
-	SendDanmaku(context.Context, string, string, string, int64, string) (*ipc.DanmakuSendResult, error)
 	LikeDanmaku(context.Context, string, string, bool) (bool, error)
 }
 
@@ -103,9 +102,6 @@ type State struct {
 	Replies            map[string]ReplyPage
 	DanmakuItems       []ipc.Danmaku
 	DanmakuError       string
-	Sending            bool
-	SentSequence       uint64
-	SentText           string
 	Transition         int
 	TransitionID       uint64
 	TransitionFrame    []byte
@@ -189,7 +185,6 @@ type Controller struct {
 	feedCursors                       map[string]bool
 	account                           string
 	sequence                          uint64
-	sentSequence                      uint64
 	lastSave, lastSystem, lastPreload time.Time
 	chromeActivity                    time.Time
 	preloadVersion                    int64
@@ -859,7 +854,6 @@ func (c *Controller) clearEpisodeUI() {
 	c.state.DanmakuError = ""
 	c.danmakuWindows = map[int64]bool{}
 	c.danmakuLoading = map[int64]bool{}
-	c.state.Sending = false
 }
 func (c *Controller) Command(command string, value any) {
 	c.post(func() {

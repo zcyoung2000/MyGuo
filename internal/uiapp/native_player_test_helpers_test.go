@@ -14,7 +14,6 @@ type nativeUIPlayer struct {
 	mu       sync.Mutex
 	state    playback.State
 	commands []string
-	sent     []string
 	values   map[string]any
 }
 
@@ -101,9 +100,4 @@ func (p *nativeUIPlayer) ToggleFavorite()    {}
 func (p *nativeUIPlayer) ToggleLike()        {}
 func (p *nativeUIPlayer) MoreComments()      {}
 func (p *nativeUIPlayer) LoadReplies(string) {}
-func (p *nativeUIPlayer) SendDanmaku(text, reply string) {
-	p.mu.Lock()
-	p.sent = append(p.sent, text)
-	p.mu.Unlock()
-}
 func (p *nativeUIPlayer) LikeDanmaku(string, bool) {}

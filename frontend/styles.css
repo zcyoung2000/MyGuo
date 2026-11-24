@@ -460,38 +460,10 @@ html, body {
   color: var(--accent);
 }
 
-.danmaku-composer {
-  position: absolute;
-  right: 18px;
-  bottom: 72px;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: min(360px, calc(100% - 36px));
-  padding: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 10px;
-  background: rgba(18, 18, 24, 0.94);
-  backdrop-filter: blur(16px);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: translateY(8px);
-  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
-}
-
-.danmaku-composer.open {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
 .danmaku-settings-panel {
   position: absolute;
   right: 18px;
-  bottom: 120px;
+  bottom: 72px;
   z-index: 31;
   width: min(280px, calc(100% - 36px));
   padding: 14px;
@@ -562,41 +534,6 @@ html, body {
 .danmaku-settings-panel .icon-btn {
   width: 26px;
   height: 26px;
-}
-
-.danmaku-input {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.07);
-  color: #fff;
-  font-size: 12px;
-  outline: none;
-}
-
-.danmaku-input:focus {
-  border-color: var(--accent);
-}
-
-.danmaku-send {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 7px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 12px;
-}
-
-.danmaku-send svg {
-  width: 13px;
-  height: 13px;
 }
 
 /* Bottom Video Controls */
@@ -795,13 +732,11 @@ html, body {
 .feed-container.clearscreen .feed-info,
 .feed-container.clearscreen .feed-rail,
 .feed-container.clearscreen .cat-bar,
-.feed-container.clearscreen .danmaku-composer,
 .feed-container.clearscreen .danmaku-settings-panel,
 .feed-controls.clearscreen,
 .feed-info.clearscreen,
 .feed-rail.clearscreen,
 .cat-bar.clearscreen,
-.danmaku-composer.clearscreen,
 .danmaku-settings-panel.clearscreen,
 .feed-controls.clearscreen {
   opacity: 0 !important;

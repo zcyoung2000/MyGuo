@@ -147,9 +147,6 @@ func (b *fixtures) GetDanmaku(ctx context.Context, id, ep string, start, duratio
 	}
 	return p, nil
 }
-func (b *fixtures) SendDanmaku(ctx context.Context, id, ep, text string, at int64, reply string) (*ipc.DanmakuSendResult, error) {
-	return &ipc.DanmakuSendResult{ID: fmt.Sprint(time.Now().UnixNano()), UserID: "local-qa", Text: text, TimeMs: at}, nil
-}
 func (b *fixtures) LikeDanmaku(ctx context.Context, ep, id string, liked bool) (bool, error) {
 	return liked, nil
 }

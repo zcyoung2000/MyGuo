@@ -16,7 +16,6 @@ function playerControlIcons() {
     fullscreen: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
     danmaku: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 5h16a2 2 0 012 2v8a2 2 0 01-2 2H9.8l-3.4 2.8A1 1 0 014.8 19v-2H4a2 2 0 01-2-2V7a2 2 0 012-2zm0 2v8h16V7H4zm3 2h7v1.6H7V9zm0 3.4h10V14H7v-1.6z"/></svg>',
     settings: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1112 8.5a3.5 3.5 0 010 7zm7.4-2.6l1.8 1.4c.2.1.2.4.1.6l-1.7 3c-.1.2-.3.3-.6.2l-2.1-.9c-.5.4-1 .7-1.6.9l-.3 2.3c0 .2-.2.4-.5.4h-3.4c-.2 0-.4-.2-.5-.4l-.3-2.3c-.6-.2-1.1-.5-1.6-.9l-2.1.9c-.2.1-.5 0-.6-.2l-1.7-3c-.1-.2-.1-.4.1-.6l1.8-1.4a7 7 0 010-1.8L4.5 9.7c-.2-.1-.2-.4-.1-.6l1.7-3c.1-.2.3-.3.6-.2l2.1.9c.5-.4 1-.7 1.6-.9l.3-2.3c0-.2.2-.4.5-.4h3.4c.2 0 .4.2.5.4l.3 2.3c.6.2 1.1.5 1.6.9l2.1-.9c.2-.1.5 0 .6.2l1.7 3c.1.2.1.4-.1.6l-1.8 1.4a7 7 0 010 1.8z"/></svg>',
-    send: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 20.5v-17L22 12 3 20.5zm2-3.2L17.2 12 5 6.7v3.8L12 12l-7 1.5v3.8z"/></svg>',
     like: '<svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
     comment: '<svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 3c5.1 0 9 3.36 9 7.5S17.1 18 12 18c-.86 0-1.7-.09-2.48-.27L5 20v-3.83C3.14 14.91 3 12.98 3 10.5C3 6.36 6.9 3 12 3z"/></svg>',
     favorite: '<svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2L9.19 8.63L2 9.24l5.46 4.73L5.82 21z"/></svg>',
@@ -59,6 +58,7 @@ function mountPlayerChrome({ prefix, target, drawerTitle = '选集播放' }) {
           <button class="ctrl-btn" id="${id('play')}" title="播放/暂停 (Space)">${icons.play}${icons.pause}</button>
           <button class="ctrl-btn" id="${id('prev-ep')}" title="上一集">${icons.prev}</button>
           <button class="ctrl-btn" id="${id('next-ep')}" title="下一集">${icons.next}</button>
+          <button class="ctrl-btn danmaku-toggle" id="${id('danmaku')}" title="弹幕开关 (B)">${icons.danmaku}</button>
           <span class="time-display" id="${id('time-display')}">00:00 / 00:00</span>
         </div>
 
@@ -77,20 +77,14 @@ function mountPlayerChrome({ prefix, target, drawerTitle = '选集播放' }) {
               <div class="speed-opt" data-speed="2.0">2.0x</div>
             </div>
           </div>
-          <button class="ctrl-btn danmaku-toggle" id="${id('danmaku')}" title="弹幕开关 (B)">${icons.danmaku}</button>
-          <button class="ctrl-btn danmaku-settings-toggle" id="${id('danmaku-settings')}" title="弹幕设置" aria-controls="${id('danmaku-settings-panel')}" aria-expanded="false">${icons.settings}</button>
           <button class="ctrl-btn episodes-toggle" id="${id('drawer-toggle')}" title="选集" aria-controls="${id('playlist-drawer')}" aria-expanded="false">
             ${icons.episodes}<span>选集</span>
           </button>
           <button class="ctrl-btn" id="${id('pip')}" title="画中画 (P)">${icons.pip}</button>
           <button class="ctrl-btn" id="${id('fullscreen')}" title="全屏 (F)">${icons.fullscreen}</button>
+          <button class="ctrl-btn danmaku-settings-toggle" id="${id('danmaku-settings')}" title="弹幕设置" aria-controls="${id('danmaku-settings-panel')}" aria-expanded="false">${icons.settings}</button>
         </div>
       </div>
-    </div>
-
-    <div class="danmaku-composer" id="${id('danmaku-composer')}">
-      <input class="danmaku-input" id="${id('danmaku-input')}" maxlength="200" placeholder="发个弹幕见证当下" autocomplete="off">
-      <button class="ctrl-text-btn danmaku-send" id="${id('danmaku-send')}">${icons.send}<span>发送</span></button>
     </div>
 
     <div class="danmaku-settings-panel" id="${id('danmaku-settings-panel')}" role="dialog" aria-label="弹幕设置">
@@ -142,7 +136,6 @@ function mountPlayerChrome({ prefix, target, drawerTitle = '选集播放' }) {
   const names = [
     'like', 'comment', 'comment-count', 'fav', 'fav-label', 'rail',
     'danmaku', 'danmaku-settings', 'danmaku-settings-panel', 'danmaku-settings-close',
-    'danmaku-composer', 'danmaku-input', 'danmaku-send',
     'progress-wrap', 'progress-buffer', 'progress-current', 'time-tooltip',
     'play', 'prev-ep', 'next-ep', 'time-display', 'quality', 'quality-menu',
     'speed', 'speed-menu', 'drawer-toggle', 'pip', 'fullscreen',

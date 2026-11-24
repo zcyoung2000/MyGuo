@@ -1,13 +1,10 @@
 package playback
 
 import (
-	"fmt"
 	"math"
 	"myguo/internal/ipc"
 	"sort"
-	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 func (c *Controller) ToggleFavorite() {
@@ -251,54 +248,6 @@ func (c *Controller) fetchDanmakuWindow(s *slot, start int64) {
 			c.state.DanmakuVersion++
 		})
 	}()
-}
-func (c *Controller) SendDanmaku(text, replyTo string) {
-	c.post(func() {
-		s := c.current
-		if s == nil || s.dto == nil || c.state.Sending {
-			return
-		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			c.state.Notice = "请先输入弹幕内容"
-			return
-		}
-		if utf8.RuneCountInString(text) > 200 {
-			c.state.Notice = "弹幕最多 200 个字"
-			return
-		}
-		profile, err := c.backend.GetProfile(c.root)
-		if err != nil || !profile.LoggedIn {
-			c.state.Notice = "请先在设置中登录后发送弹幕"
-			return
-		}
-		c.state.Sending = true
-		scene, key, selection, ctx, position := c.scene, c.desired, c.uiSelection, c.root, int64(c.state.Status.Position*1000)
-		id, ep := s.seriesID, s.dto.EpisodeID
-		go func() {
-			result, err := c.backend.SendDanmaku(ctx, id, ep, text, position, replyTo)
-			c.post(func() {
-				if c.scene != scene || c.desired != key || c.uiSelection != selection {
-					return
-				}
-				c.state.Sending = false
-				if err != nil || result == nil {
-					c.state.Notice = "弹幕发送失败，请重试"
-					return
-				}
-				id := result.ID
-				if id == "" {
-					id = fmt.Sprintf("local:%d", time.Now().UnixNano())
-				}
-				c.state.DanmakuItems = append(c.state.DanmakuItems, ipc.Danmaku{ID: id, UserID: result.UserID, Text: text, TimeMs: position, Color: "#ffffff", ShowDigg: true, ShowAddOne: true})
-				c.state.DanmakuVersion++
-				c.state.Notice = "弹幕已发送"
-				c.sentSequence++
-				c.state.SentSequence = c.sentSequence
-				c.state.SentText = text
-			})
-		}()
-	})
 }
 func (c *Controller) LikeDanmaku(id string, liked bool) {
 	c.post(func() {

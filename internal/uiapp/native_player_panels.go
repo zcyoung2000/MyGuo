@@ -5,7 +5,6 @@ import (
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 	"myguo/internal/playback"
-	"strings"
 	"time"
 )
 
@@ -244,13 +243,6 @@ func (a *App) renderNativeDanmakuItems(c *ui.Context, s playback.State) {
 					panelAction(c, "danmaku-like:"+item.ID, label, func() {
 						if a.media != nil && a.media.controller != nil {
 							a.media.controller.LikeDanmaku(item.ID, !item.Liked)
-						}
-					})
-				}
-				if item.ShowAddOne {
-					panelAction(c, "danmaku-plus:"+item.ID, "+1", func() {
-						if a.media != nil && a.media.controller != nil {
-							a.media.controller.SendDanmaku(strings.TrimSpace(item.Text), item.ID)
 						}
 					})
 				}

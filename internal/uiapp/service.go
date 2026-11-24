@@ -155,9 +155,7 @@ type Settings struct {
 
 // App state and all render snapshots are protected by mu. Network work never holds it.
 type App struct {
-	playerSentSequence          uint64
 	playerFullscreen            bool
-	playerDraft                 string
 	playerEpisodesList          ui.ListState
 	playerCommentsList          ui.ListState
 	playerDanmakuList           ui.ListState

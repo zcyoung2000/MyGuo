@@ -3340,14 +3340,6 @@ function initDanmaku() {
   const common = {
     fetchPage: (seriesId, episodeId, startMs, durationMs) =>
       apiCall('GetDanmaku', seriesId, episodeId, startMs, durationMs),
-    sendItem: async (seriesId, episodeId, text, timeMs) => {
-      try {
-        return await apiCall('SendDanmaku', seriesId, episodeId, text, timeMs, '');
-      } catch (err) {
-        showToast(String(err.message || err));
-        throw err;
-      }
-    },
     likeItem: async (item, liked) => {
       if (String(item.id || '').startsWith('local-')) return undefined;
       try {
@@ -3381,11 +3373,7 @@ function setDanmakuEnabled(source, controller, enabled) {
   controller.setEnabled(enabled);
   const button = document.getElementById(`${source}-danmaku`);
   if (button) button.classList.toggle('active', controller.enabled);
-  if (!enabled) {
-    const composer = document.getElementById(`${source}-danmaku-composer`);
-    if (composer) composer.classList.remove('open');
-    closeDanmakuSettings(source);
-  }
+  if (!enabled) closeDanmakuSettings(source);
 }
 
 function closeDanmakuSettings(source) {
@@ -3417,9 +3405,6 @@ function bindDanmakuControls(prefix, controller, source) {
   const settingsToggle = document.getElementById(`${prefix}-danmaku-settings`);
   const settingsPanel = document.getElementById(`${prefix}-danmaku-settings-panel`);
   const settingsClose = document.getElementById(`${prefix}-danmaku-settings-close`);
-  const composer = document.getElementById(`${prefix}-danmaku-composer`);
-  const input = document.getElementById(`${prefix}-danmaku-input`);
-  const send = document.getElementById(`${prefix}-danmaku-send`);
   if (button) {
     button.classList.toggle('active', controller.enabled);
     button.addEventListener('click', event => {
@@ -3458,39 +3443,6 @@ function bindDanmakuControls(prefix, controller, source) {
       if (input?.dataset?.danmakuSetting === 'outline') controller.setOutline(input.checked);
       syncDanmakuSettings(source, controller);
     });
-  }
-  if (composer) composer.addEventListener('click', event => event.stopPropagation());
-  if (input) {
-    input.addEventListener('keydown', event => {
-      event.stopPropagation();
-      if (event.key === 'Enter') void sendDanmakuInput(source, controller, input);
-    });
-  }
-  if (send) {
-    send.addEventListener('click', event => {
-      event.stopPropagation();
-      void sendDanmakuInput(source, controller, input);
-    });
-  }
-}
-
-async function sendDanmakuInput(source, controller, input) {
-  if (!controller || !input) return;
-  const text = input.value.trim();
-  if (!text) return;
-  const playbackVideo = getFeedVideo();
-  input.disabled = true;
-  try {
-    await controller.send(text, (playbackVideo?.currentTime || 0) * 1000);
-    input.value = '';
-    input.blur();
-    const composer = document.getElementById(`${source}-danmaku-composer`);
-    if (composer) composer.classList.remove('open');
-  } catch (err) {
-    console.warn('send danmaku failed:', err);
-    showToast('发送弹幕失败: ' + (err?.message || err || '网络异常'));
-  } finally {
-    input.disabled = false;
   }
 }
 

@@ -121,9 +121,6 @@ func TestGuestCannotWriteInteractionsOrUserLibrary(t *testing.T) {
 	if err := api.UpdateFavorite(context.Background(), "710000000000003", true); !errors.Is(err, ErrAuthenticationRequired) {
 		t.Fatal(err)
 	}
-	if _, err := api.SendDanmaku(context.Background(), "710000000000003", "710000000000004", "hello", 0, ""); err == nil {
-		t.Fatal("guest ticket counted as login")
-	}
 }
 
 func TestProgressUploadUsesProtocolFlagsAndPlaybackMilliseconds(t *testing.T) {

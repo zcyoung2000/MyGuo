@@ -89,9 +89,6 @@ func (a *App) renderNativeDanmaku(c *ui.Context, s playback.State) {
 						if item.ShowDigg {
 							panelAction(c, "danmaku-hover-like", fmt.Sprintf("%s %d", chooseText(item.Liked, "已赞", "点赞"), item.LikeCount), func() { a.media.controller.LikeDanmaku(item.ID, !item.Liked) })
 						}
-						if item.ShowAddOne {
-							panelAction(c, "danmaku-hover-add", "+1", func() { a.media.controller.SendDanmaku(item.Text, item.ID) })
-						}
 					})
 				})
 				break
@@ -229,7 +226,7 @@ func hitDanmaku(layout danmakuLayout, video ui.Rect, launchAfter, position float
 	for i := len(layout.flights) - 1; i >= 0; i-- {
 		f := layout.flights[i]
 		elapsed := position - f.start
-		if f.start < launchAfter || elapsed < 0 || elapsed > 9 || (!f.item.ShowDigg && !f.item.ShowAddOne) {
+		if f.start < launchAfter || elapsed < 0 || elapsed > 9 || !f.item.ShowDigg {
 			continue
 		}
 		r := ui.Rect{X: video.X + video.W - float32(elapsed*f.speed), Y: video.Y + float32(f.lane)*layout.lineHeight + 8, W: f.width, H: layout.lineHeight}
