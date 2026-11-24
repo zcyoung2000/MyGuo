@@ -35,6 +35,7 @@ func (v *windowsVideo) snapshot() avkit.Status {
 		Position: v.p.Position().Seconds(), Duration: v.p.Duration().Seconds(),
 		Ready: v.p.Ready(), Displayed: v.p.Ready(), Playing: v.p.Playing(),
 		Buffering: v.p.Buffering(), Ended: v.p.Ended(), Width: w, Height: h,
+		RangesUnsupported: true,
 	}
 	if err := v.p.Err(); err != nil {
 		s.Error = err.Error()

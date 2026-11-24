@@ -185,6 +185,7 @@ type testEngine struct {
 	seeks        []float64
 	warmNetwork  bool
 	holdClock    bool
+	noRanges     bool
 }
 
 func (e *testEngine) NativeView() uintptr  { return 0 }
@@ -194,7 +195,11 @@ func (e *testEngine) Load(url string) error {
 	defer e.mu.Unlock()
 	e.url = url
 	e.loads = append(e.loads, url)
-	e.status = avkit.Status{Ready: true, Displayed: true, Duration: 200, Buffered: 200, PictureInPicture: e.status.PictureInPicture}
+	buffered := 200.0
+	if e.noRanges {
+		buffered = 0
+	}
+	e.status = avkit.Status{Ready: true, Displayed: true, Duration: 200, Buffered: buffered, RangesUnsupported: e.noRanges, PictureInPicture: e.status.PictureInPicture}
 	return nil
 }
 func (e *testEngine) Play() { e.mu.Lock(); e.status.Playing = true; e.plays++; e.mu.Unlock() }
@@ -244,12 +249,13 @@ func (e *testEngine) Close() error {
 }
 
 type engineRegistry struct {
-	mu      sync.Mutex
-	engines []*testEngine
+	mu       sync.Mutex
+	engines  []*testEngine
+	noRanges bool
 }
 
 func (r *engineRegistry) make() (avkit.Player, error) {
-	e := &testEngine{}
+	e := &testEngine{noRanges: r.noRanges}
 	r.mu.Lock()
 	r.engines = append(r.engines, e)
 	r.mu.Unlock()
@@ -273,6 +279,16 @@ func (r *engineRegistry) active() (open, audible int) {
 func newControllerTest(t *testing.T, b *testBackend) (*Controller, *engineRegistry) {
 	t.Helper()
 	r := &engineRegistry{}
+	c := New(b, r.make, "", Hooks{})
+	t.Cleanup(c.Close)
+	return c, r
+}
+
+// newControllerTestNoRanges emulates the Windows Media Foundation backend,
+// which publishes no buffered or seekable ranges.
+func newControllerTestNoRanges(t *testing.T, b *testBackend) (*Controller, *engineRegistry) {
+	t.Helper()
+	r := &engineRegistry{noRanges: true}
 	c := New(b, r.make, "", Hooks{})
 	t.Cleanup(c.Close)
 	return c, r

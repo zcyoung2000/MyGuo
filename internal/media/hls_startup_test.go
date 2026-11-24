@@ -3,10 +3,12 @@ package media
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,18 @@ func startupTestPlaylist(segments int, complete bool) string {
 }
 
 func TestHLSPlaylistStartupRunway(t *testing.T) {
+	// Each fixture segment is 3.75s and target duration is 4s, so a
+	// 6-target runway needs 7 growing segments while a 2-target runway
+	// needs 3. Derive the boundary from the platform's configured target so
+	// this test locks the exact threshold on both macOS and Windows.
+	targets := hlsStartupRunwayTargets()
+	thresholdSegments := int(math.Ceil(targets*4/3.75)) - 1
+	if targets == 6 && thresholdSegments != 6 {
+		t.Fatalf("macOS runway contract changed: targets=%v segments=%d", targets, thresholdSegments)
+	}
+	if targets == 2 && thresholdSegments != 2 {
+		t.Fatalf("Windows runway contract changed: targets=%v segments=%d", targets, thresholdSegments)
+	}
 	for _, tc := range []struct {
 		name     string
 		segments int
@@ -32,9 +46,8 @@ func TestHLSPlaylistStartupRunway(t *testing.T) {
 		ready    bool
 	}{
 		{"first fragment", 1, false, false},
-		{"only the live edge reserve", 3, false, false},
-		{"insufficient runway at double speed", 6, false, false},
-		{"growing runway", 7, false, true},
+		{"one short of the runway", thresholdSegments, false, false},
+		{"growing runway", thresholdSegments + 1, false, true},
 		{"completed short clip", 1, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,6 +58,17 @@ func TestHLSPlaylistStartupRunway(t *testing.T) {
 	}
 	if hlsPlaylistStartupReady([]byte("#EXTM3U\n#EXTINF:4,\nseg000.m4s\n")) {
 		t.Fatal("a manifest without a target duration cannot establish a startup runway")
+	}
+}
+
+func TestHLSStartupRunwayTargetsByPlatform(t *testing.T) {
+	got := hlsStartupRunwayTargets()
+	want := 6.0
+	if runtime.GOOS == "windows" {
+		want = 2
+	}
+	if got != want {
+		t.Fatalf("hlsStartupRunwayTargets() = %v on %s, want %v", got, runtime.GOOS, want)
 	}
 }
 

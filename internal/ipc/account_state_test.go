@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -113,8 +114,14 @@ func TestSavedAccountRestoresAndUsesPrivateFilePermissions(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(appDir, "account.json")); !os.IsNotExist(err) {
 		t.Fatalf("account.json exists, err = %v", err)
 	}
-	if info, err := os.Stat(filepath.Join(appDir, "userdata.db")); err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("database permissions = %v, %v", info, err)
+	info, err := os.Stat(filepath.Join(appDir, "userdata.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows FileMode does not expose Unix permission bits; private ACLs are
+	// handled by the OS instead. Only the POSIX branch asserts 0600.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		t.Fatalf("database permissions = %v", info.Mode().Perm())
 	}
 	restarted := newHongguoService(nil, store, nil, appDir, home)
 	t.Cleanup(func() { CloseService(restarted) })

@@ -15,10 +15,12 @@ import (
 )
 
 func TestEpisodeCachePathSeparatesQualities(t *testing.T) {
-	if got := episodeCachePath("/tmp", "710000000000001", DefaultVideoQuality); got != "/tmp/episodes/710000000000001_v2.mp4" {
+	defaultWant := filepath.Join("/tmp", "episodes", "710000000000001_v2.mp4")
+	if got := episodeCachePath("/tmp", "710000000000001", DefaultVideoQuality); got != defaultWant {
 		t.Fatalf("default path = %q", got)
 	}
-	if got := episodeCachePath("/tmp", "710000000000001", "1080p"); got != "/tmp/episodes/710000000000001_1080p_v2.mp4" {
+	hdWant := filepath.Join("/tmp", "episodes", "710000000000001_1080p_v2.mp4")
+	if got := episodeCachePath("/tmp", "710000000000001", "1080p"); got != hdWant {
 		t.Fatalf("1080p path = %q", got)
 	}
 }

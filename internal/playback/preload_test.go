@@ -34,10 +34,14 @@ func TestPreloadAdmissionProtectsPlaybackWithoutCancelingItsBufferedTail(t *test
 	}
 }
 
-func TestPreloadWithUnknownRangesRequiresFullCacheOrPause(t *testing.T) {
+func TestPreloadWithReportedButZeroRangesStaysConservative(t *testing.T) {
+	// A player that reports ranges (RangesUnsupported=false) but currently has
+	// no buffered runway must still be conservative: only full cache, pause or
+	// a genuine stall change its admission. Windows is covered separately via
+	// RangesUnsupported, which carries the platform capability explicitly.
 	s := State{Status: avkit.Status{Ready: true, Position: 10, Duration: 200}, Preferences: Preferences{Rate: 1}, Playback: &ipc.PlaybackDTO{}}
 	if preloadAdmission(s, true) {
-		t.Fatal("unknown runway admitted background downloads")
+		t.Fatal("empty reported runway admitted background downloads")
 	}
 	s.Playback.IsFullCached = true
 	if !preloadAdmission(s, false) {
@@ -51,6 +55,119 @@ func TestPreloadWithUnknownRangesRequiresFullCacheOrPause(t *testing.T) {
 	if !preloadAdmission(s, false) {
 		t.Fatal("paused media blocked preloading")
 	}
+}
+
+func TestPreloadWithoutBufferedRangesAdmitsHealthyPlayback(t *testing.T) {
+	base := State{Status: avkit.Status{Ready: true, Position: 10, Duration: 200, RangesUnsupported: true}, Preferences: Preferences{Rate: 1}, Playback: &ipc.PlaybackDTO{}}
+	if !preloadAdmission(base, false) {
+		t.Fatal("unknown buffered ranges blocked disk preload of a healthy stream")
+	}
+	if canWarmNeighbor(base) {
+		t.Fatal("unknown buffered ranges must not open a native preroll decoder")
+	}
+	// Media Foundation reports Buffering/Loading for a growing HLS stream even
+	// while it decodes fine. On a platform with no published ranges those are
+	// transient noise: canceling on them tore the prefetch down seconds after
+	// it started, so the next episode was never actually cached.
+	transient := base
+	transient.Status.Buffering = true
+	if !preloadAdmission(transient, true) {
+		t.Fatal("transient buffering canceled disk preload without ranges")
+	}
+	transient = base
+	transient.Loading = true
+	if !preloadAdmission(transient, true) {
+		t.Fatal("transient loading canceled disk preload without ranges")
+	}
+	// A genuine failure must still yield bandwidth on every platform.
+	stalled := base
+	stalled.Error = "network"
+	if preloadAdmission(stalled, true) {
+		t.Fatal("playback error ignored even with unknown ranges")
+	}
+	stalled = base
+	stalled.Status.Ready = false
+	if preloadAdmission(stalled, true) {
+		t.Fatal("unready player ignored even with unknown ranges")
+	}
+}
+
+func TestRangesUnsupportedKeepsLookaheadOnDiskWithoutWarmingDecoder(t *testing.T) {
+	b := &testBackend{}
+	c, r := newControllerTestNoRanges(t, b)
+	c.Play("A", 1, 0, 1)
+	waitSource(t, c, "A", 1)
+	eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		for _, window := range b.preload {
+			if len(window) == 2 && window[0].Number == 2 && window[1].Number == 3 {
+				return true
+			}
+		}
+		return false
+	})
+	// Disk window is populated, but no native decoder is opened for the
+	// neighbor because MyGo cannot pre-decode without buffered ranges.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.engines) != 1 {
+		t.Fatalf("warmed %d native decoders without buffered ranges, want 1 (current only)", len(r.engines))
+	}
+}
+
+func TestNoRangesKeepsPreloadWindowWhenRunwayDisappears(t *testing.T) {
+	b := &testBackend{}
+	// Windows always reports Buffered=0. The old rule read that as an empty
+	// runway and cancelled the finished window; the new rule must keep the
+	// lookahead on disk regardless of the reported value.
+	c, _ := newControllerTestNoRanges(t, b)
+	c.Play("A", 1, 0, 1)
+	s := waitSource(t, c, "A", 1)
+	eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return len(b.preload) > 0 && len(b.preload[len(b.preload)-1]) == 2
+	})
+	e := s.Engine.(*testEngine)
+	e.mu.Lock()
+	e.status.Buffered = e.status.Position
+	e.mu.Unlock()
+	c.post(func() { c.updatePreload() })
+	barrier(t, c)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.preload) == 0 {
+		t.Fatal("no preload window was submitted")
+	}
+	last := b.preload[len(b.preload)-1]
+	if len(last) != 2 {
+		t.Fatalf("preload window was cancelled when buffered runway dropped: last=%v", last)
+	}
+}
+
+func TestRangedAdmissionStillCancelsWindowOnLostBudget(t *testing.T) {
+	b := &testBackend{}
+	// Platforms with published ranges keep the original behavior: when the
+	// runway budget drops, submit an empty window to cancel disk prefetch.
+	c, _ := newControllerTest(t, b)
+	c.Play("A", 1, 0, 1)
+	s := waitSource(t, c, "A", 1)
+	eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return len(b.preload) > 0 && len(b.preload[len(b.preload)-1]) == 2
+	})
+	e := s.Engine.(*testEngine)
+	e.mu.Lock()
+	e.status.Buffered = e.status.Position
+	e.mu.Unlock()
+	c.post(func() { c.updatePreload() })
+	eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return len(b.preload) > 0 && len(b.preload[len(b.preload)-1]) == 0
+	})
 }
 
 func TestSeriesPreloadsTwoEpisodesAndPromotesWithoutSeekingAwayPreroll(t *testing.T) {

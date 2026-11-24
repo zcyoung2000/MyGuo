@@ -90,5 +90,12 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 }
 
 func nativePlayerPosterVisible(s playback.State) bool {
-	return s.Error != "" || (!s.HasDisplayedFrame && (!s.Status.Ready || !s.Status.Displayed))
+	if s.Error != "" {
+		return true
+	}
+	// A Windows promotion grace covers the jump to the next episode. Showing
+	// the series cover there would flash an image between two video frames,
+	// so keep the surface clean until the spinner grace ends or a frame lands.
+	// LoadingGrace is never set on macOS, so its poster contract is unchanged.
+	return !s.LoadingGrace && !s.HasDisplayedFrame && (!s.Status.Ready || !s.Status.Displayed)
 }

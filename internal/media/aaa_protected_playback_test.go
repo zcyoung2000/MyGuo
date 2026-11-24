@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"myguo/internal/hgapi"
@@ -81,7 +82,7 @@ func TestProtectedFullCacheDownloadUsesContentKeyAndDecrypts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContentKey() error = %v", err)
 	}
-	ffmpegPath := filepath.Join(t.TempDir(), "ffmpeg")
+	ffmpegName := "ffmpeg"
 	script := fmt.Sprintf(`#!/bin/bash
 key=
 url=
@@ -96,6 +97,27 @@ if [ "$key" != "%s" ] || [ "$url" != "%s" ]; then
 fi
 dd if=/dev/zero of="${@: -1}" bs=1024 count=2 status=none
 `, key.Hex, sourceURL)
+	if runtime.GOOS == "windows" {
+		// Windows requires an executable extension; the bash stub above cannot
+		// be launched there. Mirror the argument check with a batch stub.
+		ffmpegName = "ffmpeg.bat"
+		script = "@echo off\r\n" +
+			"setlocal EnableDelayedExpansion\r\n" +
+			"set \"key=\"\r\n" +
+			"set \"url=\"\r\n" +
+			"set \"previous=\"\r\n" +
+			"set \"out=\"\r\n" +
+			"for %%A in (%*) do (\r\n" +
+			"  if \"!previous!\"==\"-decryption_key\" set \"key=%%~A\"\r\n" +
+			"  if \"!previous!\"==\"-i\" set \"url=%%~A\"\r\n" +
+			"  set \"previous=%%~A\"\r\n" +
+			"  set \"out=%%~A\"\r\n" +
+			")\r\n" +
+			"if not \"!key!\"==\"" + key.Hex + "\" exit /b 97\r\n" +
+			"if not \"!url!\"==\"" + sourceURL + "\" exit /b 97\r\n" +
+			"fsutil file createnew \"!out!\" 2048 >nul\r\n"
+	}
+	ffmpegPath := filepath.Join(t.TempDir(), ffmpegName)
 	if err := os.WriteFile(ffmpegPath, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}

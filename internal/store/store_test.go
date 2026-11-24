@@ -507,3 +507,18 @@ func TestClearCachedEpisodesRemovesIndex(t *testing.T) {
 		t.Fatal("cleared episode index still returned a row")
 	}
 }
+
+// On Windows t.TempDir() returns a drive-letter path such as C:\...\. Building
+// the SQLite DSN as file://C:/... made modernc.org/sqlite reject it with
+// "invalid uri authority: C:".
+func TestNewStoreWithDriveLetterPath(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore(%q) failed: %v", dir, err)
+	}
+	defer store.Close()
+	if _, err := os.Stat(filepath.Join(dir, "userdata.db")); err != nil {
+		t.Fatalf("database file missing: %v", err)
+	}
+}

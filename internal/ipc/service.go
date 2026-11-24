@@ -124,45 +124,47 @@ type episodeListResult struct {
 }
 
 type HongguoService struct {
-	catalogOnce          sync.Once
-	catalog              *catalog.Service
-	libraryOnce          sync.Once
-	library              *library.Service
-	client               *hgapi.Client
-	discover             func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error)
-	resetDevice          func(context.Context) error
-	seriesBatch          func(context.Context, []string) ([]model.SeriesDetail, error)
-	store                *Store
-	media                *MediaServer
-	appDir               string
-	deviceProfileStore   hgapi.ProfileStore
-	authTransport        auth.CredentialTransport
-	identityMu           sync.RWMutex
-	accountMu            sync.Mutex
-	qrMu                 sync.Mutex
-	qrActive             *qrLoginAttempt
-	authMu               sync.RWMutex
-	authUserID           string
-	userCookies          string
-	userToken            string
-	deviceID             string
-	iid                  string
-	cdid                 string
-	openudid             string
-	userAgent            string
-	storeRegion          string
-	httpClient           *http.Client
-	cache                *resourcecache.LRU
-	feedMu               sync.Mutex
-	feedWarmupMu         sync.Mutex
-	feedWarmupGeneration uint64
-	episodeMu            sync.Mutex
-	episodeCache         map[string]episodeCacheEntry
-	episodeCacheIndex    map[string]*list.Element
-	episodeCacheLRU      *list.List
-	episodeLoads         map[string]*episodeLoad
-	spareDevices         *sparedevice.Manager
-	historyInvalidator   func()
+	catalogOnce           sync.Once
+	catalog               *catalog.Service
+	libraryOnce           sync.Once
+	library               *library.Service
+	client                *hgapi.Client
+	discover              func(context.Context, hgapi.DiscoverOptions) (*hgapi.Page[model.SeriesSummary], error)
+	resetDevice           func(context.Context) error
+	seriesBatch           func(context.Context, []string) ([]model.SeriesDetail, error)
+	store                 *Store
+	media                 *MediaServer
+	appDir                string
+	deviceProfileStore    hgapi.ProfileStore
+	authTransport         auth.CredentialTransport
+	identityMu            sync.RWMutex
+	accountMu             sync.Mutex
+	qrMu                  sync.Mutex
+	qrActive              *qrLoginAttempt
+	authMu                sync.RWMutex
+	authUserID            string
+	userCookies           string
+	userToken             string
+	deviceID              string
+	iid                   string
+	cdid                  string
+	openudid              string
+	userAgent             string
+	storeRegion           string
+	httpClient            *http.Client
+	cache                 *resourcecache.LRU
+	feedMu                sync.Mutex
+	feedWarmupMu          sync.Mutex
+	feedWarmupGeneration  uint64
+	fullPrefetchMu        sync.Mutex
+	fullPrefetchSignature string
+	episodeMu             sync.Mutex
+	episodeCache          map[string]episodeCacheEntry
+	episodeCacheIndex     map[string]*list.Element
+	episodeCacheLRU       *list.List
+	episodeLoads          map[string]*episodeLoad
+	spareDevices          *sparedevice.Manager
+	historyInvalidator    func()
 }
 
 type ServiceOption func(*HongguoService)

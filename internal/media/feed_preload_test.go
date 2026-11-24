@@ -3,6 +3,7 @@ package media
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -127,6 +128,31 @@ func TestFeedPreloadWindowPromotionAndBackpressureKeepCurrentAndCompleteCache(t 
 	ms.SetFeedPreloadWindow(2, "710000000000001", "720p", items)
 	if canceled[currentKey] || ms.feedPreloadCurrent != currentKey || ms.hlsStarts.Load() != 0 {
 		t.Fatal("stale window displaced the protected current video")
+	}
+}
+
+func TestFeedPreloadWindowHLSAdmissionByPlatform(t *testing.T) {
+	ms := &MediaServer{cacheDir: t.TempDir(), hlsStreams: make(map[string]*hlsStream)}
+	neighbor := FeedPreloadItem{EpisodeID: "710000000000002", Quality: "720p"}
+	// A cold neighbor with no pre-seeded stream: the HLS admission loop would
+	// start a speculative stream on platforms that publish buffered ranges.
+	statuses := ms.SetFeedPreloadWindow(1, "710000000000001", "720p", []FeedPreloadItem{neighbor})
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1", len(statuses))
+	}
+	key := PrefetchTaskKey(PrefetchTask{EpisodeID: neighbor.EpisodeID, Quality: neighbor.Quality})
+	_, streamStarted := ms.hlsStreams[key]
+	if runtime.GOOS == "windows" {
+		// Windows leaves neighbor lookahead to the full-file prefetch. No HLS
+		// stream may register, or runPrefetchTask would skip the MP4 download.
+		if streamStarted || ms.hlsStarts.Load() != 0 {
+			t.Fatalf("Windows started a speculative HLS stream: registered=%t starts=%d", streamStarted, ms.hlsStarts.Load())
+		}
+		return
+	}
+	// macOS keeps its original behavior: still admit and start the HLS stream.
+	if !streamStarted || ms.hlsStarts.Load() != 1 {
+		t.Fatalf("macOS did not start the HLS preload: registered=%t starts=%d", streamStarted, ms.hlsStarts.Load())
 	}
 }
 

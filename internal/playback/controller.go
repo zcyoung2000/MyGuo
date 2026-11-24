@@ -21,6 +21,13 @@ import (
 	"myguo/internal/media"
 )
 
+// cachedEpisodeRefresher is optional: only the native service implements it.
+// It upgrades a neighbor slot's stale dto to a completed local-file dto when
+// its full MP4 prefetch has finished since the dto was resolved.
+type cachedEpisodeRefresher interface {
+	RefreshCachedEpisode(context.Context, *ipc.PlaybackDTO) (*ipc.PlaybackDTO, error)
+}
+
 type Backend interface {
 	PlayEpisode(context.Context, string, string, int, string, bool) (*ipc.PlaybackDTO, error)
 	GetSeriesDetail(context.Context, string) (*ipc.SeriesDetailDTO, error)
@@ -85,6 +92,14 @@ type State struct {
 	Updated            time.Time
 	Preferences        Preferences
 	Loading            bool
+	// LoadingGrace suppresses the loading spinner for a brief window after an
+	// auto-advance promotion on Windows, until the first decoded frame lands.
+	// LoadingSince anchors that window; tick flips LoadingGrace to false when
+	// it expires so publish() redraws and the spinner appears if still loading.
+	// Both stay zero on macOS and for feed/fallback loads, which keep the
+	// original immediate-spinner behavior.
+	LoadingGrace    bool
+	LoadingSince    time.Time
 	Error              string
 	Notice             string
 	Paused             bool
@@ -102,10 +117,10 @@ type State struct {
 	Replies            map[string]ReplyPage
 	DanmakuItems       []ipc.Danmaku
 	DanmakuError       string
-	Transition         int
-	TransitionID       uint64
-	TransitionFrame    []byte
-	FirstFrameMS       int64
+	Transition      int
+	TransitionID    uint64
+	TransitionFrame []byte
+	FirstFrameMS    int64
 	// A seek may temporarily clear native readiness while the last decoded
 	// picture remains visible. Only a new selection resets this display latch.
 	HasDisplayedFrame bool
@@ -190,6 +205,7 @@ type Controller struct {
 	preloadVersion                    int64
 	preloadLoading                    bool
 	preloadAdmitted                   bool
+	lastPreloadTrace                  string
 	uiSelection                       uint64
 	commentCursors                    map[string]bool
 	replyCursors                      map[string]map[string]bool
@@ -395,6 +411,7 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 	}
 	c.uiSelection++
 	c.saveCurrent()
+	promotion := c.current != nil
 	// Snapshot once before retiring a surface; a frozen outgoing frame keeps
 	// rapid swipes smooth without retaining a fourth decoder or extra audio.
 	var frame []byte
@@ -424,6 +441,10 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 	c.state.Engine = c.floating
 	c.state.Status = avkit.Status{}
 	c.state.Loading = true
+	// Start the Windows spinner grace before asynchronous source negotiation.
+	// Only promotions have an outgoing frame to preserve; a cold start keeps
+	// the original immediate-spinner behavior.
+	c.state.LoadingGrace, c.state.LoadingSince = beginLoadingGrace(promotion, time.Now())
 	c.state.Error = ""
 	c.state.Notice = ""
 	c.state.Transition = direction
@@ -573,6 +594,16 @@ func (c *Controller) applySlot(s *slot) {
 		}
 		return
 	}
+	// A neighbor slot may have been resolved before its full-file prefetch
+	// completed, leaving a stale HLS dto. Upgrade it in place on promotion so
+	// nativeSourceURL picks the local complete MP4 instead of the slow HLS
+	// cold path. The refresher is Windows-only and cache-backed (no quality
+	// negotiation), so other platforms and cold episodes are unaffected.
+	if refresher, ok := c.backend.(cachedEpisodeRefresher); ok {
+		if refreshed, err := refresher.RefreshCachedEpisode(s.ctx, s.dto); err == nil && refreshed != nil {
+			s.dto = refreshed
+		}
+	}
 	c.current = s
 	c.state.Playback = s.dto
 	c.state.Book = s.card
@@ -629,6 +660,13 @@ func (c *Controller) applySlot(s *slot) {
 		s.engine.Pause()
 	}
 	c.state.Loading = !s.first
+	// The grace starts in selectSlot, before async source negotiation. Keep its
+	// original timestamp so that gap is covered; only start a new one here when
+	// a promotion reaches applySlot outside selectSlot. tick clears it as soon
+	// as playback starts, with a bounded fallback expiry for stalled loads.
+	if !c.state.LoadingGrace {
+		c.state.LoadingGrace, c.state.LoadingSince = beginLoadingGrace(c.state.Loading, time.Now())
+	}
 	if c.state.Panel == "comments" {
 		c.loadComments(false)
 	}
@@ -791,6 +829,13 @@ func (c *Controller) tick(now time.Time) {
 	if now.Sub(c.lastPreload) >= 500*time.Millisecond {
 		c.updatePreload()
 	}
+	// Drop the grace as soon as the spinner is no longer needed so the next
+	// promotion starts clean. If playback never starts, the bounded expiry
+	// below lets publish() redraw with the spinner.
+	if !c.state.Loading && c.state.LoadingGrace {
+		c.state.LoadingGrace, c.state.LoadingSince = endLoadingGrace()
+	}
+	c.state.LoadingGrace, c.state.LoadingSince = expireLoadingGrace(c.state.LoadingGrace, c.state.LoadingSince, now)
 	c.publish()
 }
 func (c *Controller) fallback(s *slot, reason string) {

@@ -2,11 +2,12 @@ package store
 
 import (
 	"encoding/json"
-	"os/exec"
 	"strconv"
 
 	"myguo/internal/mediautil"
 )
+
+const legacyProgressQuery = `SELECT series_id, episode_index, position_sec, updated_at, series FROM progress ORDER BY updated_at DESC`
 
 type OldSeriesJSON struct {
 	ID           string `json:"id"`
@@ -16,15 +17,8 @@ type OldSeriesJSON struct {
 }
 
 func (s *Store) importOldRecords(dbPath string) {
-	// Execute sqlite3 command to dump JSON from legacy hgplayer app
-	cmd := exec.Command("/usr/bin/sqlite3", "-json", dbPath, "SELECT series_id, episode_index, position_sec, updated_at, series FROM progress ORDER BY updated_at DESC;")
-	out, err := cmd.Output()
+	rawRows, err := legacyProgressRows(dbPath)
 	if err != nil {
-		return
-	}
-
-	var rawRows []map[string]any
-	if err := json.Unmarshal(out, &rawRows); err != nil {
 		return
 	}
 
