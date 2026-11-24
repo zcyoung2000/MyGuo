@@ -122,6 +122,70 @@ func TestVideoTabRejectsDifferentEpisodeBeforeRememberingDevice(t *testing.T) {
 	}
 }
 
+func TestVideoTabTriesNextHostAfterRecoverableFailure(t *testing.T) {
+	const id = "7100000000000201"
+	for _, failure := range []*Response{
+		{StatusCode: 200},
+		{StatusCode: 500},
+		{StatusCode: 200, Body: []byte(`{"code":110001,"message":"retry"}`)},
+	} {
+		t.Run(strconv.Itoa(failure.StatusCode)+"/"+string(failure.Body), func(t *testing.T) {
+			var hosts []string
+			c := nativeTestClient(t, testTransport{call: func(r *Request) (*Response, error) {
+				u, _ := url.Parse(r.URL)
+				hosts = append(hosts, u.Host)
+				if u.Host == "first.invalid" {
+					return failure, nil
+				}
+				if !r.SkipAuth || r.Headers["Cookie"] != "" || r.Headers["x-tt-token"] != "" {
+					t.Fatal("fallback host inherited account credentials")
+				}
+				return modelResponse(id), nil
+			}})
+			pb, err := c.videoTabWith(context.Background(), &DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002"}, id,
+				[]string{"https://first.invalid", "https://second.invalid"})
+			if err != nil || pb == nil || !reflect.DeepEqual(hosts, []string{"first.invalid", "second.invalid"}) {
+				t.Fatalf("fallback = %v, playback=%t, hosts=%v", err, pb != nil, hosts)
+			}
+		})
+	}
+}
+
+func TestVideoTabStopsHostFallbackForTerminalResponse(t *testing.T) {
+	const id = "7100000000000201"
+	for _, response := range []*Response{
+		{StatusCode: 403},
+		{StatusCode: 429},
+		{StatusCode: 200, Body: []byte(`{"code":4000,"message":"invalid parameter"}`)},
+		modelResponse("7100000000000999"),
+	} {
+		calls := 0
+		c := nativeTestClient(t, testTransport{call: func(*Request) (*Response, error) {
+			calls++
+			return response, nil
+		}})
+		_, err := c.videoTabWith(context.Background(), &DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002"}, id,
+			[]string{"https://first.invalid", "https://second.invalid"})
+		if err == nil || calls != 1 {
+			t.Fatalf("terminal response retried: err=%v, calls=%d", err, calls)
+		}
+	}
+}
+
+func TestVideoTabTerminalResponseDoesNotTryOtherDevices(t *testing.T) {
+	calls := 0
+	c := nativeTestClient(t, testTransport{call: func(*Request) (*Response, error) {
+		calls++
+		return &Response{StatusCode: 403}, nil
+	}})
+	c.tabDevice = &DeviceProfile{DeviceID: "7100000000000011", InstallID: "7100000000000012"}
+	c.playDevice = &DeviceProfile{DeviceID: "7100000000000021", InstallID: "7100000000000022"}
+	_, err := c.ResolveVideoTab(context.Background(), "7100000000000201", PlaybackOptions{})
+	if !errors.Is(err, ErrAuthenticationRequired) || calls != 1 {
+		t.Fatalf("terminal response cycled devices: err=%v, calls=%d", err, calls)
+	}
+}
+
 type tabBlockingTransport struct {
 	started chan struct{}
 	release chan struct{}

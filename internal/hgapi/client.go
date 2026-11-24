@@ -34,6 +34,10 @@ type Options struct {
 	RetryAttempts                                 int
 	DeviceResets                                  *int
 	PlaybackDeviceFile                            string
+	// SessionPlayback defaults on for the production Hongguo API. SessionOrigin
+	// overrides the SDI origin for controlled protocol tests and diagnostics.
+	SessionPlayback *bool
+	SessionOrigin   string
 }
 
 func Int(v int) *int { return &v }
@@ -60,6 +64,7 @@ type Client struct {
 	unsignedDevice                        *DeviceProfile
 	unsignedAt                            time.Time
 	playFreshMu                           sync.Mutex
+	sessions                              playbackSessions
 }
 
 func NewClient(opts Options) (*Client, error) {
@@ -88,10 +93,22 @@ func NewClient(opts Options) (*Client, error) {
 	if opts.DeviceResets != nil {
 		resets = max(0, *opts.DeviceResets)
 	}
+	apiURL, _ := url.Parse(opts.APIOrigin)
+	enabled := strings.HasSuffix(apiURL.Hostname(), ".fqnovel.com")
+	if opts.SessionPlayback != nil {
+		enabled = *opts.SessionPlayback
+	}
+	if opts.SessionOrigin == "" {
+		opts.SessionOrigin = "https://mssdk.zijieapi.com"
+	}
+	if u, err := url.Parse(opts.SessionOrigin); err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
+		return nil, ErrInvalidOptions
+	}
 	return &Client{transport: opts.Transport, profileStore: opts.ProfileStore, logger: opts.Logger, clock: opts.Clock,
 		apiOrigin: strings.TrimRight(opts.APIOrigin, "/"), registerOrigin: strings.TrimRight(opts.RegisterOrigin, "/"), distOrigin: strings.TrimRight(opts.DistributionOrigin, "/"),
 		device: opts.Device.OrDefault(), retryAttempts: max(1, opts.RetryAttempts), deviceResets: resets,
 		playbackDeviceFile: opts.PlaybackDeviceFile,
+		sessions:           playbackSessions{enabled: enabled, origin: opts.SessionOrigin, entries: make(map[string]*signingSession)},
 		playCache:          make(map[string]*model.Playback), playLoads: make(map[string]*playbackLoad)}, nil
 }
 

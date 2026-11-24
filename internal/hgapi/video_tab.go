@@ -228,8 +228,10 @@ func (c *Client) videoTabWith(ctx context.Context, p *DeviceProfile, id string, 
 			return pb, nil
 		}
 		last = err
-		var code *CodeError
-		if errors.Is(err, ErrAnonymousLimited) || errors.Is(err, ErrVideoTabEpisodeMissing) || errors.As(err, &code) {
+		// An empty response or a device/server failure belongs to this host.
+		// Try the other configured origin before replacing the identity. Only
+		// an explicit terminal response or mismatched episode stops fallback.
+		if playbackRequestTerminal(err) || errors.Is(err, ErrVideoTabEpisodeMissing) {
 			return nil, err
 		}
 	}
@@ -265,7 +267,7 @@ func (c *Client) doVideoTab(ctx context.Context, request *Request, id string) (*
 }
 
 func videoTabDeviceError(err error) bool {
-	if err == nil {
+	if err == nil || playbackRequestTerminal(err) {
 		return false
 	}
 	var code *CodeError

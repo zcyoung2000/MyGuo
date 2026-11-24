@@ -266,6 +266,18 @@ func playbackRecoverable(err error) bool {
 }
 
 func (c *Client) callPlayback(ctx context.Context, p *DeviceProfile, ids []string, body []byte, opts PlaybackOptions) (map[string]*model.Playback, error) {
+	if c.sessions.enabled && (opts.Mode == nil || *opts.Mode == sign.Full) {
+		models, err := c.callSessionPlayback(ctx, p, ids, body, opts)
+		if err == nil || playbackRequestTerminal(err) {
+			return models, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if c.logger != nil {
+			c.logger.Printf("hgapi: session playback unavailable; trying legacy playback")
+		}
+	}
 	mode := sign.Full
 	if opts.Mode != nil {
 		mode = *opts.Mode
@@ -577,8 +589,7 @@ func ContentKey(pb *model.Playback) (model.ContentKey, error) {
 	return model.ContentKey{Hex: k.Hex, Version: k.Version}, nil
 }
 
-// GzipBody is used only by APIs whose profile permits compressed request bodies.
-// The reference batch player defaults to PlainBody=true.
+// GzipBody is used by the session-signing player; legacy playback stays plain.
 func GzipBody(body []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
