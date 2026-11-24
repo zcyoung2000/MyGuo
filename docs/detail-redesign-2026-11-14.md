@@ -24,7 +24,7 @@
 
 `POST /novel/commentapi/comment/list/<seriesID>/v1/`，`comment_source=1`、`server_channel=34`、`group_type=1`、`comment_type=2`；不是播放页的单集评论。
 
-回复为 `POST /novel/commentapi/reply/list/<reviewID>/v1/`，`comment_source=501`、`server_channel=34`，仍使用当前剧 ID 作为 `group_id`。具体请求和响应结构见 [逆向记录第三节](hongguo-api-reverse-engineering-2026-11-14.md)。此前把两者归到 UGC mget 的静态推断已更正。
+回复为 `POST /novel/commentapi/reply/list/<reviewID>/v1/`，`comment_source=501`、`server_channel=34`，仍使用当前剧 ID 作为 `group_id`。具体请求和响应结构见 [逆向记录第三节](obsidian://open?vault=HenryNote&file=30_%E7%A0%94%E7%A9%B6%2F%E5%B7%A5%E5%85%B7%E6%8A%80%E6%9C%AF%E8%B0%83%E7%A0%94%2F%E7%BA%A2%E6%9E%9C%E7%9F%AD%E5%89%A7+API%2F%E9%80%86%E5%90%91%E8%AE%B0%E5%BD%95%2Fhongguo-api-reverse-engineering-2026-11-14)。此前把两者归到 UGC mget 的静态推断已更正。
 
 客户端保留成功页并去重，失败重试保留已有数据及游标；校验剧集归属、有效状态及分页前进，导航后的旧响应不会写入新详情。主详情元数据刷新不会清掉独立的剧评请求、已加载页和回复状态。评分缺失或返回 -1 时不展示虚假评分。当前提供读取、展开及分页；没有放置尚未接通的发表/点赞按钮。
 
