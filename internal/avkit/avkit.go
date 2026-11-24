@@ -20,11 +20,15 @@ type Status struct {
 	Buffering        bool
 	Ended            bool
 	PictureInPicture bool
-	Width            int
-	Height           int
-	Error            string
-	AmbientLeft      []int
-	AmbientTop       []int
+	// RangesUnsupported is set by players whose public API cannot publish
+	// buffered/seekable ranges (Windows Media Foundation via MyGo ui/video).
+	// Callers must not infer playback runway from Buffered or Seekable then.
+	RangesUnsupported bool
+	Width             int
+	Height            int
+	Error             string
+	AmbientLeft       []int
+	AmbientTop        []int
 }
 
 // Player owns one AVPlayer. Calls and destruction execute on AppKit's main

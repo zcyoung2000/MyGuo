@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -198,10 +199,19 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 			break
 		}
 		ms.feedPreloadTries[key] = time.Now()
-		if _, err := ms.StartHLSStream(task.SeriesID, task.EpisodeID, task.Number, task.Quality); err != nil {
-			break
+		// Windows cannot pre-decode a neighbor (no published ranges) and does
+		// not consume HLS-preload status, so starting a speculative HLS stream
+		// here only registers hlsStreams[key]. That registration makes the
+		// Windows-only complete-file prefetch short-circuit on hasHLSStream in
+		// runPrefetchTask, so the MP4 that auto-advance needs is never
+		// downloaded. On Windows the full-file prefetch owns neighbor
+		// lookahead; macOS keeps its original HLS admission path untouched.
+		if runtime.GOOS != "windows" {
+			if _, err := ms.StartHLSStream(task.SeriesID, task.EpisodeID, task.Number, task.Quality); err != nil {
+				break
+			}
+			statuses[i] = ms.feedPreloadStatus(task)
 		}
-		statuses[i] = ms.feedPreloadStatus(task)
 	}
 	return statuses
 }

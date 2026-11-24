@@ -1,0 +1,85 @@
+package ipc
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// A neighbor slot resolved before its full-file prefetch completed carries a
+// stale HLS dto. Once the MP4 lands on disk, RefreshCachedEpisode must rebuild
+// the dto through PlayEpisode's cache fast path so promotion uses the local
+// complete file instead of Windows' slow HLS cold start.
+func TestRefreshCachedEpisodeUpgradesStaleHLSDTO(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("full-file prefetch dto refresh is Windows-only")
+	}
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ms, err := NewMediaServer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ms.Close()
+	const series, episode, quality = "710000000000001", "710000000000101", "1080p"
+
+	// Write a complete-file cache entry at the path PlayEpisode will probe.
+	path := episodeCachePath(ms.CacheDir(), episode, quality)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Repeat("local media fixture", 128)), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := &HongguoService{store: store, media: ms}
+	stale := &PlaybackDTO{
+		SeriesID:     series,
+		EpisodeID:    episode,
+		EpisodeNum:   1,
+		Quality:      quality,
+		StreamURL:    "http://127.0.0.1/hls.m3u8",
+		HLSStreamURL: "http://127.0.0.1/hls.m3u8",
+		IsFullCached: false,
+	}
+
+	got, err := svc.RefreshCachedEpisode(context.Background(), stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == stale || !got.IsFullCached {
+		t.Fatalf("stale HLS dto was not upgraded to a complete local file: %+v", got)
+	}
+	if got.StreamURL != got.FullStreamURL {
+		t.Fatalf("upgraded dto must point StreamURL at the full file: stream=%q full=%q", got.StreamURL, got.FullStreamURL)
+	}
+}
+
+func TestRefreshCachedEpisodeLeavesUncachedAndAlreadyCachedDTOsAlone(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("full-file prefetch dto refresh is Windows-only")
+	}
+	svc := &HongguoService{media: &MediaServer{}}
+
+	uncached := &PlaybackDTO{EpisodeID: "710000000000101", IsFullCached: false}
+	if got, err := svc.RefreshCachedEpisode(context.Background(), uncached); err != nil || got != uncached {
+		t.Fatalf("uncached dto should be returned untouched: got=%+v err=%v", got, err)
+	}
+
+	cached := &PlaybackDTO{EpisodeID: "710000000000101", IsFullCached: true}
+	if got, err := svc.RefreshCachedEpisode(context.Background(), cached); err != nil || got != cached {
+		t.Fatalf("already-cached dto should be returned untouched: got=%+v err=%v", got, err)
+	}
+
+	if got, err := svc.RefreshCachedEpisode(context.Background(), nil); err != nil || got != nil {
+		t.Fatalf("nil dto should pass through: got=%+v err=%v", got, err)
+	}
+}

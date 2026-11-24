@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -321,6 +322,20 @@ func hlsPlaylistComplete(path string) bool {
 // a manifest with only the live-edge reserve can decode a frame but not play.
 // The handler bounds this coalescing so a slow producer is never held forever.
 // Completed short clips are immediately usable.
+//
+// Windows Media Foundation has no buffered ranges and does not need AVKit's
+// live-edge reserve. Its full-file prefetch is the fast path; the HLS runway is
+// only a fallback, so requiring six target durations there turns auto-advance
+// into a visible "loading" stall. Two target durations are enough to decode and
+// keep playing until the next refresh. macOS keeps the original six-duration
+// rule untouched.
+func hlsStartupRunwayTargets() float64 {
+	if runtime.GOOS == "windows" {
+		return 2
+	}
+	return 6
+}
+
 func hlsPlaylistStartupReady(data []byte) bool {
 	if strings.Contains(string(data), "#EXT-X-ENDLIST") {
 		return true
@@ -335,7 +350,7 @@ func hlsPlaylistStartupReady(data []byte) bool {
 			duration += seconds
 		}
 	}
-	return target > 0 && duration >= 6*target
+	return target > 0 && duration >= hlsStartupRunwayTargets()*target
 }
 
 func mediaFileExists(path string) bool {

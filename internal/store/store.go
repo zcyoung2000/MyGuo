@@ -17,6 +17,7 @@ import (
 
 	_ "modernc.org/sqlite"
 	"myguo/internal/mediautil"
+	"myguo/internal/sqlitedsn"
 )
 
 type UserProfile struct {
@@ -142,7 +143,7 @@ func NewStore(dir string) (*Store, error) {
 	// database/sql opens more connections during concurrent playback, cache
 	// bookkeeping and sync. Connection-local PRAGMAs must apply to every one.
 	// IMMEDIATE also avoids upgrading an obsolete read snapshot to a writer.
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}
+	dsn := *sqlitedsn.FileURL(dbPath)
 	dsn.RawQuery = url.Values{
 		"_pragma": {"busy_timeout(5000)", "synchronous(NORMAL)"},
 		"_txlock": {"immediate"},

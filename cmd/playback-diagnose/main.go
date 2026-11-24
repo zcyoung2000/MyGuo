@@ -28,6 +28,7 @@ import (
 	"myguo/internal/hgapi/model"
 	"myguo/internal/media"
 	"myguo/internal/sign"
+	"myguo/internal/sqlitedsn"
 	"myguo/internal/upstream"
 )
 
@@ -94,7 +95,9 @@ func run() error {
 		}
 	}
 	if *accountDB != "" {
-		location := (&url.URL{Scheme: "file", Path: *accountDB, RawQuery: "mode=ro"}).String()
+		accountURI := sqlitedsn.FileURL(*accountDB)
+		accountURI.RawQuery = "mode=ro"
+		location := accountURI.String()
 		db, err := sql.Open("sqlite", location)
 		if err != nil {
 			return err
@@ -274,7 +277,9 @@ func (t wireInspector) RoundTrip(request *http.Request) (*http.Response, error) 
 }
 
 func readDevice(path string) (*hgapi.DeviceProfile, error) {
-	location := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
+	deviceURI := sqlitedsn.FileURL(path)
+	deviceURI.RawQuery = "mode=ro"
+	location := deviceURI.String()
 	db, err := sql.Open("sqlite", location)
 	if err != nil {
 		return nil, err

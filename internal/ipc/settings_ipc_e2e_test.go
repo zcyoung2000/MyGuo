@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -32,6 +33,7 @@ func TestSettingsIPCReportsStorageDeviceAndLegacyAccountWithoutRuntimeWiring(t *
 	if storeErr != nil {
 		t.Fatal(storeErr)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	service := newHongguoService(nil, store, media, appDir, home)
 	t.Cleanup(func() { CloseService(service) })
 	service.httpClient = &http.Client{Transport: ipcHandlerTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +56,10 @@ func TestSettingsIPCReportsStorageDeviceAndLegacyAccountWithoutRuntimeWiring(t *
 		t.Fatalf("legacy fixture disappeared: %v, home=%s", statErr, home)
 	}
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		// os.UserHomeDir reads USERPROFILE on Windows, not HOME.
+		t.Setenv("USERPROFILE", home)
+	}
 	existing, err := service.CheckExistingAccount(context.Background())
 	if err != nil || existing["exists"] != true || existing["nickname"] != "Old Account" {
 		t.Fatalf("CheckExistingAccount = %+v, %v", existing, err)
@@ -91,9 +97,14 @@ func TestSettingsIPCImportRejectsInvalidLegacyData(t *testing.T) {
 	if storeErr != nil {
 		t.Fatal(storeErr)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	service := newHongguoService(nil, store, newTestMediaServer(t, t.TempDir()), t.TempDir(), home)
 	t.Cleanup(func() { CloseService(service) })
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		// os.UserHomeDir reads USERPROFILE on Windows, not HOME.
+		t.Setenv("USERPROFILE", home)
+	}
 	if _, err := service.ImportHgplayerAccount(context.Background()); err == nil {
 		t.Fatal("invalid legacy account was accepted")
 	}
@@ -111,6 +122,7 @@ func TestSettingsIPCLoginValidationKeepsUnauthenticatedProfile(t *testing.T) {
 	if storeErr != nil {
 		t.Fatal(storeErr)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	service := newHongguoService(nil, store, nil, t.TempDir(), t.TempDir())
 	t.Cleanup(func() { CloseService(service) })
 	service.httpClient = &http.Client{Transport: ipcHandlerTransport{handler: handler}}
@@ -130,6 +142,11 @@ func newTestMediaServer(t *testing.T, cacheDir string) *MediaServer {
 	t.Helper()
 	oldHome, hadHome := os.LookupEnv("HOME")
 	t.Setenv("HOME", cacheDir)
+	if runtime.GOOS == "windows" {
+		// Windows resolves the cache root through LOCALAPPDATA, ignoring HOME.
+		// Redirect it so tests neither read nor write the real user cache.
+		t.Setenv("LOCALAPPDATA", cacheDir)
+	}
 	ms, err := NewMediaServer(nil)
 	if hadHome {
 		t.Setenv("HOME", oldHome)

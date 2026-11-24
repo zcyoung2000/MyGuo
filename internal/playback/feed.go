@@ -7,6 +7,7 @@ import (
 	"myguo/internal/avkit"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
+	"runtime"
 	"time"
 )
 
@@ -250,6 +251,18 @@ func (c *Controller) updatePreload() {
 		budget.Status = playerStatus(s)
 	}
 	c.preloadAdmitted = preloadAdmission(budget, c.preloadAdmitted)
+	// Throttled trace: log only when the admission picture changes, so a
+	// healthy steady stream does not spam app.log. This is the only visibility
+	// into why a Windows prefetch window is or is not submitted. Windows-only
+	// so macOS keeps its original logging footprint.
+	if runtime.GOOS == "windows" {
+		trace := fmt.Sprintf("admitted=%t ready=%t buffering=%t loading=%t err=%q rangesUnsupported=%t",
+			c.preloadAdmitted, budget.Status.Ready, budget.Status.Buffering, budget.Loading, budget.Error, budget.Status.RangesUnsupported)
+		if trace != c.lastPreloadTrace {
+			c.lastPreloadTrace = trace
+			log.Printf("[preload] %s", trace)
+		}
+	}
 	if !c.preloadAdmitted {
 		// Stop paused native EVENT polling before canceling the disk job,
 		// otherwise its next playlist request can resurrect that job.
@@ -258,6 +271,18 @@ func (c *Controller) updatePreload() {
 				candidate.engine.Pause()
 				candidate.warming = false
 			}
+		}
+		// Only platforms that cannot publish buffered ranges (Windows) keep the
+		// previous window when they merely lose the bandwidth budget: there is
+		// no runway signal to time a new window against, so tearing down a
+		// finished prefetch would make auto-advance wait again. Platforms with
+		// real ranges keep the original cancel-on-inadmissible behavior. Use
+		// the same hard-blocked test as admission: Media Foundation's transient
+		// Buffering/Loading must NOT cancel a running prefetch, otherwise it is
+		// torn down seconds after each start and never completes. A genuine
+		// failure still cancels disk work below on every platform.
+		if budget.Status.RangesUnsupported && !preloadHardBlocked(budget) {
+			return
 		}
 	}
 	if c.preloadAdmitted {
@@ -289,7 +314,9 @@ func (c *Controller) updatePreload() {
 			}
 			// Only the first admitted item gets a native decoder. Other
 			// lookahead stays on disk, keeping the three-decoder budget.
-			if len(items) == 0 {
+			// Players without published ranges (Windows) cannot pre-decode a
+			// neighbor, so they keep the whole lookahead on disk only.
+			if len(items) == 0 || !canWarmNeighbor(budget) {
 				return
 			}
 			for _, status := range statuses {

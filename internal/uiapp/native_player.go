@@ -141,7 +141,7 @@ func playerSurfaceDescription(s playback.State) string {
 		return "点击收起面板"
 	}
 	if s.Mode == playback.Feed {
-		if s.Loading && !s.Paused {
+		if s.Loading && !s.LoadingGrace && !s.Paused {
 			return "正在加载，点击继续播放"
 		}
 		return chooseText(s.Paused || s.Status.Ended || s.Error != "", "点击继续播放", "点击暂停")
@@ -163,7 +163,10 @@ func (a *App) renderNativePlayerFeedback(c *ui.Context, s playback.State, availa
 		message = s.Error
 	case s.Paused && (s.Mode == playback.Feed || s.Loading):
 		message = "已暂停"
-	case s.Loading:
+	case s.Loading && !s.LoadingGrace:
+		// LoadingGrace is only ever set on Windows promotion; it hides a
+		// sub-second spinner until the first frame lands. macOS keeps it
+		// false so the immediate-spinner behavior is unchanged.
 		message, loading = "正在加载视频", true
 	}
 	if message == "" && s.Notice == "" {

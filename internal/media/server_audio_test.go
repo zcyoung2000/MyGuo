@@ -1,6 +1,7 @@
 package media
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestFFmpegDownloadArgsKeepsSingleTrack(t *testing.T) {
 
 func TestEpisodeCachePathInvalidatesV1AudiolessFiles(t *testing.T) {
 	path := episodeCachePath("/tmp", "710000000000001", DefaultVideoQuality)
-	if want := "/tmp/episodes/710000000000001_v2.mp4"; path != want {
+	if want := filepath.Join("/tmp", "episodes", "710000000000001_v2.mp4"); path != want {
 		t.Fatalf("cache path = %q, want %q", path, want)
 	}
 }

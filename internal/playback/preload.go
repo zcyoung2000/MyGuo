@@ -19,22 +19,48 @@ func remainingWallSeconds(s State) float64 {
 	return math.Max(0, duration-s.Status.Position) / math.Max(.25, s.Preferences.Rate)
 }
 
+func preloadBlocked(s State) bool {
+	return !s.Status.Ready || s.Status.Buffering || s.Error != "" || (s.Loading && !s.Paused)
+}
+
+// preloadHardBlocked is the Windows (no published ranges) variant of
+// preloadBlocked. Media Foundation reports Buffering/Loading for a growing HLS
+// stream even while it is decoding fine; treating that transient state as a
+// reason to cancel the next episode's disk prefetch means the prefetch is torn
+// down seconds after it starts and never finishes. Only a genuine failure
+// (!Ready, Error) is allowed to yield bandwidth there. Platforms with real
+// buffered ranges keep the conservative preloadBlocked behavior.
+func preloadHardBlocked(s State) bool {
+	return !s.Status.Ready || s.Error != ""
+}
+
 func preloadAdmission(s State, admitted bool) bool {
-	if !s.Status.Ready || s.Status.Buffering || s.Error != "" || (s.Loading && !s.Paused) {
-		return false
+	blocked := preloadBlocked(s)
+	if s.Status.RangesUnsupported {
+		blocked = preloadHardBlocked(s)
 	}
-	ahead := math.Max(0, s.Status.Buffered-s.Status.Position) / math.Max(.25, s.Preferences.Rate)
-	remaining := remainingWallSeconds(s)
-	if remaining <= ahead+.25 {
-		return true
+	if blocked {
+		return false
 	}
 	if s.Paused {
 		return true
 	}
-	// Media Foundation's public MyGo API has no buffered ranges. A complete
-	// local MP4 is safe to preload alongside; a growing source with unknown
-	// runway is deliberately kept out of the bandwidth budget.
 	if s.Playback != nil && s.Playback.IsFullCached {
+		return true
+	}
+	// Media Foundation's public MyGo API publishes no buffered or seekable
+	// ranges, so Buffered==0 carries no information about the runway. Treating
+	// that zero as an empty buffer kept Windows out of the bandwidth budget
+	// forever: the next episode was never fetched until auto-advance requested
+	// it. The media server already caps speculative work at two HLS jobs with
+	// backpressure, so a healthy stream may fill the disk cache early. Native
+	// decoder warm-up is handled separately (see canWarmNeighbor).
+	if s.Status.RangesUnsupported {
+		return true
+	}
+	ahead := math.Max(0, s.Status.Buffered-s.Status.Position) / math.Max(.25, s.Preferences.Rate)
+	remaining := remainingWallSeconds(s)
+	if remaining <= ahead+.25 {
 		return true
 	}
 	if admitted {
@@ -42,6 +68,12 @@ func preloadAdmission(s State, admitted bool) bool {
 	}
 	return ahead >= 5
 }
+
+// canWarmNeighbor gates opening a second native decoder. Without published
+// ranges MyGo cannot pre-decode a neighbor (Preroll is a no-op on Windows), so
+// only the bounded disk prefetch runs there; promotion still reuses a cached
+// playlist and starts from a ready local prefix.
+func canWarmNeighbor(s State) bool { return !s.Status.RangesUnsupported }
 
 func (c *Controller) warmNeighbor(candidate *slot) {
 	// Keep the current surface, one previous surface and one warm successor.

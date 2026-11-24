@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -20,7 +21,117 @@ var ErrNoPlayableEpisodes = errors.New("该剧暂未提供可播放剧集")
 var ErrPlaybackAccessLimited = errors.New("播放信息访问受限，请稍后重试")
 
 func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version int64, currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) ([]media.FeedPreloadStatus, error) {
-	return s.media.SetFeedPreloadWindow(version, currentEpisodeID, currentQuality, items), nil
+	statuses := s.media.SetFeedPreloadWindow(version, currentEpisodeID, currentQuality, items)
+	// Windows has no published buffered ranges and its Media Foundation player
+	// cannot pre-decode a neighbor. The only way to make auto-advance start
+	// instantly is to have the complete MP4 ready, because PlayEpisode only
+	// treats a finished local file as IsFullCached and switches to StreamURL;
+	// an HLS-only prefix still forces a 6*target-duration wait on promotion.
+	// The native UI never calls WarmupFeed (that path lives in the WebView
+	// frontend), so nothing else drives the full-file prefetch window here.
+	// Mirror the HLS window into the full-file prefetch scheduler so the next
+	// episode is downloaded while the current one plays. macOS keeps its
+	// original behavior and is untouched.
+	if runtime.GOOS == "windows" {
+		s.updateFullPrefetchWindow(currentEpisodeID, currentQuality, items)
+	}
+	return statuses, nil
+}
+
+// updateFullPrefetchWindow mirrors the renderer's lookahead into the complete
+// file prefetch scheduler. It is Windows-only; callers guard with GOOS.
+func (s *HongguoService) updateFullPrefetchWindow(currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) {
+	// A transient empty lookahead must not replace the window. It happens on
+	// every auto-advance: the promoted episode is not Ready yet, so admission
+	// is hard-blocked and the renderer submits no neighbor item. Replacing an
+	// empty set would call execution.cancel() on the in-flight complete-MP4
+	// download of the episode we are switching into, so it never finishes and
+	// promotion is stuck on HLS forever. Keep the previous window instead; a
+	// later tick with resolved neighbors republishes it normally. An empty
+	// current episode is an explicit reset/dispose and still clears the window.
+	if currentEpisodeID != "" {
+		hasNeighbor := false
+		for _, item := range items {
+			if item.EpisodeID != "" && item.EpisodeID != currentEpisodeID {
+				hasNeighbor = true
+				break
+			}
+		}
+		if !hasNeighbor {
+			return
+		}
+	}
+	// Build a stable signature of the desired window. ReplacePrefetchWindow
+	// cancels every active task not in its snapshot, so calling it on every
+	// 500ms renderer tick would restart the full download before it finishes.
+	// Only publish when the set of episodes actually changes.
+	var sb strings.Builder
+	sb.WriteString(currentEpisodeID)
+	sb.WriteByte('|')
+	sb.WriteString(currentQuality)
+	for i := 0; i < len(items) && i < 2; i++ {
+		sb.WriteByte('|')
+		sb.WriteString(items[i].EpisodeID)
+		sb.WriteByte('/')
+		sb.WriteString(items[i].Quality)
+	}
+	signature := sb.String()
+	s.fullPrefetchMu.Lock()
+	defer s.fullPrefetchMu.Unlock()
+	if signature == s.fullPrefetchSignature {
+		return
+	}
+	s.fullPrefetchSignature = signature
+
+	tasks := make([]media.PrefetchTask, 0, len(items)+1)
+	seen := make(map[string]bool, len(items)+1)
+	add := func(id, seriesID, quality string, number int, protect bool) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		tasks = append(tasks, media.PrefetchTask{
+			SeriesID:  seriesID,
+			EpisodeID: id,
+			Number:    number,
+			Quality:   quality,
+			// Keep the playing episode protected without downloading a
+			// duplicate full file; the renderer already owns its stream.
+			ProtectOnly: protect,
+			Priority:    len(tasks),
+		})
+	}
+	add(currentEpisodeID, "", currentQuality, 0, true)
+	for i, item := range items {
+		if i >= 2 {
+			break
+		}
+		add(item.EpisodeID, item.SeriesID, item.Quality, item.Number, false)
+	}
+	s.media.ReplacePrefetchWindow(tasks)
+}
+
+// RefreshCachedEpisode re-resolves an episode whose PlaybackDTO was produced
+// before its complete-file prefetch finished. prepareNeighbors resolves the
+// next slot early, so its dto carries IsFullCached=false and an HLS StreamURL
+// even after the MP4 lands on disk; auto-advance then reuses that stale dto and
+// takes Windows' slow HLS cold path. When a complete MP4 is now present,
+// PlayEpisode's cached fast path rebuilds the dto in milliseconds (no quality
+// negotiation), pointing StreamURL at the local full file. Windows only;
+// every other case returns the original dto untouched.
+func (s *HongguoService) RefreshCachedEpisode(ctx context.Context, dto *PlaybackDTO) (*PlaybackDTO, error) {
+	if runtime.GOOS != "windows" || dto == nil || dto.IsFullCached || dto.EpisodeID == "" {
+		return dto, nil
+	}
+	path := media.EpisodeCachePath(s.media.CacheDir(), dto.EpisodeID, dto.Quality)
+	if path == "" || !media.FileExists(path) {
+		return dto, nil
+	}
+	refreshed, err := s.PlayEpisode(ctx, dto.SeriesID, dto.EpisodeID, dto.EpisodeNum, dto.Quality, false)
+	if err != nil || refreshed == nil || !refreshed.IsFullCached {
+		return dto, nil
+	}
+	return refreshed, nil
 }
 
 func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (result *PlaybackDTO, playbackErr error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -54,7 +55,13 @@ func TestPlaybackProgressWaitsForCompetingWriterOnNewConnection(t *testing.T) {
 
 func TestStorePathWithURICharacters(t *testing.T) {
 	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
-	s, err := NewStore(filepath.Join(t.TempDir(), "data?#"))
+	name := "data?#"
+	if runtime.GOOS == "windows" {
+		// Windows rejects '?' in file names; '#' and '%' are still URI
+		// characters and keep the original escaping check intact.
+		name = "data#%"
+	}
+	s, err := NewStore(filepath.Join(t.TempDir(), name))
 	if err != nil {
 		t.Fatal(err)
 	}

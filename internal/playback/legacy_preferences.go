@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io/fs"
 	_ "modernc.org/sqlite"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+
+	"myguo/internal/sqlitedsn"
 )
 
 // MigrateLegacyPreferences reads only the seven player preference keys from
@@ -69,7 +70,7 @@ func MigrateLegacyPreferences(home, path string) error {
 	return nil
 }
 func readLegacyPreferenceDB(path string) (map[string]string, error) {
-	uri := url.URL{Scheme: "file", Path: path}
+	uri := sqlitedsn.FileURL(path)
 	query := uri.Query()
 	query.Set("mode", "ro")
 	query.Add("_pragma", "busy_timeout(200)")
