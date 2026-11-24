@@ -13,12 +13,12 @@ import (
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/appdirs"
 	"myguo/internal/auth"
-	"myguo/internal/avkit"
 	"myguo/internal/hgapi"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 	"myguo/internal/native"
 	"myguo/internal/playback"
+	"myguo/internal/playerengine"
 	"myguo/internal/resourcelog"
 	"myguo/internal/sparedevice"
 	userstore "myguo/internal/store"
@@ -27,7 +27,7 @@ import (
 )
 
 var initialView = "recommend"
-var mainWindowTitle = appdirs.AppName
+var mainWindowTitle = "MyGuo"
 
 func main() {
 	started := time.Now()
@@ -140,7 +140,7 @@ func main() {
 	}
 	app := uiapp.NewApp(service)
 	appRef.Store(app)
-	controller := playback.New(service, avkit.NewPlayer, filepath.Join(appDir, "native-player.json"), playback.Hooks{
+	controller := playback.New(service, playerengine.New, filepath.Join(appDir, "native-player.json"), playback.Hooks{
 		Changed: app.PlaybackChanged,
 		Progress: func(p playback.Progress) {
 			app.UpdateResumeProgress(uiapp.ResumeProgress{SeriesID: p.SeriesID, EpisodeNum: p.EpisodeNum, Position: p.Position, Session: p.Session, Sequence: p.Sequence})
