@@ -4,7 +4,8 @@
   "identifier": "com.myguo.app",
   "version": "0.1.0",
   "macos": {
-    "icon": "resources/AppIcon.icon"
+    "icon": "resources/AppIcon.icon",
+    "minimumSystemVersion": "13.0"
   },
   "out": "dist",
   "resourcesExclude": ["AppIcon.icon"],
