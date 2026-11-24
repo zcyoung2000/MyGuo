@@ -294,25 +294,48 @@ func (a *App) releaseCardGrid(c *ui.Context, items []CatalogItem) {
 	})
 }
 
+// MyGo v0.9.1 has GridView for results and Box/Column for layout, but no
+// skeleton widget. Reuse the poster grid and the sparse result's panel layout.
 func (a *App) releaseSkeleton(c *ui.Context, value ReleaseState) {
-	if value.Calendar {
+	if len(value.placeholderItems) > 0 && len(value.placeholderItems) <= 3 {
 		_, windowHeight := c.Size()
 		posterWidth := newReleasePosterWidth(float32(windowHeight))
 		posterHeight := posterWidth * posterAspectRatio
 		skeleton := pagePlaceholder(c)
 		ui.Column(c.Key("releases-sparse-content")).FillWidth().Children(func() {
 			ui.Column(c.Key("release-skeleton")).FillWidth().Gap(cardGridVerticalGap).Children(func() {
-				for range min(3, max(1, len(value.Dates))) {
-					ui.Row(c).FillWidth().Gap(18).AlignItems(ui.Stretch).MinHeight(posterHeight).Children(func() {
+				for index, item := range value.placeholderItems {
+					ui.Row(c.Key(index)).FillWidth().Gap(18).AlignItems(ui.Stretch).MinHeight(posterHeight).Children(func() {
 						skeleton.bone(c.Key("poster"), 10).Width(posterWidth).Height(posterHeight).
 							Role(ui.RoleImage).Label("加载海报占位")
-						ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(18, 20).Gap(12).
-							Background(ui.RGBA(20, 21, 28, 255)).
-							Border(1, ui.RGBA(255, 255, 255, 0.08)).Radius(12).Children(func() {
-							skeleton.text(c.Key("title"), 22, 1.2).WidthPercent(52)
-							skeleton.text(c.Key("date"), 13, 1.3).WidthPercent(28)
-							skeleton.text(c.Key("category"), 13, 1.3).WidthPercent(20)
-							skeleton.bone(c.Key("action"), 9).Size(92, 38)
+						panel := releaseFeaturePanel(c)
+						panel.Children(func() {
+							line := func(key string, size, width float32, text string, bold bool) {
+								skeleton.shapedText(c.Key(key), text, size, width, bold).
+									Role(ui.RoleGroup).Label("加载新剧" + key)
+							}
+							line("title", 22, 52, item.Title, true)
+							if item.PublishAt != "" {
+								ui.Box(c.Key("date")).FillWidth().Children(func() {
+									ui.Row(c).Gap(8).AlignItems(ui.Center).Invisible().Children(func() {
+										ui.Text(c, "上线日期").FontSize(13)
+										ui.Text(c, formatPublishDate(item.PublishAt)).FontSize(13).Bold()
+									})
+									skeleton.bone(c.Key("bone"), 3).Absolute().Left(0).Top(3).WidthPercent(28).Height(13 * .78)
+								})
+							}
+							if item.Category != "" {
+								line("category", 13, 20, item.Category, false)
+							}
+							if item.EpisodeCount > 0 {
+								line("episodes", 13, 16, fmt.Sprintf("共 %d 集", item.EpisodeCount), false)
+							}
+							if item.Description != "" && windowHeight >= 700 {
+								line("description", 13, 78, item.Description, false)
+							}
+							skeleton.bone(c.Key("action"), 9).
+								FillWidth().Height(38).
+								Role(ui.RoleGroup).Label("加载预约占位")
 						})
 					})
 				}
@@ -320,7 +343,30 @@ func (a *App) releaseSkeleton(c *ui.Context, value ReleaseState) {
 		})
 		return
 	}
-	posterGridSkeleton(c, 12, a.gridContentWidth(c), nil)
+	items := make([]CatalogItem, 12)
+	for index := range items {
+		items[index] = CatalogItem{Title: "新剧占位", Upcoming: value.Calendar, PublishAt: value.Date}
+	}
+	a.cardGridContent(c, "releases-grid", nil, nil, items, 0, func(index int, cardWidth, height float32) {
+		skeleton := pagePlaceholder(c)
+		ui.Column(c.Key(index)).Width(cardWidth).Height(height).Gap(catalogRowGap).Children(func() {
+			skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(cardWidth * posterAspectRatio).
+				Role(ui.RoleImage).Label("加载海报占位")
+			skeleton.text(c.Key("title"), 13, catalogTextLineHeight/13).WidthPercent(92)
+			if value.Calendar {
+				if value.Date != "" {
+					skeleton.text(c.Key("date"), 12, catalogMetadataLineHeight/12).WidthPercent(44)
+				}
+				skeleton.bone(c.Key("action"), 6).FillWidth().Height(catalogReservationButtonHeight)
+			}
+		})
+	}).Grow(1)
+}
+
+func releaseFeaturePanel(c *ui.Context) ui.Element {
+	return ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(18, 20).Gap(12).
+		Background(ui.RGBA(20, 21, 28, 255)).
+		Border(1, ui.RGBA(255, 255, 255, 0.08)).Radius(12)
 }
 
 func (a *App) releaseFeatureRow(c *ui.Context, item CatalogItem, posterWidth float32) {
@@ -337,10 +383,7 @@ func (a *App) releaseFeatureRow(c *ui.Context, item CatalogItem, posterWidth flo
 				a.image(c, item.CoverURL, posterWidth, posterHeight)
 			})
 
-			panel := ui.Column(c.Key("release-feature-panel:"+item.ID+"|"+item.EpisodeID)).
-				Grow(1).FillHeight().MinWidth(0).Padding(18, 20).Gap(12).
-				Background(ui.RGBA(20, 21, 28, 255)).
-				Border(1, ui.RGBA(255, 255, 255, 0.08)).Radius(12)
+			panel := releaseFeaturePanel(c.Key("release-feature-panel:" + item.ID + "|" + item.EpisodeID))
 			panel.Role(ui.RoleGroup).Label("release-feature-panel:" + item.ID + "|" + item.EpisodeID)
 			panel.Children(func() {
 				ui.Text(c, item.Title).FontSize(22).Bold().TextColor(ui.Hex("#ffffff")).WidthPercent(100)

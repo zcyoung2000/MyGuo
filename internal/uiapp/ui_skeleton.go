@@ -17,6 +17,19 @@ func (s placeholder) text(c *ui.Context, size, lineHeight float32) ui.Element {
 	})
 }
 
+// shapedText uses MyGo v0.9.1 Text for the same font metrics and wrapping as
+// ready content. Box carries the visible bone; the sizing text is hidden from
+// both painting and accessibility. Fixed text bones cannot reserve wrapped rows.
+func (s placeholder) shapedText(c *ui.Context, text string, size, width float32, bold bool) ui.Element {
+	return ui.Box(c).FillWidth().Children(func() {
+		label := ui.Text(c, text).FontSize(size).WidthPercent(100).Invisible()
+		if bold {
+			label.Bold()
+		}
+		s.bone(c.Key("bone"), size*.25).Absolute().Left(0).Top(3).WidthPercent(width).Height(size * .78)
+	})
+}
+
 var boneWidths = [...]float32{62, 44, 78, 53, 70, 38, 66, 49, 82, 57, 41, 73}
 
 func boneWidth(index int) float32 { return boneWidths[index%len(boneWidths)] }

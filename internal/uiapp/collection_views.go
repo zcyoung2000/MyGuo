@@ -22,6 +22,16 @@ func (a *App) posterRow(c *ui.Context, items []CatalogItem, width float32) {
 // cardGrid gives posters the full column width and preserves their 3:4 ratio.
 // Read the host's last layout, just as GridView does when fitting its columns.
 func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, after func(CatalogItem)) ui.Element {
+	return a.cardGridContent(c, key, state, scroll, items, extra, func(index int, cardWidth, height float32) {
+		item := items[index]
+		a.fixedHeightCatalogCardSized(c, item, cardWidth, height)
+		if after != nil {
+			after(item)
+		}
+	})
+}
+
+func (a *App) cardGridContent(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, render func(int, float32, float32)) ui.Element {
 	host := ui.Column(c.Key(key)).MinWidth(0).MinHeight(0).Transition(resultTransition)
 	width := host.Bounds().W
 	baseTheme := *c.Theme()
@@ -43,11 +53,7 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 		grid := ui.GridView(c.Key(fmt.Sprintf("result:%d", a.collectionVersion())), state, len(items), dramaMinCardWidth, height, func(index int) {
 			c.SetTheme(&baseTheme)
 			defer c.SetTheme(&gridTheme)
-			item := items[index]
-			a.fixedHeightCatalogCardSized(c, item, cardWidth, height)
-			if after != nil {
-				after(item)
-			}
+			render(index, cardWidth, height)
 		})
 		grid.Scrollbars(false).Transition(resultTransition)
 		if scroll == nil {

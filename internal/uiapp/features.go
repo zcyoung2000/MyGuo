@@ -41,6 +41,9 @@ type ReleaseState struct {
 	Loading  bool
 	Error    string
 	version  uint64
+	// Preserve the last sparse result's shape while another date loads. Dates
+	// describe the navigation range, not the number of upcoming series.
+	placeholderItems []CatalogItem
 }
 type ActorState struct {
 	ID               string
@@ -323,6 +326,14 @@ func (a *App) LoadRank(more bool) {
 func (a *App) SelectRelease(calendar bool, date string) {
 	a.mu.Lock()
 	if a.releases.Calendar != calendar || a.releases.Date != date {
+		if a.releases.Calendar != calendar {
+			a.releases.placeholderItems = nil
+		} else if len(a.releases.Items) > 0 {
+			a.releases.placeholderItems = nil
+			if len(a.releases.Items) <= 3 {
+				a.releases.placeholderItems = append([]CatalogItem(nil), a.releases.Items...)
+			}
+		}
 		a.releases.Items = nil
 		a.releaseGrid = nil
 		a.releaseResultVersion++

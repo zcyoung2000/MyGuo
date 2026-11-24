@@ -280,7 +280,9 @@ func (a *App) settingsItemRow(c *ui.Context, key, title, description, value, act
 		info := ui.Column(c.Key(key + "-info")).Grow(1).Gap(4).MinWidth(0)
 		info.Children(func() {
 			ui.Text(c, title).FontSize(14).Bold().TextColor(ui.Hex("#ffffff")).SingleLine()
-			ui.Text(c, description).FontSize(12).TextColor(c.Theme().TextMuted)
+			if description != "" {
+				ui.Text(c, description).FontSize(12).TextColor(c.Theme().TextMuted)
+			}
 		})
 		ui.Row(c.Key(key + "-right")).Gap(12).AlignItems(ui.Center).Justify(ui.End).MinWidth(190).Children(func() {
 			if value != "" {
@@ -371,7 +373,7 @@ func (a *App) renderSettings(c *ui.Context) {
 
 		ui.Text(c, "存储管理").FontSize(12).Bold().TextColor(c.Theme().TextMuted)
 		a.settingsCard(c, "settings-storage", func() {
-			a.settingsItemRow(c, "cache-row", "本地媒体缓存", "上限 1 GB，超出后优先清理最久未使用的视频与封面缓存；观看记录和待同步进度会保留", formatCacheSize(state.CacheSize), "清理缓存", "subtle", a.ClearSettingsCache)
+			a.settingsItemRow(c, "cache-row", "本地媒体缓存", "", formatCacheSize(state.CacheSize), "清理缓存", "subtle", a.ClearSettingsCache)
 		})
 
 		if state.Error != "" {

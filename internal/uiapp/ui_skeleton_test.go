@@ -157,6 +157,9 @@ func TestDiscoverAndNewSkeletonsMatchTheirReadyShapes(t *testing.T) {
 	newLoading.releases.Loading = true
 	newLoading.releases.Calendar = true
 	newLoading.releases.Dates = []string{"20261106", "20261107"}
+	newLoading.releases.placeholderItems = []CatalogItem{
+		{PublishAt: "2026-11-06"}, {PublishAt: "2026-11-07"},
+	}
 	newTester := ui.NewTester(newLoading.Render, width, height)
 	newTester.Frame()
 	var newBones []ui.AccessInfo
