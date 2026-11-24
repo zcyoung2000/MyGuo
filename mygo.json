@@ -1,5 +1,5 @@
 {
-  "name": "myguo",
+  "name": "MyGuo",
   "slug": "myguo",
   "identifier": "com.myguo.app",
   "version": "2.0.0",
@@ -7,5 +7,6 @@
     "icon": "resources/AppIcon.icon"
   },
   "out": "dist",
+  "resourcesExclude": ["AppIcon.icon"],
   "icon": "resources/icon.png"
 }

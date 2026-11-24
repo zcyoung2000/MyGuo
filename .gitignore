@@ -8,6 +8,12 @@ hongguo
 # Large third-party player codec binaries are fetched for release builds.
 /resources/darwin-arm64/ffmpeg
 /resources/darwin-amd64/ffmpeg
+/resources/darwin-*/ffmpeg-LICENSE.txt
+/resources/darwin-*/ffmpeg-README.txt
+/resources/darwin-*/ffmpeg-build-info.json
+/resources/windows-amd64/ffmpeg-LICENSE.txt
+/resources/windows-amd64/ffmpeg-README.txt
+/resources/windows-amd64/ffmpeg-build-info.json
 
 # OS generated files
 .DS_Store
