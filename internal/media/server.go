@@ -14,12 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"myguo/internal/appdirs"
@@ -182,10 +182,14 @@ var ffmpegCommand = sync.OnceValues(func() (string, error) {
 	}
 
 	candidates := []string{}
+	executableName := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		executableName += ".exe"
+	}
 	if exe, err := os.Executable(); err == nil {
 		bundleDir := filepath.Dir(exe)
 		candidates = append(candidates,
-			filepath.Join(bundleDir, "ffmpeg"),
+			filepath.Join(bundleDir, executableName),
 			filepath.Join(filepath.Dir(bundleDir), "Resources", "ffmpeg"),
 		)
 	}
@@ -1021,7 +1025,7 @@ func extractFirstFrame(ctx context.Context, sourcePath, destPath string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd := mediaCommand(ctx, ffmpegPath, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg poster error (%v): %s", err, string(out))
 	}
@@ -1134,7 +1138,7 @@ func (ms *MediaServer) downloadAndDecrypt(ctx context.Context, episodeID, qualit
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd := mediaCommand(ctx, ffmpegPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ffmpeg error (%v): %s", err, string(out))
@@ -1698,12 +1702,12 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 	if imageMagic, ok := imageFormat(tmpRaw); ok && (imageMagic == imageJPEG || imageMagic == imagePNG || imageMagic == imageWebP || imageMagic == imageGIF) {
 		_ = os.Rename(tmpRaw, cacheJpg)
 	} else {
-		// Only invoke Apple sips CLI for HEIC or other non-native formats
+		// Bound external conversions on every platform. Windows uses the
+		// bundled FFmpeg; macOS retains sips for its system HEIC codec.
 		sipsSem <- struct{}{}
-		cmd := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", tmpRaw, "--out", cacheJpg)
-		sipsErr := cmd.Run()
+		conversionErr := convertImage(ctx, tmpRaw, cacheJpg)
 		<-sipsSem
-		if sipsErr != nil {
+		if conversionErr != nil {
 			_ = os.Remove(cacheJpg)
 			serveFallback(w)
 			return
@@ -1919,14 +1923,6 @@ func FileExists(path string) bool {
 }
 
 func fileExists(path string) bool { return FileExists(path) }
-
-func hasFreeDiskSpace(path string, minBytes uint64) bool {
-	var stats syscall.Statfs_t
-	if err := syscall.Statfs(path, &stats); err != nil {
-		return true
-	}
-	return stats.Bavail*uint64(stats.Bsize) >= minBytes
-}
 
 type cacheFileEntry struct {
 	path    string

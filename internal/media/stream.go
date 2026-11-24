@@ -218,7 +218,7 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 		return nil, err
 	}
 
-	command := exec.CommandContext(ctx, ffmpegPath, ffmpegProgressiveArgs(source.URL, pb.AudioURL, keyHex)...)
+	command := mediaCommand(ctx, ffmpegPath, ffmpegProgressiveArgs(source.URL, pb.AudioURL, keyHex)...)
 	var stderrBuf bytes.Buffer
 	command.Stderr = &stderrBuf
 	stdout, err := command.StdoutPipe()

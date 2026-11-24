@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -400,7 +399,7 @@ func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seri
 		defer close(monitorExited)
 		ms.monitorHLSOutput(ctx, stream, monitorDone)
 	}()
-	command := exec.CommandContext(ctx, ffmpegPath, ffmpegHLSArgs(source.URL, pb.AudioURL, keyHex, stream.dir)...)
+	command := mediaCommand(ctx, ffmpegPath, ffmpegHLSArgs(source.URL, pb.AudioURL, keyHex, stream.dir)...)
 	runErr := command.Run()
 	close(monitorDone)
 	<-monitorExited
