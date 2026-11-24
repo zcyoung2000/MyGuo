@@ -396,17 +396,11 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 	c.saveCurrent()
 	// Snapshot once before retiring a surface; a frozen outgoing frame keeps
 	// rapid swipes smooth without retaining a fourth decoder or extra audio.
-	frame := c.state.TransitionFrame
-	if direction == 0 || c.state.Mode != Feed {
-		frame = nil
-	} else if old := c.current; old != nil && old.engine != nil {
+	var frame []byte
+	if old := c.current; direction != 0 && c.state.Mode == Feed && c.state.Error == "" && old != nil && old.engine != nil {
 		status := old.engine.Snapshot()
-		if status.PictureInPicture {
-			frame = nil
-		} else if status.Ready {
-			if captured := old.engine.CaptureFrame(); len(captured) > 0 {
-				frame = captured
-			}
+		if status.Ready && status.Displayed && !status.PictureInPicture {
+			frame = old.engine.CaptureFrame()
 		}
 	}
 	episodeID := ""
@@ -536,7 +530,12 @@ func (c *Controller) resolveSource(s *slot) {
 				s.accessLimited = errors.Is(err, ipc.ErrPlaybackAccessLimited)
 				log.Printf("[native-player] resolve/load series=%q attempt=%d: %s", id, s.resolveAttempts, s.err)
 				if !s.unavailable && !errors.Is(err, hgapi.ErrAuthenticationRequired) && s.resolveAttempts < 3 {
-					s.retryAt = time.Now().Add(time.Duration(1<<(s.resolveAttempts-1)) * 500 * time.Millisecond)
+					delay := time.Duration(1<<(s.resolveAttempts-1)) * 500 * time.Millisecond
+					var deferred interface{ PlaybackRetryAfter() time.Duration }
+					if errors.As(err, &deferred) {
+						delay = max(delay, deferred.PlaybackRetryAfter())
+					}
+					s.retryAt = time.Now().Add(delay)
 				}
 				if c.desired == key {
 					c.applySlot(s)
@@ -745,7 +744,7 @@ func (c *Controller) tick(now time.Time) {
 			c.system()
 		}
 
-		if c.state.Error == "" && (status.Error != "" || (!s.first && !status.Ready && now.Sub(s.sourceStarted) > c.sourceTimeout(s))) {
+		if c.state.Error == "" && (status.Error != "" || (!c.state.Paused && !s.first && !status.Ready && now.Sub(s.sourceStarted) > c.sourceTimeout(s))) {
 			c.fallback(s, status.Error)
 			c.publish()
 			return

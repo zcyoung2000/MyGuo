@@ -95,6 +95,8 @@ type MediaServer struct {
 	pbCache                  map[string]playbackCacheItem
 	pbLoadMu                 sync.Mutex
 	pbLoads                  map[string]*playbackLoad
+	pbConsecutiveFailures    int
+	pbCooldownUntil          time.Time
 	multiModel               *MultiVideoModelBatcher
 	prefetchQ                chan PrefetchTask
 	prefetchMu               sync.Mutex
@@ -140,6 +142,7 @@ type MediaServer struct {
 
 type playbackCacheItem struct {
 	pb        *model.Playback
+	err       error
 	expiresAt time.Time
 }
 
@@ -418,12 +421,16 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	if episodeID == "" {
 		return nil, fmt.Errorf("empty episode id")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ms.applyPlaybackRetry(ctx, episodeID)
 
 	ms.pbCacheMu.RLock()
 	if item, ok := ms.pbCache[episodeID]; ok && time.Now().Before(item.expiresAt) {
 		ms.pbCacheMu.RUnlock()
 		ms.playbackCacheHits.Add(1)
-		return item.pb, nil
+		return item.pb, ms.cachedPlaybackError(item.err)
 	}
 	ms.pbCacheMu.RUnlock()
 	ms.playbackCacheMiss.Add(1)
@@ -446,8 +453,16 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	item, cached := ms.pbCache[episodeID]
 	ms.pbCacheMu.RUnlock()
 	if cached && time.Now().Before(item.expiresAt) {
+		if retry, ok := item.err.(*playbackRetryError); ok {
+			item.err = &playbackRetryError{cause: retry.cause, until: maxTime(retry.until, ms.pbCooldownUntil)}
+		}
 		ms.pbLoadMu.Unlock()
-		return item.pb, nil
+		return item.pb, item.err
+	}
+	if time.Now().Before(ms.pbCooldownUntil) {
+		err := &playbackRetryError{cause: hgapi.ErrRateLimited, until: ms.pbCooldownUntil}
+		ms.pbLoadMu.Unlock()
+		return nil, err
 	}
 	load := &playbackLoad{done: make(chan struct{})}
 	ms.pbLoads[episodeID] = load
@@ -456,7 +471,7 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	if ms.playbackResolver == nil && ms.client == nil {
 		err := errNilPlaybackClient
 		ms.finishPlaybackLoad(episodeID, load, nil, err)
-		return nil, err
+		return load.result.pb, load.result.err
 	}
 
 	resolver := ms.playbackResolver
@@ -477,10 +492,15 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 			spare, spareErr := pool.ResolveForSession(ctx, session, episodeID, err, ms.primaryResolverForSparePool)
 			if spareErr == nil {
 				pool.ReleaseSession(session)
-				ms.finishPlaybackLoad(episodeID, load, spare, nil)
-				return spare, nil
+				if ctx.Err() != nil {
+					ms.finishPlaybackLoad(episodeID, load, nil, ctx.Err())
+				} else {
+					ms.finishPlaybackLoad(episodeID, load, spare, nil)
+				}
+				return load.result.pb, load.result.err
 			}
 			log.Printf("[media] spare device playback failed: %v", spareErr)
+			err = errors.Join(err, spareErr)
 		}
 		// The SDK already bounds and coordinates device recovery. Repeating
 		// it here multiplies requests and discards other valid cached models.
@@ -490,18 +510,17 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	}
 	if pb == nil {
 		if err == nil {
-			err = fmt.Errorf("empty playback model")
+			err = errPlaybackModelUnavailable
 		}
 		pb = nil
 	}
 
-	if err == nil && pb != nil {
-		ms.pbCacheMu.Lock()
-		ms.rememberPlaybackLocked(episodeID, pb)
-		ms.pbCacheMu.Unlock()
+	// A canceled owner must not publish a success or poison the failure cache.
+	if ctx.Err() != nil {
+		pb, err = nil, ctx.Err()
 	}
 	ms.finishPlaybackLoad(episodeID, load, pb, err)
-	return pb, err
+	return load.result.pb, load.result.err
 }
 
 func (ms *MediaServer) primaryResolverForSparePool(ctx context.Context, episodeID string, _ hgapi.PlaybackOptions) (*model.Playback, error) {
@@ -518,13 +537,30 @@ func (ms *MediaServer) primaryResolverForSparePool(ctx context.Context, episodeI
 
 func (ms *MediaServer) finishPlaybackLoad(episodeID string, load *playbackLoad, pb *model.Playback, err error) {
 	ms.pbLoadMu.Lock()
+	// Retry/account invalidation detaches the old flight. Its waiters still get
+	// a result, but it cannot repopulate the cache or remove a newer flight.
+	if ms.pbLoads[episodeID] == load {
+		if err == nil && pb != nil {
+			ms.pbConsecutiveFailures = 0
+			ms.pbCacheMu.Lock()
+			ms.rememberPlaybackLocked(episodeID, pb)
+			ms.pbCacheMu.Unlock()
+		} else if playbackFailureRecoverable(err) {
+			err = ms.rememberPlaybackFailure(episodeID, err)
+		}
+		delete(ms.pbLoads, episodeID)
+	}
 	load.result = playbackLoadResult{pb: pb, err: err}
 	close(load.done)
-	delete(ms.pbLoads, episodeID)
 	ms.pbLoadMu.Unlock()
 }
 
 func (ms *MediaServer) clearPlaybackCache() {
+	ms.pbLoadMu.Lock()
+	defer ms.pbLoadMu.Unlock()
+	clear(ms.pbLoads)
+	ms.pbConsecutiveFailures = 0
+	ms.pbCooldownUntil = time.Time{}
 	ms.pbCacheMu.Lock()
 	clear(ms.pbCache)
 	ms.pbCacheMu.Unlock()
@@ -535,10 +571,17 @@ func (ms *MediaServer) ClearPlaybackCache() {
 }
 
 func (ms *MediaServer) rememberPlaybackLocked(episodeID string, pb *model.Playback) {
+	ms.rememberPlaybackCacheLocked(episodeID, playbackCacheItem{
+		pb:        pb,
+		expiresAt: time.Now().Add(10 * time.Minute),
+	})
+}
+
+func (ms *MediaServer) rememberPlaybackCacheLocked(episodeID string, item playbackCacheItem) {
 	if ms.pbCache == nil {
 		ms.pbCache = make(map[string]playbackCacheItem)
 	}
-	if len(ms.pbCache) >= 100 {
+	if _, exists := ms.pbCache[episodeID]; !exists && len(ms.pbCache) >= 100 {
 		oldestID := ""
 		var oldestExpiry time.Time
 		for id, item := range ms.pbCache {
@@ -549,10 +592,7 @@ func (ms *MediaServer) rememberPlaybackLocked(episodeID string, pb *model.Playba
 		}
 		delete(ms.pbCache, oldestID)
 	}
-	ms.pbCache[episodeID] = playbackCacheItem{
-		pb:        pb,
-		expiresAt: time.Now().Add(10 * time.Minute),
-	}
+	ms.pbCache[episodeID] = item
 }
 
 func (ms *MediaServer) PlaybackQualities(ctx context.Context, episodeID, requested string) (QualitySelection, error) {
@@ -706,6 +746,7 @@ func newMediaServer(client *hgapi.Client, cacheDir string) (*MediaServer, error)
 		cachePins:          make(map[string]int),
 		playbackResolver:   newPlaybackRaceResolver(newNativeFallbackPlaybackResolver(client, nil), nil),
 	}
+	ms.multiModel.loadModels = ms.loadPlaybackModels
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/video", ms.handleVideo)
@@ -791,6 +832,9 @@ func (ms *MediaServer) RememberPlayback(episodeID string, pb *model.Playback) {
 	if episodeID == "" || pb == nil {
 		return
 	}
+	ms.pbLoadMu.Lock()
+	defer ms.pbLoadMu.Unlock()
+	ms.pbConsecutiveFailures = 0
 	ms.pbCacheMu.Lock()
 	ms.rememberPlaybackLocked(episodeID, pb)
 	ms.pbCacheMu.Unlock()

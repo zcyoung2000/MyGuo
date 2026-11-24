@@ -33,8 +33,9 @@ type playbackResolveResult struct {
 }
 
 type playbackSource struct {
-	name string
-	call func(ctx context.Context, episodeID string) (*playbackResolveResult, error)
+	name  string
+	call  func(ctx context.Context, episodeID string) (*playbackResolveResult, error)
+	retry func(string)
 }
 
 type playbackSourceResult struct {
@@ -53,12 +54,28 @@ type playbackRaceResolver struct {
 func newPlaybackRaceResolver(primary, spare PlaybackResolver) *playbackRaceResolver {
 	sources := make([]playbackSource, 0, 2)
 	if primary != nil {
-		sources = append(sources, playbackSource{name: "video_model", call: primary.ResolvePlayback})
+		sources = append(sources, playbackSourceFor("video_model", primary))
 	}
 	if spare != nil {
-		sources = append(sources, playbackSource{name: "multi_video_model", call: spare.ResolvePlayback})
+		sources = append(sources, playbackSourceFor("multi_video_model", spare))
 	}
 	return &playbackRaceResolver{sources: sources, timeout: playbackRaceTimeout}
+}
+
+func playbackSourceFor(name string, resolver PlaybackResolver) playbackSource {
+	source := playbackSource{name: name, call: resolver.ResolvePlayback}
+	if retry, ok := resolver.(interface{ RetryPlaybackNow(string) }); ok {
+		source.retry = retry.RetryPlaybackNow
+	}
+	return source
+}
+
+func (r *playbackRaceResolver) RetryPlaybackNow(episodeID string) {
+	for _, source := range r.sources {
+		if source.retry != nil {
+			source.retry(episodeID)
+		}
+	}
 }
 
 func (r *playbackRaceResolver) ResolvePlayback(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
@@ -126,6 +143,19 @@ type nativePlaybackResolver struct {
 	http   *http.Client
 }
 
+func (r nativePlaybackResolver) RetryPlaybackNow(episodeID string) {
+	if r.client == nil {
+		return
+	}
+	// Prefer scoped SDK invalidation if supplied. The current SDK only exposes
+	// a whole model-cache clear; this is needed to refresh an expired source URL.
+	if retry, ok := any(r.client).(interface{ RetryPlaybackNow(string) }); ok {
+		retry.RetryPlaybackNow(episodeID)
+	} else {
+		r.client.ClearPlaybackCache()
+	}
+}
+
 func (r nativePlaybackResolver) fetchPrimary(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
 	pb, err := r.client.ResolvePlayback(ctx, episodeID, hgapi.PlaybackOptions{})
 	if err != nil && !errors.Is(err, hgapi.ErrDRMProtected) {
@@ -154,7 +184,7 @@ func (r nativePlaybackResolver) fetchFallback(ctx context.Context, fallbackURL s
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("fallback_api returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("fallback_api: %w", &hgapi.APIError{HTTPStatus: resp.StatusCode})
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, playbackResponseLimit))
 	if err != nil {
@@ -184,6 +214,12 @@ func (r nativePlaybackResolver) ResolvePlayback(ctx context.Context, episodeID s
 type playbackFallbackResolver struct {
 	inner   PlaybackResolver
 	fetcher func(ctx context.Context, fallbackURL string) (*playbackResolveResult, error)
+}
+
+func (r playbackFallbackResolver) RetryPlaybackNow(episodeID string) {
+	if retry, ok := r.inner.(interface{ RetryPlaybackNow(string) }); ok {
+		retry.RetryPlaybackNow(episodeID)
+	}
 }
 
 func newNativeFallbackPlaybackResolver(client *hgapi.Client, httpClient *http.Client) *playbackFallbackResolver {

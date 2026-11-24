@@ -60,6 +60,9 @@ type MultiVideoModelBatcher struct {
 	httpClient         *http.Client
 	multiVideoModelURL string
 	deviceIdentity     func() (deviceID, installID, cdid, openudid string)
+	// When attached to MediaServer, cache/flight admission and publication
+	// belong to that server; standalone batchers keep their callback API.
+	loadModels func(context.Context, []model.Episode)
 
 	mu       sync.Mutex
 	loads    map[string]*multiModelLoad
@@ -292,6 +295,10 @@ func (b *MultiVideoModelBatcher) runTask(ctx context.Context, task multiModelTas
 		}()
 	}
 
+	if b.loadModels != nil {
+		b.loadModels(fetchCtx, task.episodes)
+		return
+	}
 	playbacks, err := b.fetch(fetchCtx, task.episodes)
 	if err != nil || ctx.Err() != nil || !b.windowUnchanged(windowID) {
 		return
