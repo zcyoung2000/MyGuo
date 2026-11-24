@@ -10,18 +10,20 @@
 
 - Upstream: MyGo (<https://github.com/egoist/mygo>)
 - License: MIT
-- Usage: Native macOS windowing, GPU-drawn UI, native module integration and packaging.
+- Usage: Native macOS and Windows windowing, GPU-drawn UI, native module integration, system video and packaging.
 
 ## FFmpeg
 
-macOS release builds bundle a static FFmpeg executable selected for the target architecture. The binary is fetched by `scripts/fetch-ffmpeg.sh` and embedded in `<App>.app/Contents/Resources`.
+Release builds bundle an FFmpeg executable with static FFmpeg libraries. macOS defaults to the minimal helper built by `scripts/build-ffmpeg-minimal.sh`; `scripts/fetch-ffmpeg.sh` prepares it for `<App>.app/Contents/Resources`. Windows x64 uses the verified minimal helper when available, or the checksum-verified Gyan FFmpeg 9.0.2 essentials archive. The minimal executable, its LGPL license, README and build manifest ship in the Mac bundle or beside `myguo.exe`.
 
 - Upstream: FFmpeg (<https://ffmpeg.org/>)
-- Build source: OSXExperts (<https://www.osxexperts.net/>)
-- License: GPL; the packaged builds enable GPL components
+- Build source: pinned upstream FFmpeg for minimal builds; OSXExperts (<https://www.osxexperts.net/>) and Gyan (<https://www.gyan.dev/ffmpeg/builds/>, [pinned Windows release](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)) for optional full builds
+- License: GPL for full OSXExperts/Gyan builds; LGPL-2.1-or-later for the minimal macOS and Windows builds
 - Source: download the matching FFmpeg source from <https://ffmpeg.org/download.html>
 
-Redistribution of these GPL binaries must follow the applicable GPL terms, including providing the corresponding source or a written source offer.
+The minimal builds are LGPL-2.1-or-later, as reported by their FFmpeg configure output, and link no external codec libraries or GPL components. Their exact source is [FFmpeg 9.0.2](https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz), SHA-256 `8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e`. macOS uses Apple Clang, a macOS 13 deployment target and system SecureTransport; Windows uses Zig 0.15.2 and system Schannel. The repository includes the complete build recipe; the package includes the matching license and a manifest of the compiler, target and file checksums before code signing. Full OSXExperts/Gyan builds retain their GPL licensing.
+
+Redistribution must follow the license of the selected binary, including its requirements for corresponding source. The package carries the matching license text.
 
 ## SQLite Driver
 
