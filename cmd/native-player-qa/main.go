@@ -21,6 +21,7 @@ import (
 	"myguo/internal/media"
 	"myguo/internal/native"
 	"myguo/internal/playback"
+	"myguo/internal/playerengine"
 	"myguo/internal/store"
 	"myguo/internal/uiapp"
 )
@@ -183,10 +184,10 @@ func main() {
 		p.Volume = .02
 		_ = playback.SavePreferences(path, p)
 	}
-	factory := avkit.NewPlayer
+	factory := playerengine.New
 	if *exerciseBufferedStart {
 		factory = func() (avkit.Player, error) {
-			p, err := avkit.NewPlayer()
+			p, err := playerengine.New()
 			if err != nil {
 				return nil, err
 			}

@@ -9,7 +9,8 @@ import (
 	"myguo/internal/playback"
 )
 
-// Widget decisions (MyGo v0.9.1): NativeView hosts AVKit; SliderBase owns
+// Widget decisions (MyGo v0.9.1): NativeView hosts macOS AVKit, Video hosts
+// Windows Media Foundation; SliderBase owns
 // seek/volume semantics; ButtonBase owns actions; List virtualizes episodes
 // and comments. Danmaku is tier-3 painting because no widget assigns moving
 // timed text to collision-free lanes. Draw callbacks only paint snapshots.
@@ -23,7 +24,10 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 	if s.Mode == playback.Feed {
 		s.Preferences.Clear = false
 	}
-	a.playerNativeBackdrop = s.Engine != nil && s.Status.Ready && s.Status.Displayed && s.Error == "" && !s.Status.PictureInPicture
+	_, systemVideo := s.Engine.(interface{ VideoPlayer() *ui.VideoPlayer })
+	// Windows video is in the GPU UI surface, so controls sample that surface.
+	// Only a macOS AVKit view needs material from beneath the UI window.
+	a.playerNativeBackdrop = !systemVideo && s.Engine != nil && s.Status.Ready && s.Status.Displayed && s.Error == "" && !s.Status.PictureInPicture
 	host := a.media
 	command := func(cmd string, value any) {
 		if host != nil {

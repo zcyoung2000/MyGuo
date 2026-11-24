@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"log"
 	"myguo/internal/avkit"
+	"myguo/internal/playerengine"
 	"os"
 	"slices"
 	"strconv"
@@ -29,7 +30,7 @@ func main() {
 	var message string
 	mygo.App.WhenReady(func() {
 		var err error
-		player, err = avkit.NewPlayer()
+		player, err = playerengine.New()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -54,7 +55,13 @@ func main() {
 			s, m := state, message
 			mu.Unlock()
 			ui.Column(c).Fill().Padding(16).Gap(12).Children(func() {
-				ui.NativeView(c.Key("video"), player).Grow(1).FillWidth()
+				if system, ok := player.(interface{ VideoPlayer() *ui.VideoPlayer }); ok {
+					if p := system.VideoPlayer(); p != nil {
+						ui.Video(c.Key("video"), p).Grow(1).FillWidth().Fit(ui.Contain)
+					}
+				} else {
+					ui.NativeView(c.Key("video"), player).Grow(1).FillWidth()
+				}
 				ui.Row(c).Gap(12).Children(func() {
 					ui.Button(c, "播放").OnClick(func() { go player.Play() })
 					ui.Button(c, "暂停").OnClick(func() { go player.Pause() })

@@ -56,7 +56,19 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 		incoming := ui.Box(c.Key("player-incoming-page")).Absolute().Fill().Background(ui.RGB(0, 0, 0)).Translate(0, direction*incomingOffset*height)
 		incoming.Children(func() {
 			if s.Engine != nil {
-				ui.NativeView(c.Key("avkit-surface"), s.Engine).Absolute().Fill().PassThrough()
+				// Widget verdict (MyGo v0.9.1): Windows uses official ui.Video;
+				// macOS needs the AVKit ui.NativeView for native preroll and PiP.
+				if video, ok := s.Engine.(interface{ VideoPlayer() *ui.VideoPlayer }); ok {
+					if p := video.VideoPlayer(); p != nil {
+						fit := ui.Contain
+						if s.Preferences.Fit == "cover" {
+							fit = ui.Cover
+						}
+						ui.Video(c.Key("system-video-surface"), p).Absolute().Fill().Fit(fit).PassThrough()
+					}
+				} else {
+					ui.NativeView(c.Key("avkit-surface"), s.Engine).Absolute().Fill().PassThrough()
+				}
 			}
 			if !s.Status.Ready || !s.Status.Displayed || s.Error != "" {
 				if poster := a.Artwork(s.Book.CoverURL); poster != nil {
