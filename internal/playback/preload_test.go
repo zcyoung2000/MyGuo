@@ -34,6 +34,25 @@ func TestPreloadAdmissionProtectsPlaybackWithoutCancelingItsBufferedTail(t *test
 	}
 }
 
+func TestPreloadWithUnknownRangesRequiresFullCacheOrPause(t *testing.T) {
+	s := State{Status: avkit.Status{Ready: true, Position: 10, Duration: 200}, Preferences: Preferences{Rate: 1}, Playback: &ipc.PlaybackDTO{}}
+	if preloadAdmission(s, true) {
+		t.Fatal("unknown runway admitted background downloads")
+	}
+	s.Playback.IsFullCached = true
+	if !preloadAdmission(s, false) {
+		t.Fatal("complete local media blocked preloading")
+	}
+	s.Status.Buffering = true
+	if preloadAdmission(s, true) {
+		t.Fatal("buffering did not yield bandwidth")
+	}
+	s.Status.Buffering, s.Playback.IsFullCached, s.Paused = false, false, true
+	if !preloadAdmission(s, false) {
+		t.Fatal("paused media blocked preloading")
+	}
+}
+
 func TestSeriesPreloadsTwoEpisodesAndPromotesWithoutSeekingAwayPreroll(t *testing.T) {
 	b := &testBackend{}
 	c, r := newControllerTest(t, b)

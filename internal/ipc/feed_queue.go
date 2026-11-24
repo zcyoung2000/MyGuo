@@ -53,17 +53,25 @@ func (s *HongguoService) RestoreRecommendFeed(ctx context.Context, channel strin
 func (s *HongguoService) ConsumeRecommendFeedItem(ctx context.Context, channel, seriesID string) error {
 	// Store serializes this with queue writes. Do not wait for feedMu here:
 	// a slow background Discover must not delay an on-screen acknowledgement.
-	return s.store.ConsumeFeedQueue(feedChannelKey(channel), seriesID)
+	return s.store.ConsumeFeedQueueContext(ctx, feedChannelKey(channel), seriesID)
 }
 
 func (s *HongguoService) queueRecommendCards(channel string, cards []SeriesCard) error {
+	entries, err := recommendQueueEntries(cards)
+	if err != nil {
+		return err
+	}
+	return s.store.AppendFeedQueue(channel, entries)
+}
+
+func recommendQueueEntries(cards []SeriesCard) ([]userstore.FeedQueueEntry, error) {
 	entries := make([]userstore.FeedQueueEntry, 0, len(cards))
 	for _, card := range cards {
 		payload, err := json.Marshal(card)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		entries = append(entries, userstore.FeedQueueEntry{SeriesID: card.ID, Payload: payload})
 	}
-	return s.store.AppendFeedQueue(channel, entries)
+	return entries, nil
 }

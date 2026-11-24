@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -837,28 +838,33 @@ func (s *Store) GetFeedSeenIDs(channel string, generation int64) map[string]bool
 	return seen
 }
 
-func (s *Store) GetRecentFeedSeenIDs(channel string, generation int64) map[string]bool {
+// Recent recommendations survive cursor/session rotation. Pending items are
+// also excluded from new pages even when they fall outside the recent window.
+func (s *Store) GetRecentFeedSeenIDs(channel string) (map[string]bool, error) {
 	seen := make(map[string]bool)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT series_id
-		FROM feed_seen
-		WHERE channel = ? AND generation > ?
-	`, channel, generation-3)
+		SELECT series_id FROM (
+			SELECT series_id FROM feed_seen WHERE channel = ?
+			GROUP BY series_id ORDER BY MAX(rowid) DESC LIMIT ?
+		)
+		UNION SELECT series_id FROM feed_queue WHERE channel = ?
+	`, channel, recentFeedLimit, channel)
 	if err != nil {
-		return seen
+		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var seriesID string
-		if err := rows.Scan(&seriesID); err == nil {
-			seen[seriesID] = true
+		if err := rows.Scan(&seriesID); err != nil {
+			return nil, err
 		}
+		seen[seriesID] = true
 	}
-	return seen
+	return seen, rows.Err()
 }
 
 func (s *Store) SaveFeedSeenIDs(channel string, generation int64, seriesIDs []string) error {
@@ -874,23 +880,8 @@ func (s *Store) SaveFeedSeenIDs(channel string, generation int64, seriesIDs []st
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`
-		INSERT OR IGNORE INTO feed_seen (channel, generation, series_id, seen_at)
-		VALUES (?, ?, ?, ?)
-	`)
-	if err != nil {
+	if err := saveFeedSeenTx(context.Background(), tx, channel, generation, seriesIDs); err != nil {
 		return err
-	}
-	defer stmt.Close()
-
-	now := time.Now().Unix()
-	for _, seriesID := range seriesIDs {
-		if seriesID == "" {
-			continue
-		}
-		if _, err := stmt.Exec(channel, generation, seriesID, now); err != nil {
-			return err
-		}
 	}
 	return tx.Commit()
 }
@@ -916,12 +907,6 @@ func (s *Store) StartNextFeedGeneration(channel string) (int64, error) {
 			updated_at = excluded.updated_at
 	`, channel, generation, time.Now().Unix())
 	if err != nil {
-		return generation, err
-	}
-	if _, err := s.db.Exec(`
-		DELETE FROM feed_seen
-		WHERE channel = ? AND generation <= ?
-	`, channel, generation-3); err != nil {
 		return generation, err
 	}
 	return generation, nil
@@ -950,7 +935,7 @@ func (s *Store) migrateFromJSON(jsonPath string) error {
 }
 
 func (s *Store) importOldAppData() {
-	if os.Getenv("MYGUO_TEST_NO_LEGACY_IMPORT") == "1" || os.Getenv("MYGUO_DATA_ROOT") != "" {
+	if runtime.GOOS != "darwin" || os.Getenv("MYGUO_TEST_NO_LEGACY_IMPORT") == "1" || os.Getenv("MYGUO_DATA_ROOT") != "" {
 		return
 	}
 	home, err := os.UserHomeDir()

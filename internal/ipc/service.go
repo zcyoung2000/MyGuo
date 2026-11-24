@@ -467,25 +467,19 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		generation = 1
 	}
 
-	// Keep a short recent-generation memory. Filtering by the entire watch
-	// history made an official infinite feed look exhausted after enough
-	// viewing; three generations suppress immediate repeats while preserving a
-	// renewable recommendation stream after cursor or anonymous-session loss.
-	played := s.store.GetRecentFeedSeenIDs(feedKey, generation)
-	rememberSeenPage := func(page *hgapi.Page[model.SeriesSummary]) {
-		ids := make([]string, 0, len(pageItems(page)))
-		for _, item := range pageItems(page) {
-			ids = append(ids, item.ID)
-		}
-		_ = s.store.SaveFeedSeenIDs(feedKey, generation, ids)
+	// A bounded recent-ID window survives cursor/session loss. Pending cards
+	// remain separately durable and must not be appended a second time.
+	played, err := s.store.GetRecentFeedSeenIDs(feedKey)
+	if err != nil {
+		return nil, fmt.Errorf("load recent recommendations: %w", err)
 	}
 	startGeneration := func() (int64, error) {
 		next, err := s.store.StartNextFeedGeneration(feedKey)
-		if next <= 0 {
-			next = 1
+		if err != nil {
+			return next, err
 		}
 		generation = next
-		played = s.store.GetRecentFeedSeenIDs(feedKey, generation)
+		played, err = s.store.GetRecentFeedSeenIDs(feedKey)
 		return generation, err
 	}
 
@@ -516,7 +510,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		return p, cur, err
 	}
 
-	cardify := func(items []model.SeriesSummary) ([]SeriesCard, error) {
+	cardify := func(items []model.SeriesSummary) []SeriesCard {
 		cards := make([]SeriesCard, 0, len(items))
 		for _, it := range items {
 			tags := make([]string, 0, 2)
@@ -540,17 +534,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 			})
 		}
 		cards = s.validateRecommendCards(ctx, feedKey, cards)
-		if err := s.queueRecommendCards(feedKey, cards); err != nil {
-			return nil, fmt.Errorf("save recommend queue: %w", err)
-		}
-		for i := range cards {
-			cards[i].CoverURL = s.media.ImageURL(cards[i].CoverURL)
-		}
-		return cards, nil
-	}
-
-	savePage := func(page *hgapi.Page[model.SeriesSummary]) {
-		_ = s.store.SaveFeedProgress(feedKey, page.Cursor, generation)
+		return cards
 	}
 
 	// The official cell page can contain only two to four dramas. Aggregate a
@@ -563,6 +547,29 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 	}
 	cards := make([]SeriesCard, 0, minRecommendFeedBatch)
 	batchSeen := make(map[string]bool, minRecommendFeedBatch)
+	acceptPage := func(page *hgapi.Page[model.SeriesSummary]) ([]SeriesCard, error) {
+		ids := make([]string, 0, len(page.Items))
+		unseen := make([]model.SeriesSummary, 0, len(page.Items))
+		for _, item := range page.Items {
+			ids = append(ids, item.ID)
+			if item.ID != "" && !played[item.ID] && !batchSeen[item.ID] {
+				unseen = append(unseen, item)
+				played[item.ID], batchSeen[item.ID] = true, true
+			}
+		}
+		newCards := cardify(unseen)
+		entries, err := recommendQueueEntries(newCards)
+		if err == nil {
+			err = s.store.SaveRecommendPage(ctx, feedKey, page.Cursor, generation, entries, ids)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("save recommend page: %w", err)
+		}
+		for i := range newCards {
+			newCards[i].CoverURL = s.media.ImageURL(newCards[i].CoverURL)
+		}
+		return newCards, nil
+	}
 	resultCursor := queryCursor
 	canContinue := false
 	// The main recommendation stream is effectively unbounded. Even when one
@@ -574,9 +581,10 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		page, effectiveCursor, err := discoverOnce(queryCursor)
 		if err != nil {
 			if queryCursor != "" {
-				// An expired cursor is not fatal. Restart the same generation
-				// at zero; history filtering still protects the user.
-				_, _ = startGeneration()
+				// Restart at zero while retaining the recent-ID window.
+				if _, err := startGeneration(); err != nil {
+					return nil, fmt.Errorf("save recommend continuation: %w", err)
+				}
 				queryCursor = ""
 				continue
 			}
@@ -584,7 +592,9 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		}
 		if page == nil || len(page.Items) == 0 {
 			if queryCursor != "" {
-				_, _ = startGeneration()
+				if _, err := startGeneration(); err != nil {
+					return nil, fmt.Errorf("save recommend continuation: %w", err)
+				}
 				queryCursor = ""
 				continue
 			}
@@ -594,30 +604,18 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 		if effectiveCursor != queryCursor {
 			// The protocol client recovered by resetting the anonymous session. Start a new
 			// generation so cursor bookkeeping matches the new fingerprint.
-			_, _ = startGeneration()
+			if _, err := startGeneration(); err != nil {
+				return nil, fmt.Errorf("save recommend continuation: %w", err)
+			}
 		}
 
-		savePage(page)
-		rememberSeenPage(page)
 		resultCursor = page.Cursor
 		canContinue = page.HasMore && page.Cursor != ""
-		unseen := make([]model.SeriesSummary, 0, len(page.Items))
-		for _, item := range page.Items {
-			if !played[item.ID] && !batchSeen[item.ID] {
-				unseen = append(unseen, item)
-			}
+		newCards, err := acceptPage(page)
+		if err != nil {
+			return nil, err
 		}
-		if len(unseen) > 0 {
-			for _, item := range unseen {
-				played[item.ID] = true
-				batchSeen[item.ID] = true
-			}
-			newCards, err := cardify(unseen)
-			if err != nil {
-				return nil, err
-			}
-			cards = append(cards, newCards...)
-		}
+		cards = append(cards, newCards...)
 		if len(cards) >= minRecommendFeedBatch {
 			return sanitizeIPC(&RecommendFeedResult{
 				Items:   cards,
@@ -642,7 +640,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 
 	// The anonymous stream has ended without yielding any unseen cards.
 	// Register a new anonymous fingerprint and request a fresh stream.
-	_, err := startGeneration()
+	_, err = startGeneration()
 	if err != nil {
 		return nil, fmt.Errorf("failed to start a fresh recommend feed: %w", err)
 	}
@@ -665,27 +663,12 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 			break
 		}
 
-		_ = s.store.SaveFeedProgress(feedKey, page.Cursor, generation)
-		rememberSeenPage(page)
 		resultCursor = page.Cursor
-
-		unseen := make([]model.SeriesSummary, 0, len(page.Items))
-		for _, item := range page.Items {
-			if !played[item.ID] && !batchSeen[item.ID] {
-				unseen = append(unseen, item)
-			}
+		newCards, err := acceptPage(page)
+		if err != nil {
+			return nil, err
 		}
-		if len(unseen) > 0 {
-			for _, item := range unseen {
-				played[item.ID] = true
-				batchSeen[item.ID] = true
-			}
-			newCards, err := cardify(unseen)
-			if err != nil {
-				return nil, err
-			}
-			cards = append(cards, newCards...)
-		}
+		cards = append(cards, newCards...)
 		if len(cards) >= minRecommendFeedBatch {
 			return sanitizeIPC(&RecommendFeedResult{
 				Items:   cards,

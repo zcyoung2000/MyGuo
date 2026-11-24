@@ -524,6 +524,63 @@ func TestPiPSwitchUsesTheSameNativeSurfaceAndClock(t *testing.T) {
 
 type prefixEngine struct{ testEngine }
 
+type unknownRangeEngine struct{ testEngine }
+
+type externalIntentEngine struct {
+	testEngine
+	intent func(bool)
+}
+
+func (e *externalIntentEngine) SetPlaybackIntentHandler(fn func(bool)) {
+	e.mu.Lock()
+	e.intent = fn
+	e.mu.Unlock()
+}
+
+func TestExternalPiPPauseSurvivesImmediateEpisodeSwitch(t *testing.T) {
+	c := New(&testBackend{}, func() (avkit.Player, error) { return &externalIntentEngine{}, nil }, "", Hooks{})
+	defer c.Close()
+	c.Play("A", 1, 0, 1)
+	e := waitSource(t, c, "A", 1).Engine.(*externalIntentEngine)
+	e.mu.Lock()
+	handler := e.intent
+	e.mu.Unlock()
+	if handler == nil {
+		t.Fatal("external player controls were not bound to playback intent")
+	}
+	e.Pause()
+	handler(true)
+	c.Command("nextEpisode", nil)
+	s := waitSource(t, c, "A", 2)
+	if !s.Paused || s.Status.Playing {
+		t.Fatal("PiP pause was lost before the next status poll")
+	}
+}
+
+func (e *unknownRangeEngine) SeekRequiresCompleteSource() bool { return true }
+func (e *unknownRangeEngine) Snapshot() avkit.Status {
+	s := e.testEngine.Snapshot()
+	s.Buffered, s.Seekable = 0, 0
+	return s
+}
+
+func TestSeekWithUnknownRangesUsesCompleteSourceAndPreservesPause(t *testing.T) {
+	c := New(&testBackend{}, func() (avkit.Player, error) { return &unknownRangeEngine{}, nil }, "", Hooks{})
+	defer c.Close()
+	c.Play("A", 1, 0, 1)
+	e := waitSource(t, c, "A", 1).Engine.(*unknownRangeEngine)
+	c.Command("pause", nil)
+	c.Command("seek", float64(70))
+	eventually(t, func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return strings.HasPrefix(e.url, "full:") && !e.status.Playing && math.Abs(e.status.Position-70) < .1
+	})
+	if !c.Snapshot().Paused {
+		t.Fatal("unknown-range seek lost pause intent")
+	}
+}
+
 func (e *prefixEngine) Load(url string) error {
 	if err := e.testEngine.Load(url); err != nil {
 		return err

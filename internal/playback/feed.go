@@ -75,8 +75,7 @@ func (c *Controller) skipUnavailableFeed(s *slot) {
 	c.state.Status = avkit.Status{}
 	c.state.Loading = true
 	c.state.Error = ""
-	channel, id, ctx := c.state.Channel, s.seriesID, c.root
-	go func() { _ = c.backend.ConsumeRecommendFeedItem(ctx, channel, id) }()
+	c.enqueueFeedWrite(c.state.Channel, s.seriesID)
 	if index < len(c.feed) {
 		c.selectFeed(index)
 	} else if c.state.HasMore {

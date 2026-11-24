@@ -31,6 +31,12 @@ func preloadAdmission(s State, admitted bool) bool {
 	if s.Paused {
 		return true
 	}
+	// Media Foundation's public MyGo API has no buffered ranges. A complete
+	// local MP4 is safe to preload alongside; a growing source with unknown
+	// runway is deliberately kept out of the bandwidth budget.
+	if s.Playback != nil && s.Playback.IsFullCached {
+		return true
+	}
 	if admitted {
 		return ahead >= 2
 	}

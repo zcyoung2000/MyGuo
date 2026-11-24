@@ -210,7 +210,10 @@ func TestRecentFeedSeenIDsSuppressesImmediateRepeatsAcrossGenerations(t *testing
 	if err := store.SaveFeedSeenIDs("test", 1, []string{"a", "b"}); err != nil {
 		t.Fatalf("SaveFeedSeenIDs generation 1 failed: %v", err)
 	}
-	seen := store.GetRecentFeedSeenIDs("test", 2)
+	seen, err := store.GetRecentFeedSeenIDs("test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !seen["a"] || !seen["b"] {
 		t.Fatalf("generation 2 should inherit generation 1: %v", seen)
 	}
@@ -218,7 +221,10 @@ func TestRecentFeedSeenIDsSuppressesImmediateRepeatsAcrossGenerations(t *testing
 	if err := store.SaveFeedSeenIDs("test", 2, []string{"c"}); err != nil {
 		t.Fatalf("SaveFeedSeenIDs generation 2 failed: %v", err)
 	}
-	seen = store.GetRecentFeedSeenIDs("test", 3)
+	seen, err = store.GetRecentFeedSeenIDs("test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !seen["a"] || !seen["b"] || !seen["c"] {
 		t.Fatalf("generation 3 should inherit the previous two generations: %v", seen)
 	}
@@ -226,7 +232,10 @@ func TestRecentFeedSeenIDsSuppressesImmediateRepeatsAcrossGenerations(t *testing
 	if err := store.SaveFeedSeenIDs("test", 3, []string{"d"}); err != nil {
 		t.Fatalf("SaveFeedSeenIDs generation 3 failed: %v", err)
 	}
-	seen = store.GetRecentFeedSeenIDs("test", 1)
+	seen, err = store.GetRecentFeedSeenIDs("test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !seen["a"] || !seen["b"] || !seen["c"] || !seen["d"] {
 		t.Fatalf("generation 1 should inherit all three retained generations: %v", seen)
 	}
@@ -237,13 +246,16 @@ func TestRecentFeedSeenIDsSuppressesImmediateRepeatsAcrossGenerations(t *testing
 	if _, err := store.StartNextFeedGeneration("test"); err != nil {
 		t.Fatalf("StartNextFeedGeneration failed: %v", err)
 	}
-	seen = store.GetRecentFeedSeenIDs("test", 4)
+	seen, err = store.GetRecentFeedSeenIDs("test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	progress, progressOK := store.GetFeedProgress("test")
 	if !progressOK || progress.Generation != 4 {
 		t.Fatalf("next progress mismatch: ok=%v progress=%+v", progressOK, progress)
 	}
-	if !seen["c"] || !seen["d"] || seen["a"] || seen["b"] {
-		t.Fatalf("generation rotation should drop only the oldest generation: %v", seen)
+	if !seen["c"] || !seen["d"] || !seen["a"] || !seen["b"] {
+		t.Fatalf("generation rotation discarded recent recommendations: %v", seen)
 	}
 }
 

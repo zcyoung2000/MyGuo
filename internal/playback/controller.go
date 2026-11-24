@@ -204,6 +204,7 @@ type Controller struct {
 	progressWake                      chan struct{}
 	progressClosing                   bool
 	progressDone                      chan struct{}
+	feedWrites                        map[feedWriteKey]*feedWrite
 	preferencesPath                   string
 }
 
@@ -212,6 +213,7 @@ type progressWrite struct {
 	dto                ipc.PlaybackDTO
 	position, duration float64
 	account            string
+	feed               *feedWrite
 }
 
 func New(backend Backend, factory func() (avkit.Player, error), preferencesPath string, hooks Hooks) *Controller {
@@ -651,6 +653,15 @@ func (c *Controller) loadEngine(s *slot, warm bool) bool {
 		return false
 	}
 	s.engine = engine
+	if controls, ok := engine.(interface{ SetPlaybackIntentHandler(func(bool)) }); ok {
+		controls.SetPlaybackIntentHandler(func(paused bool) {
+			command := "play"
+			if paused {
+				command = "pause"
+			}
+			c.Command(command, nil)
+		})
+	}
 	c.configure(s)
 	url := nativeSourceURL(s.dto)
 
@@ -696,7 +707,11 @@ func (c *Controller) tick(now time.Time) {
 	if s != nil && s.engine != nil {
 		previousStatus := c.state.Status
 		status := playerStatus(s)
-		if s.seekPending && status.Seekable > 0 && s.seekTarget > status.Seekable+.25 && s.dto != nil && s.dto.FullStreamURL != "" && s.sourceURL != s.dto.FullStreamURL {
+		needsFullSeek := status.Seekable > 0 && s.seekTarget > status.Seekable+.25
+		if policy, ok := s.engine.(interface{ SeekRequiresCompleteSource() bool }); ok && policy.SeekRequiresCompleteSource() && s.seekTarget > 0 {
+			needsFullSeek = true
+		}
+		if s.seekPending && needsFullSeek && s.dto != nil && s.dto.FullStreamURL != "" && s.sourceURL != s.dto.FullStreamURL {
 			c.loadFullForSeek(s, s.seekTarget)
 			c.publish()
 			return
@@ -751,19 +766,12 @@ func (c *Controller) tick(now time.Time) {
 		}
 		if status.Ready && status.Error == "" && c.state.Error == "" && !s.first {
 			s.first = true
-			if c.state.Mode == Feed {
-				channel, id, ctx := c.state.Channel, s.seriesID, c.root
-				go func() {
-					if err := c.backend.ConsumeRecommendFeedItem(ctx, channel, id); err != nil {
-						log.Printf("[native-player] consume feed queue: %v", err)
-					}
-				}()
-			}
 			c.state.Loading = !c.state.Paused && !s.playStarted
 			c.state.Error = ""
 			c.state.FirstFrameMS = max(0, now.Sub(s.started).Milliseconds())
 			log.Printf("[native-player] first-frame series=%q episode=%d elapsedMs=%d fallback=%d", s.seriesID, s.number, c.state.FirstFrameMS, s.fallback)
 		}
+		c.recordFeedStatus(s, status)
 		if status.Ended && c.state.Error == "" && !s.ended {
 			s.ended = true
 			c.saveCurrent()
@@ -1120,6 +1128,14 @@ func (c *Controller) dispose() {
 		c.floating = nil
 	}
 	c.progressMu.Lock()
+	// Retry failures from retired scenes too; they must not depend on another
+	// tick of the video that originally displayed them.
+	for _, write := range c.feedWrites {
+		if !write.done && !write.queued {
+			write.queued = true
+			c.progressQueue = append(c.progressQueue, progressWrite{feed: write})
+		}
+	}
 	c.progressClosing = true
 	c.progressMu.Unlock()
 	select {
@@ -1153,6 +1169,9 @@ func (c *Controller) saveCurrent() {
 		return
 	}
 	status := s.engine.Snapshot()
+	// Also acknowledge a frame that arrived between the last tick and a
+	// swipe/scene change/quit, before the engine is retired.
+	c.recordFeedStatus(s, status)
 	if !status.Ready && status.Position <= 0 && !(s.seekPending && s.seekTarget > 0) {
 		return
 	}
@@ -1171,7 +1190,7 @@ func (c *Controller) saveCurrent() {
 func (c *Controller) enqueueProgress(write progressWrite) {
 	c.progressMu.Lock()
 	last := len(c.progressQueue) - 1
-	if last >= 0 && c.progressQueue[last].account == write.account && c.progressQueue[last].dto.EpisodeID == write.dto.EpisodeID {
+	if last >= 0 && c.progressQueue[last].feed == nil && c.progressQueue[last].account == write.account && c.progressQueue[last].dto.EpisodeID == write.dto.EpisodeID {
 		c.progressQueue[last] = write
 	} else {
 		c.progressQueue = append(c.progressQueue, write)
@@ -1199,6 +1218,10 @@ func (c *Controller) saveLoop() {
 			w := c.progressQueue[0]
 			c.progressQueue = c.progressQueue[1:]
 			c.progressMu.Unlock()
+			if w.feed != nil {
+				c.saveFeedWrite(w.feed)
+				continue
+			}
 			if c.backend.PlaybackScope() == w.account {
 				err := c.writeProgress(w)
 				if err != nil {
@@ -1233,6 +1256,11 @@ func (c *Controller) FlushSnapshotForSessionEnd() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if s.Mode == Feed && s.Status.Ready && s.Status.Displayed && s.Status.Error == "" && s.Error == "" {
+		if err := c.backend.ConsumeRecommendFeedItem(ctx, s.Channel, s.Playback.SeriesID); err != nil {
+			log.Printf("[native-player] session-end feed save failed: %v", err)
+		}
+	}
 	_ = c.backend.SaveProgressForScope(ctx, s.scope, s.Playback.SeriesID, s.Playback.EpisodeID, s.Book.Title, s.Book.CoverURL, s.Playback.EpisodeNum, s.Book.EpisodeCount, position, s.Status.Duration)
 }
 
