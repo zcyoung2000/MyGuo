@@ -50,6 +50,15 @@ CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -skip-dmg
 
 The bundle is written to `dist/darwin-arm64/MyGuo.app` on Apple Silicon, or `dist/darwin-amd64/MyGuo.app` on Intel.
 
+To create the macOS release DMG, omit `-skip-dmg`:
+
+```bash
+./scripts/fetch-ffmpeg.sh darwin/arm64
+CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -platform darwin/arm64
+```
+
+MyGo creates `dist/darwin-arm64/myguo-0.1.0-arm64.dmg`, containing `MyGuo.app` and a link to Applications for installation. Download published builds from [Releases](https://github.com/zcyoung2000/MyGuo/releases).
+
 To build and install the minimal bundle in `/Applications`, run:
 
 ```bash
@@ -66,7 +75,7 @@ Run from the repository root on Windows, macOS or Linux:
 go run ./scripts/build-windows.go
 ```
 
-This reuses a verified minimal FFmpeg when its build manifest exists in `resources/windows-amd64`; otherwise it fetches the checksum-verified Gyan FFmpeg 9.0.2 archive. It builds the GUI executable and writes `dist/myguo-2.0.0-windows-x64.zip`. Extract the entire ZIP, then launch `myguo/MyGuo.exe`. FFmpeg and its notices remain beside the executable; no separate FFmpeg installation is needed. A full release archive can be supplied explicitly with `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip`.
+This reuses a verified minimal FFmpeg when its build manifest exists in `resources/windows-amd64`; otherwise it fetches the checksum-verified Gyan FFmpeg 9.0.2 archive. It builds the GUI executable and writes `dist/myguo-0.1.0-windows-x64.zip`. Extract the entire ZIP, then launch `myguo/MyGuo.exe`. FFmpeg and its notices remain beside the executable; no separate FFmpeg installation is needed. A full release archive can be supplied explicitly with `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip`.
 
 To rebuild the minimal Windows helper on macOS/Linux, install Zig 0.15.2 and use Bash, curl, tar, shasum, make and Python 3:
 
