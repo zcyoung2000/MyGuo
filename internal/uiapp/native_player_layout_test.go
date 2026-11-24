@@ -1,8 +1,12 @@
 package uiapp
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/egoist/mygo/ui"
+	"image"
+	"image/color"
+	"image/draw"
 	"image/png"
 	"math"
 	"myguo/internal/ipc"
@@ -197,6 +201,7 @@ func TestNativeDrawerKeepsVideoUsableWithWideSidebar(t *testing.T) {
 func TestNativeFeedSlidesEverySelectionAndHonorsReducedMotion(t *testing.T) {
 	s := newNativeUIPlayer().state
 	s.Scene = 1
+	s.TransitionFrame = []byte("outgoing")
 	var offset float32
 	tt := ui.NewTester(func(c *ui.Context) {
 		offset = nativeFeedOffset(c, s)
@@ -226,26 +231,57 @@ func TestNativeFeedSlidesEverySelectionAndHonorsReducedMotion(t *testing.T) {
 	}
 }
 
-func TestNativeFeedWaitsForDisplayedFrameBeforeSliding(t *testing.T) {
+func TestNativeFeedSlideSettlesWhileWaitingForDisplayedFrame(t *testing.T) {
 	s := newNativeUIPlayer().state
+	s.TransitionFrame = []byte("outgoing")
 	var offset float32
 	tt := ui.NewTester(func(c *ui.Context) { offset = nativeFeedOffset(c, s); ui.Box(c).Fill() }, 800, 600)
 	s.Transition = 1
 	s.TransitionID = 1
 	s.Status.Displayed = false
 	tt.Frame()
+	if offset < .99 {
+		t.Fatal("outgoing frame did not start its slide")
+	}
 	tt.Advance(time.Second)
-	if offset != 1 {
-		t.Fatal("outgoing frame was removed before AVKit displayed the new video")
+	if offset != 0 || tt.FramePending() {
+		t.Fatal("slow native display held the old picture indefinitely")
 	}
 	s.Status.Displayed = true
 	tt.Frame()
-	if offset < .99 {
-		t.Fatal("arrival was consumed while the native surface was hidden")
-	}
-	tt.Advance(300 * time.Millisecond)
 	if offset != 0 {
-		t.Fatal("displayed video did not finish arrival")
+		t.Fatal("late native frame replayed the completed slide")
+	}
+}
+
+func TestNativeFeedFailureRevealsCurrentPoster(t *testing.T) {
+	poster := image.NewRGBA(image.Rect(0, 0, 80, 60))
+	draw.Draw(poster, poster.Bounds(), image.NewUniform(color.RGBA{G: 255, A: 255}), image.Point{}, draw.Src)
+	frame := image.NewRGBA(poster.Bounds())
+	draw.Draw(frame, frame.Bounds(), image.NewUniform(color.RGBA{R: 255, A: 255}), image.Point{}, draw.Src)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, frame); err != nil {
+		t.Fatal(err)
+	}
+	a := NewTestApp()
+	a.artwork = newArtworkLoader("", nil, nil)
+	a.artwork.entries["poster"] = artworkEntry{bitmap: ui.NewBitmap(poster)}
+	s := newNativeUIPlayer().state
+	s.Book.CoverURL = "poster"
+	s.Transition, s.TransitionID = 1, 1
+	s.TransitionFrame = encoded.Bytes()
+	s.Status.Ready, s.Status.Displayed = false, false
+	s.Loading = true
+	tt := ui.NewTester(func(c *ui.Context) { a.renderNativePlayerVideo(c, s) }, 800, 600)
+	tt.Advance(300 * time.Millisecond)
+	if pixel := tt.Image().RGBAAt(400, 300); pixel.G < 250 || pixel.R > 5 {
+		t.Fatalf("loading item remained covered by the old picture: %+v", pixel)
+	}
+	s.TransitionID++
+	s.Error = "视频暂时无法加载，请稍后重试"
+	tt.Frame()
+	if pixel := tt.Image().RGBAAt(400, 300); pixel.G < 250 || pixel.R > 5 {
+		t.Fatalf("failed item remained covered by the old picture: %+v", pixel)
 	}
 }
 

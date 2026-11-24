@@ -18,12 +18,11 @@ var nativeFeedSlide = []ui.Keyframe{
 }
 
 func nativeFeedOffset(c *ui.Context, s playback.State) float32 {
-	if s.Mode != playback.Feed || s.Transition == 0 || s.Status.PictureInPicture {
+	if s.Mode != playback.Feed || s.Transition == 0 || s.Status.PictureInPicture || s.Error != "" || len(s.TransitionFrame) == 0 {
 		return 0
 	}
-	if !s.Status.Ready || !s.Status.Displayed {
-		return 1
-	}
+	// The outgoing still has a bounded lifetime even if source resolution or
+	// native display stalls. Its slide reveals the new poster while waiting.
 	// Keyframes retarget from their previous sampled value when Run changes.
 	// A fresh, disposable clock per selection makes every page start one full
 	// height away; the AVKit element itself retains its identity (including PiP).
@@ -50,9 +49,8 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 		height := stage.Bounds().H
 		incomingOffset := offset
 		if !s.Status.Ready || !s.Status.Displayed {
-			// Attach AVKit behind the outgoing still until its compositor has
-			// a real frame. An offscreen/hidden native view cannot become ready
-			// for display, and exposing it early can flash its empty backing.
+			// Keep AVKit attached onscreen so it can become displayed. Until
+			// then the poster stays in place as the outgoing still slides away.
 			incomingOffset = 0
 		}
 		incoming := ui.Box(c.Key("player-incoming-page")).Absolute().Fill().Background(ui.RGB(0, 0, 0)).Translate(0, direction*incomingOffset*height)
@@ -60,7 +58,7 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 			if s.Engine != nil {
 				ui.NativeView(c.Key("avkit-surface"), s.Engine).Absolute().Fill().PassThrough()
 			}
-			if !s.Status.Ready {
+			if !s.Status.Ready || !s.Status.Displayed || s.Error != "" {
 				if poster := a.Artwork(s.Book.CoverURL); poster != nil {
 					ui.Image(c.Key("player-poster"), poster).Absolute().Fill().Fit(ui.Contain).PassThrough()
 				}

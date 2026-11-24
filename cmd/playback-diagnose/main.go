@@ -27,6 +27,7 @@ import (
 	"myguo/internal/hgapi/adapters/memstore"
 	"myguo/internal/hgapi/model"
 	"myguo/internal/media"
+	"myguo/internal/sign"
 	"myguo/internal/upstream"
 )
 
@@ -61,6 +62,9 @@ func run() error {
 	builtin := flag.Bool("sdk-transport", false, "use the unmodified SDK anonymous HTTP transport")
 	wireTrace := flag.Bool("wire-trace", false, "report HTTP protocol, signature presence and server clock skew without secrets")
 	tabOnly := flag.Bool("video-tab-only", false, "compare the reference 1.2.31 GET route without the POST route")
+	sessionOnly := flag.Bool("session-only", false, "verify the SDI session-signing channel without legacy fallback")
+	legacyOnly := flag.Bool("legacy-only", false, "compare legacy playback without the SDI channel")
+	modeName := flag.String("mode", "auto", "playback request mode: auto, full, minimal, helios or none")
 	sampleOut := flag.String("sample-out", "", "download a decrypted copy through the production media server")
 	flag.Parse()
 	transport := auth.New()
@@ -69,6 +73,9 @@ func run() error {
 		if *http1 {
 			httpTransport.Protocols = new(http.Protocols)
 			httpTransport.Protocols.SetHTTP1(true)
+			httpTransport.ForceAttemptHTTP2 = false
+			httpTransport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+			httpTransport.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
 		}
 		var roundTripper http.RoundTripper = httpTransport
 		if *wireTrace {
@@ -107,6 +114,13 @@ func run() error {
 		sender = httptransport.New()
 	}
 	options := hgapi.Options{Transport: inspect{sender}, ProfileStore: profile, APIOrigin: *origin, RetryAttempts: 1}
+	if *legacyOnly {
+		disabled := false
+		options.SessionPlayback = &disabled
+	}
+	if *sessionOnly && (*legacyOnly || *tabOnly || *modeName != "auto") {
+		return fmt.Errorf("-session-only requires auto mode without legacy/video-tab overrides")
+	}
 	if *noReset {
 		zero := 0
 		options.DeviceResets = &zero
@@ -154,10 +168,21 @@ func run() error {
 		*episode = first.ID
 	}
 	var playback *model.Playback
-	if *tabOnly {
-		playback, err = client.ResolveVideoTab(ctx, *episode, hgapi.PlaybackOptions{})
+	playOptions := hgapi.PlaybackOptions{}
+	if *modeName != "auto" {
+		modes := map[string]sign.Mode{"full": sign.Full, "minimal": sign.Minimal, "helios": sign.Helios, "none": sign.None}
+		mode, ok := modes[*modeName]
+		if !ok {
+			return fmt.Errorf("invalid playback request mode")
+		}
+		playOptions.Mode = &mode
+	}
+	if *sessionOnly {
+		playback, err = client.ResolveSessionPlayback(ctx, *episode, playOptions)
+	} else if *tabOnly {
+		playback, err = client.ResolveVideoTab(ctx, *episode, playOptions)
 	} else {
-		playback, err = client.ResolvePlayback(ctx, *episode, hgapi.PlaybackOptions{})
+		playback, err = client.ResolvePlayback(ctx, *episode, playOptions)
 	}
 	if playback == nil {
 		return err

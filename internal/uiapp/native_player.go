@@ -63,8 +63,6 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 			if s.Preferences.Danmaku.Enabled && s.Status.Ready {
 				a.renderNativeDanmaku(c, s)
 			}
-			// Recovery stays in the controller/logs; failures never cover the
-			// picture with an error card or a reload button.
 		})
 		if !clear {
 			dock := ui.Column(c.Key("player-controls-overlay")).Absolute().Left(18).Right(18).Bottom(16).MinWidth(0).PassThrough().Transition(playerChromeTransition)
@@ -88,14 +86,7 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 				a.renderNativePlayerPanel(c, s, drawerWidth, command)
 			}
 		}
-		if s.Notice != "" {
-			ui.Row(c.Key("player-notice")).Absolute().Top(86).Left(18).Right(18).Justify(ui.Center).Children(func() {
-				contentSurface(ui.Row(c).Padding(10, 14).Gap(12).Radius(14)).Children(func() {
-					ui.Text(c, s.Notice).FontSize(13).TextColor(ui.RGB(255, 255, 255)).MaxWidth(420)
-					panelAction(c, "player-dismiss-notice", "关闭", func() { command("dismiss", nil) })
-				})
-			})
-		}
+		a.renderNativePlayerFeedback(c, s, available, command)
 	})
 	if s.Mode == playback.Feed {
 		a.feedChrome = FeedChrome{Visible: !clear}
@@ -153,12 +144,55 @@ func playerSurfaceDescription(s playback.State) string {
 		return "点击收起面板"
 	}
 	if s.Mode == playback.Feed {
+		if s.Loading && !s.Paused {
+			return "正在加载，点击继续播放"
+		}
 		return chooseText(s.Paused || s.Status.Ended || s.Error != "", "点击继续播放", "点击暂停")
 	}
 	if s.Error != "" {
 		return "点击显示或隐藏控件，播放按钮可重试"
 	}
 	return "点击显示或隐藏控件"
+}
+
+// MyGo v0.9.1: Status exposes persistent feedback; Spinner represents work of
+// unknown length; the existing ButtonBase action supplies keyboard and pointer
+// semantics. The strip uses the player's glass and transparent action washes.
+func (a *App) renderNativePlayerFeedback(c *ui.Context, s playback.State, available float32, command func(string, any)) {
+	message := ""
+	loading := false
+	switch {
+	case s.Error != "":
+		message = s.Error
+	case s.Paused && (s.Mode == playback.Feed || s.Loading):
+		message = "已暂停"
+	case s.Loading:
+		message, loading = "正在加载视频", true
+	}
+	if message == "" && s.Notice == "" {
+		return
+	}
+	t := c.Theme()
+	ui.Column(c.Key("player-feedback")).Absolute().Top(86).Left(18).Right(18).AlignItems(ui.Center).Gap(t.Space(2)).PassThrough().Children(func() {
+		if message != "" {
+			a.chromeSurface(ui.Row(c.Key("player-status")).Role(ui.RoleStatus).Label("播放状态").Padding(t.Space(2), t.Space(3)).Gap(t.Space(2)).Radius(t.Radius * 2).
+				MaxWidth(min(float32(560), available-36)).MinWidth(0).AlignItems(ui.Center).PassThrough()).Children(func() {
+				if loading {
+					ui.Spinner(c.Key("player-loading")).Label("正在加载视频").TextColor(ui.RGBA(255, 255, 255, .85))
+				}
+				ui.Text(c, message).FontSize(t.Rem(.9)).TextColor(ui.RGBA(255, 255, 255, .95)).MaxWidth(min(float32(400), available-150)).MinWidth(0)
+				if s.Error != "" {
+					panelAction(c, "player-retry", "重试", func() { command("play", nil) })
+				}
+			})
+		}
+		if s.Notice != "" {
+			contentSurface(ui.Row(c.Key("player-notice")).Padding(10, 14).Gap(12).Radius(14)).Children(func() {
+				ui.Text(c, s.Notice).FontSize(13).TextColor(ui.RGB(255, 255, 255)).MaxWidth(420)
+				panelAction(c, "player-dismiss-notice", "关闭", func() { command("dismiss", nil) })
+			})
+		}
+	})
 }
 
 var (
