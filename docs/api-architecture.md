@@ -84,5 +84,4 @@ macOS arm64 应用包构建均通过。构建产物已安装到 `/Applications/m
 
 上述内容是首次安装时的记录。后续根据参考程序和实网对照修正了历史读取
 路径、顶层 `video_data` 解析、单剧进度请求和两个上报字段，并处理历史更新
-`100103` 阻塞进度上报的问题，见
-[历史与播放 API 故障核对](obsidian://open?vault=HenryNote&file=30_%E7%A0%94%E7%A9%B6%2F%E5%B7%A5%E5%85%B7%E6%8A%80%E6%9C%AF%E8%B0%83%E7%A0%94%2F%E7%BA%A2%E6%9E%9C%E7%9F%AD%E5%89%A7+API%2F%E9%80%86%E5%90%91%E8%AE%B0%E5%BD%95%2Fapi-failure-fix-2026-11-17)。
+`100103` 阻塞进度上报的问题。
