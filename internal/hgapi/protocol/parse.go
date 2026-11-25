@@ -433,7 +433,9 @@ func ParseSearch(raw []byte) (*CatalogPage, error) {
 	return ParseSearchTab(raw, 11)
 }
 
-// ParseSearchTab reads one search tab_type. Series cards keep series_title.
+// ParseSearchTab reads one search tab_type. Video search tabs keep only series
+// cards identified by series_title and merge repeated series IDs. Explicit
+// novel, user and discussion tabs retain their own result types.
 func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 	var env struct {
 		Code    flexString `json:"code"`
@@ -457,6 +459,25 @@ func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 		return nil, fmt.Errorf("search code %s", env.Code.String())
 	}
 	page := &CatalogPage{Items: []model.SeriesSummary{}}
+	videoTab := tabType == 11 || tabType == 29 || tabType == 30
+	videoIDs := map[string]int{}
+	appendVideo := func(item model.SeriesSummary) {
+		if index, ok := videoIDs[item.ID]; ok {
+			existing := &page.Items[index]
+			if existing.CoverURL == "" {
+				existing.CoverURL = item.CoverURL
+			}
+			if existing.Description == "" {
+				existing.Description = item.Description
+			}
+			if existing.EpisodeCount == 0 {
+				existing.EpisodeCount = item.EpisodeCount
+			}
+			return
+		}
+		videoIDs[item.ID] = len(page.Items)
+		page.Items = append(page.Items, item)
+	}
 	for _, tab := range env.Tabs {
 		if tab.TabType != tabType {
 			continue
@@ -471,10 +492,9 @@ func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 				title := strings.TrimSpace(v.VideoDetail.Title)
 				id := v.SeriesID.String()
 				if id != "" && title != "" {
-					page.Items = append(page.Items, model.SeriesSummary{
-						ID: id, Title: title, Description: v.VideoDetail.Intro, EpisodeCount: v.VideoDetail.EpisodeCount,
+					appendVideo(model.SeriesSummary{
+						ID: id, Title: title, Description: v.VideoDetail.Intro, CoverURL: v.VideoDetail.Cover, EpisodeCount: v.VideoDetail.EpisodeCount,
 					})
-					continue
 				}
 				for _, card := range v.VideoDetail.Cards {
 					cid := card.SeriesIDStr.String()
@@ -485,11 +505,16 @@ func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 					if cid == "" || ctitle == "" {
 						continue
 					}
-					page.Items = append(page.Items, model.SeriesSummary{
+					appendVideo(model.SeriesSummary{
 						ID: cid, Title: ctitle, Description: card.Intro,
 						CoverURL: card.Cover, EpisodeCount: card.EpisodeCount,
 					})
 				}
+			}
+			// 综合 also carries novels, users and discussion promotions. Those
+			// IDs are not series IDs and cannot open the video detail endpoint.
+			if videoTab {
+				continue
 			}
 			for _, book := range row.Books {
 				appendBook(page, book)

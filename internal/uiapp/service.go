@@ -365,7 +365,8 @@ func (a *App) SearchSubmitted() bool {
 			if err != nil {
 				a.search.Error = featureError("search", err)
 			} else {
-				a.search = CatalogPage{Items: removeSearchPageCardLabels(convertCards(items))}
+				a.search = CatalogPage{Items: normalizeSearchCards(convertCards(items))}
+				a.searchGrid = nil
 				a.searchResultVersion++
 			}
 			a.invalidate()
@@ -564,12 +565,30 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 		go a.loadSupplement(seriesID, generation, true)
 	}
 }
-func removeSearchPageCardLabels(items []CatalogItem) []CatalogItem {
-	for index := range items {
-		items[index].BadgeText = ""
-		items[index].Category = ""
+// Search cards represent a series, even when separate result sections supply
+// different episodes of it. Keep one UI key per series and leave the source
+// slice intact so returning from detail cannot mutate the original snapshot.
+func normalizeSearchCards(items []CatalogItem) []CatalogItem {
+	out := make([]CatalogItem, 0, len(items))
+	seen := map[string]int{}
+	for _, item := range items {
+		if item.ID == "" || item.ActorID != "" || item.Kind == "source_novel" || item.Kind == "actor" || item.Kind == "user" || item.Kind == "post" {
+			continue
+		}
+		item.BadgeText, item.Category = "", ""
+		if index, ok := seen[item.ID]; ok {
+			if out[index].CoverURL == "" {
+				out[index].CoverURL = item.CoverURL
+			}
+			if out[index].EpisodeCount == 0 {
+				out[index].EpisodeCount = item.EpisodeCount
+			}
+			continue
+		}
+		seen[item.ID] = len(out)
+		out = append(out, item)
 	}
-	return items
+	return out
 }
 
 func (a *App) detailProvider() detailProvider {

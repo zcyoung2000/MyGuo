@@ -634,6 +634,7 @@ func (a *App) renderSearchBar(c *ui.Context) {
 func (a *App) renderSearch(c *ui.Context) {
 	a.renderSearchBar(c)
 	search := a.search
+	search.Items = normalizeSearchCards(search.Items)
 	if a.query == "" && len(search.Items) == 0 && !search.Loading && search.Error == "" {
 		a.emptyView(c, "搜索短剧", "输入剧名、角色或演员，发现想看的短剧")
 		return
