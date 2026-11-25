@@ -11,8 +11,9 @@ import (
 
 // A neighbor slot resolved before its full-file prefetch completed carries a
 // stale HLS dto. Once the MP4 lands on disk, RefreshCachedEpisode must rebuild
-// the dto through PlayEpisode's cache fast path so promotion uses the local
-// complete file instead of Windows' slow HLS cold start.
+// the dto directly from the local cache — no PlayEpisode round trip and no
+// network — so promotion uses the local complete file instead of Windows' slow
+// HLS cold start.
 func TestRefreshCachedEpisodeUpgradesStaleHLSDTO(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("full-file prefetch dto refresh is Windows-only")

@@ -115,23 +115,33 @@ func (s *HongguoService) updateFullPrefetchWindow(currentEpisodeID, currentQuali
 // before its complete-file prefetch finished. prepareNeighbors resolves the
 // next slot early, so its dto carries IsFullCached=false and an HLS StreamURL
 // even after the MP4 lands on disk; auto-advance then reuses that stale dto and
-// takes Windows' slow HLS cold path. When a complete MP4 is now present,
-// PlayEpisode's cached fast path rebuilds the dto in milliseconds (no quality
-// negotiation), pointing StreamURL at the local full file. Windows only;
-// every other case returns the original dto untouched.
-func (s *HongguoService) RefreshCachedEpisode(ctx context.Context, dto *PlaybackDTO) (*PlaybackDTO, error) {
+// takes Windows' slow HLS cold path. When a complete MP4 is now present, the
+// upgraded dto is built directly from the local cache: URLs point at the local
+// full file and all playback metadata (duration, poster, resume position,
+// likes, qualities) is carried over from the stale dto. This path must not
+// call PlayEpisode — its episode-list prefetch issues a listEpisodes network
+// request even for fully cached episodes, and applySlot runs synchronously on
+// the playback control thread, where that would stall promotion for seconds.
+// Windows only; every other case returns the original dto untouched.
+func (s *HongguoService) RefreshCachedEpisode(_ context.Context, dto *PlaybackDTO) (*PlaybackDTO, error) {
 	if runtime.GOOS != "windows" || dto == nil || dto.IsFullCached || dto.EpisodeID == "" {
 		return dto, nil
 	}
-	path := media.EpisodeCachePath(s.media.CacheDir(), dto.EpisodeID, dto.Quality)
+	quality := normalizeVideoQuality(dto.Quality)
+	path := media.EpisodeCachePath(s.media.CacheDir(), dto.EpisodeID, quality)
 	if path == "" || !media.FileExists(path) {
 		return dto, nil
 	}
-	refreshed, err := s.PlayEpisode(ctx, dto.SeriesID, dto.EpisodeID, dto.EpisodeNum, dto.Quality, false)
-	if err != nil || refreshed == nil || !refreshed.IsFullCached {
-		return dto, nil
-	}
-	return refreshed, nil
+	fullStreamURL := s.media.VideoURL(dto.EpisodeID, dto.SeriesID, dto.EpisodeNum, quality)
+	refreshed := *dto
+	refreshed.Quality = quality
+	refreshed.IsFullCached = true
+	refreshed.IsHLSCached = s.media.HasCachedHLS(dto.EpisodeID, quality)
+	refreshed.FullStreamURL = fullStreamURL
+	refreshed.StreamURL = fullStreamURL
+	refreshed.ProgressiveStreamURL = ""
+	refreshed.HLSStreamURL = ""
+	return &refreshed, nil
 }
 
 func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (result *PlaybackDTO, playbackErr error) {
