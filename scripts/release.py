@@ -2,6 +2,7 @@
 """Supervise a tagged release with bounded queues and one runner fallback."""
 import argparse
 import base64
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,20 @@ class ReleaseError(RuntimeError):
 
 class RunnerUnavailable(ReleaseError):
     pass
+
+
+def job_timing(job):
+    """Use real step timestamps; started_at alone can describe a queued job."""
+    starts = [datetime.fromisoformat(step["started_at"].replace("Z", "+00:00"))
+              for step in job.get("steps", []) if step.get("started_at")]
+    if not starts:
+        return None, None
+    started = min(starts)
+    created = job.get("created_at")
+    completed = job.get("completed_at")
+    queue = max(0, round((started - datetime.fromisoformat(created.replace("Z", "+00:00"))).total_seconds())) if created else None
+    execution = max(0, round((datetime.fromisoformat(completed.replace("Z", "+00:00")) - started).total_seconds())) if completed else None
+    return queue, execution
 
 
 def gh(path, method="GET", payload=None):
@@ -152,7 +167,8 @@ class Supervisor:
             if state["status"] == "completed":
                 if state["conclusion"] == "success":
                     for job in jobs:
-                        self.log(f"Timing: {job['name']}: {job.get('started_at')} → {job.get('completed_at')}")
+                        queue, execution = job_timing(job)
+                        self.log(f"Timing: {job['name']}: queue/setup {queue}s; execution {execution}s")
                     self.active_run = None
                     return
                 if self.infrastructure_failure(jobs):

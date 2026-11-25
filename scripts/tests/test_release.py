@@ -105,6 +105,17 @@ class FakeGitHub:
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_job_started_at_does_not_prove_execution(self):
+        self.assertEqual(release.job_timing({"started_at": "2026-11-25T00:00:00Z", "steps": []}), (None, None))
+
+    def test_timings_separate_queue_from_actual_steps(self):
+        self.assertEqual(release.job_timing({
+            "created_at": "2026-11-25T00:00:00Z",
+            "started_at": "2026-11-25T00:00:00Z",
+            "completed_at": "2026-11-25T00:03:00Z",
+            "steps": [{"started_at": "2026-11-25T00:01:00Z"}],
+        }), (60, 120))
+
     def supervise(self, api, **kwargs):
         clock = FakeClock()
         return release.Supervisor("owner/repo", "v0.1.7", api=api,
