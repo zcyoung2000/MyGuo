@@ -16,6 +16,9 @@ def verify(directory, target):
         "Target": target,
         "SourceSHA256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
         "License": "LGPL-2.1-or-later",
+        "BuildRecipeSHA256": hashlib.sha256(
+            Path(__file__).with_name("build-ffmpeg-minimal.sh").read_bytes()
+        ).hexdigest(),
     }
     if target.startswith("darwin/"):
         expected["DeploymentTarget"] = "13.0"

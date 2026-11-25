@@ -3,9 +3,20 @@
 # This is a remux/decrypt/poster helper; system frameworks play the video.
 set -euo pipefail
 
-project_root="$(cd "$(dirname "$0")/.." && pwd)"
+tool_root="$(cd "$(dirname "$0")/.." && pwd)"
+project_root="${MYGUO_PROJECT_ROOT:-$tool_root}"
 work="${MYGUO_FFMPEG_BUILD_ROOT:-$project_root/tmp_ffmpeg_minimal}"
 target="${1:-windows/amd64}"
+# Reuse only complete, checksum-verified outputs, including on Windows CI.
+case "$target" in
+  windows/amd64) cached="$work/output" ;;
+  darwin/arm64|darwin/amd64) cached="$work/output-darwin-${target#*/}" ;;
+  *) echo "Unsupported target: $target" >&2; exit 1 ;;
+esac
+if python3 "$tool_root/scripts/verify-ffmpeg-minimal.py" "$cached" "$target" 2>/dev/null; then
+  echo "Using verified minimal FFmpeg ($target): $cached"
+  exit 0
+fi
 case "$target" in
   windows/amd64)
     zig="${MYGUO_ZIG:-$(command -v zig || true)}"
@@ -33,8 +44,10 @@ work="$(cd "$work" && pwd)"
 source_sha="8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
 archive="$work/ffmpeg-9.0.2.tar.xz"
 checksum() { shasum -a 256 "$1" | awk '{print $1}'; }
+recipe_sha="$(checksum "$tool_root/scripts/build-ffmpeg-minimal.sh")"
 if [[ ! -f "$archive" ]] || [[ "$(checksum "$archive")" != "$source_sha" ]]; then
-  curl -fL --retry 3 --connect-timeout 10 -o "$archive" https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+  curl -fL --retry 2 --retry-max-time 150 --connect-timeout 10 --max-time 120 \
+    -o "$archive" https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 fi
 if [[ "$(checksum "$archive")" != "$source_sha" ]]; then
   echo "FFmpeg source checksum mismatch" >&2
@@ -114,12 +127,13 @@ Includes CENC/MP4 processing, HLS, HTTP/HTTPS ($tls),
 H.264/HEVC/AAC decoding, JPEG posters and HEIC conversion.
 Video playback and audio output use the operating system's media framework.
 NOTICE
-python3 - "$out" "$source_sha" "$target" "$compiler" "$binary" <<'PY'
+python3 - "$out" "$source_sha" "$target" "$compiler" "$binary" "$recipe_sha" <<'PY'
 from pathlib import Path
 import hashlib,json,sys
 out=Path(sys.argv[1])
 info={"Format":"myguo-ffmpeg-minimal-v1","Version":"9.0.2","Target":sys.argv[3],
       "SourceSHA256":sys.argv[2],"Compiler":sys.argv[4],"License":"LGPL-2.1-or-later",
+      "BuildRecipeSHA256":sys.argv[6],
       "Files":{name:hashlib.sha256((out/name).read_bytes()).hexdigest()
                for name in [sys.argv[5],"ffmpeg-LICENSE.txt","ffmpeg-README.txt"]}}
 if sys.argv[3].startswith("darwin/"):
@@ -127,6 +141,7 @@ if sys.argv[3].startswith("darwin/"):
 (out/"ffmpeg-build-info.json").write_text(json.dumps(info,indent=2)+"\n")
 print("Minimal FFmpeg directory:",out)
 PY
+python3 "$tool_root/scripts/verify-ffmpeg-minimal.py" "$out" "$target"
 if [[ "$target" == windows/amd64 ]]; then
   echo "Package with: go run ./scripts/build-windows.go -ffmpeg-dir '$out'"
 else

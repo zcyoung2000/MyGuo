@@ -1,193 +1,55 @@
 name: Release
+run-name: Release ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing version tag to build and publish
+        description: Existing version tag to build
         required: true
         type: string
+      publish:
+        description: Publish after verification (disable for a safe rehearsal)
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
+  actions: write
+
+# Repeated clicks must not interrupt uploads or start another publisher.
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Verify source and tag
-    runs-on: macos-15-intel
+  supervise:
+    name: Supervise release and runner queues
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
     steps:
-      - name: Check out source
+      - name: Check out current release tooling
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.release_tag || github.ref }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Check tag matches app version
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-
-          tag = os.environ["RELEASE_TAG"]
-          version = json.load(open("mygo.json", encoding="utf-8"))["version"]
-          expected = f"v{version}"
-          if tag != expected:
-              raise SystemExit(f"release tag {tag!r} does not match mygo.json version {expected!r}")
-          PY
-
-      - name: Run Go tests
-        run: go test ./...
-
-  build-macos:
-    name: Build macOS ${{ matrix.arch }}
-    needs: verify
-    runs-on: macos-15-intel
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, amd64]
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.release_tag || github.ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Prepare minimal FFmpeg
-        run: ./scripts/fetch-ffmpeg.sh "darwin/${{ matrix.arch }}"
-
-      - name: Build DMG and signed update
-        env:
-          CGO_ENABLED: '0'
-          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-        run: |
-          test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo 'Missing update signing key'; exit 1; }
-          go run github.com/egoist/mygo/cmd/mygo build -platform "darwin/${{ matrix.arch }}"
-          go run ./scripts/verify-release.go -dir "dist/darwin-${{ matrix.arch }}" -targets "darwin-${{ matrix.arch }}"
-
-      - name: Verify DMG
-        run: |
-          dmg="$(find "dist/darwin-${{ matrix.arch }}" -maxdepth 1 -type f -name '*.dmg' -size +0c -print -quit)"
-          test -n "$dmg"
-
-      - name: Upload macOS package
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-macos-${{ matrix.arch }}
-          path: |
-            dist/darwin-${{ matrix.arch }}/*.dmg
-            dist/darwin-${{ matrix.arch }}/*.tar.gz
-            dist/darwin-${{ matrix.arch }}/*.delta
-            dist/darwin-${{ matrix.arch }}/update-*.json
-          if-no-files-found: error
-          retention-days: 7
-
-  build-windows:
-    name: Build Windows x64
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.release_tag || github.ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-
-      - name: Install NSIS
-        run: sudo apt-get update && sudo apt-get install -y nsis
-
-      - name: Build minimal FFmpeg and EXE installer
-        env:
-          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
-        run: |
-          test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo 'Missing update signing key'; exit 1; }
-          ./scripts/build-ffmpeg-minimal.sh windows/amd64
-          go run ./scripts/build-windows.go -ffmpeg-dir ./tmp_ffmpeg_minimal/output
-          mkdir -p dist/release-windows
-          cp dist/windows-amd64/*-setup-*.exe dist/windows-amd64/*.tar.gz dist/windows-amd64/update-*.json dist/release-windows/
-          find dist/windows-amd64 -maxdepth 1 -name '*.delta' -exec cp {} dist/release-windows/ \;
-          go run ./scripts/verify-release.go -dir dist/release-windows -targets windows-amd64
-
-      - name: Upload Windows package
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-windows-amd64
-          path: dist/release-windows/*
-          if-no-files-found: error
-          retention-days: 7
-
-  publish:
-    name: Publish GitHub Release
-    needs: [build-macos, build-windows]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.release_tag || github.ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download release packages
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          path: release-assets
-          merge-multiple: true
-
-      - name: Verify all signed updates
-        run: go run ./scripts/verify-release.go -dir release-assets
-
-      - name: Create checksums
-        working-directory: release-assets
-        run: find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
-
-      - name: Publish release
+      - name: Preflight, dispatch and monitor (30-minute total budget)
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --title "MyGuo ${RELEASE_TAG#v}" \
-              --draft \
-              --generate-notes
-          fi
-          # Upload archives before manifests, so an already published feed
-          # never advertises update files that have not arrived yet.
-          find release-assets -maxdepth 1 -type f ! -name 'update-*.json' -print0 | \
-            xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
-          gh release upload "$RELEASE_TAG" release-assets/update-*.json \
-            --repo "$GITHUB_REPOSITORY" --clobber
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          args=()
+          if [[ "$PUBLISH" == true ]]; then args+=(--publish); fi
+          python3 scripts/release.py --tag "$RELEASE_TAG" \
+            --state-file "$RUNNER_TEMP/release-state.json" "${args[@]}"
+
+      - name: Stop unfinished child after failure or cancellation
+        if: ${{ failure() || cancelled() }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py --cancel-active --state-file "$RUNNER_TEMP/release-state.json"

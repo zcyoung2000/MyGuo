@@ -39,7 +39,8 @@ case "$arch" in
     ;;
 esac
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+tool_root="$(cd "$(dirname "$0")/.." && pwd)"
+root="${MYGUO_PROJECT_ROOT:-$tool_root}"
 output="$root/resources/darwin-$arch/ffmpeg"
 
 # Older Intel downloads used uname's spelling, which MyGo rejects as a
@@ -55,15 +56,15 @@ if [[ -d "$root/resources/darwin-x86_64" ]]; then
 fi
 
 if [[ "$mode" == minimal ]]; then
-  if python3 "$root/scripts/verify-ffmpeg-minimal.py" "$(dirname "$output")" "$target" 2>/dev/null; then
+  if python3 "$tool_root/scripts/verify-ffmpeg-minimal.py" "$(dirname "$output")" "$target" 2>/dev/null; then
     echo "Using verified minimal FFmpeg ($target)"
     exit 0
   fi
   echo "Building minimal FFmpeg ($target); the first build downloads source and compiles it."
-  "$root/scripts/build-ffmpeg-minimal.sh" "$target"
+  "$tool_root/scripts/build-ffmpeg-minimal.sh" "$target"
   build_root="${MYGUO_FFMPEG_BUILD_ROOT:-$root/tmp_ffmpeg_minimal}"
   helper="$build_root/output-darwin-$arch"
-  python3 "$root/scripts/verify-ffmpeg-minimal.py" "$helper" "$target"
+  python3 "$tool_root/scripts/verify-ffmpeg-minimal.py" "$helper" "$target"
   mkdir -p "$(dirname "$output")"
   install -m 0755 "$helper/ffmpeg" "$output"
   for name in ffmpeg-LICENSE.txt ffmpeg-README.txt ffmpeg-build-info.json; do
@@ -82,7 +83,8 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-curl -fL --retry 3 --connect-timeout 10 -o "$work/ffmpeg.zip" "$url"
+curl -fL --retry 2 --retry-max-time 150 --connect-timeout 10 --max-time 120 \
+  -o "$work/ffmpeg.zip" "$url"
 unzip -q "$work/ffmpeg.zip" ffmpeg -d "$work"
 
 actual="$(shasum -a 256 "$work/ffmpeg" | awk '{print $1}')"
