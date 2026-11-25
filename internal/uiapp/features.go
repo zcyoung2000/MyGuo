@@ -464,6 +464,14 @@ func (a *App) loadActor(more bool) {
 }
 func (a *App) loadSupplement(seriesID string, generation uint64, adaptations bool, loadMore ...bool) {
 	more := adaptations && len(loadMore) > 0 && loadMore[0]
+	a.loadSupplementRequest(seriesID, generation, adaptations, more, false)
+}
+
+func (a *App) retryAdaptationsPage(seriesID string, generation uint64) {
+	a.loadSupplementRequest(seriesID, generation, true, true, true)
+}
+
+func (a *App) loadSupplementRequest(seriesID string, generation uint64, adaptations, more, retry bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 	defer cancel()
 	a.mu.Lock()
@@ -471,7 +479,7 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 		a.mu.Unlock()
 		return
 	}
-	if more && (!a.detail.Adaptations.HasMore || a.detail.Adaptations.LoadingMore || a.detail.Adaptations.Loading) {
+	if more && (!a.detail.Adaptations.HasMore || a.detail.Adaptations.LoadingMore || a.detail.Adaptations.Loading || (a.detail.Adaptations.Error != "" && !retry)) {
 		a.mu.Unlock()
 		return
 	}

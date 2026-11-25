@@ -58,3 +58,26 @@ func TestAdaptationPagingAppendsDeduplicatesAndCanRetry(t *testing.T) {
 		t.Fatalf("paging/filter failed: %+v", state)
 	}
 }
+
+func TestAdaptationPagingFailureRejectsStaleAutomaticRequests(t *testing.T) {
+	p := &pagedAdaptationsProvider{parityProvider: &parityProvider{}, called: make(chan string, 2)}
+	a := NewTestApp()
+	a.featuresSource = p
+	a.detail = Detail{ID: "current", Seasons: DetailCollection{Items: []CatalogItem{{ID: "season", Title: "续季"}}}, Adaptations: DetailCollection{
+		Items: []CatalogItem{{ID: "first", Title: "改编甲"}}, HasMore: true, Cursor: "next", Error: "改编版本加载失败，请重试",
+	}}
+
+	// An automatic callback may already have been queued by a previous frame
+	// when another request records an error. It must not silently retry it.
+	a.loadSupplement("current", a.generation, true, true)
+	state := a.DetailState().Adaptations
+	if len(p.called) != 0 || state.Error == "" || len(state.Items) != 1 || !state.HasMore {
+		t.Fatalf("stale automatic request consumed retry state: calls=%d state=%+v", len(p.called), state)
+	}
+
+	a.retryAdaptationsPage("current", a.generation)
+	state = a.DetailState().Adaptations
+	if len(p.called) != 1 || state.Error != "" || len(state.Items) != 2 || state.HasMore {
+		t.Fatalf("explicit continuation retry did not recover: calls=%d state=%+v", len(p.called), state)
+	}
+}

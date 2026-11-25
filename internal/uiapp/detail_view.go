@@ -343,7 +343,7 @@ func (a *App) renderDetailRelated(c *ui.Context, d Detail, section string, width
 		case "adaptations":
 			a.renderDetailCollection(c, "同系列作品", detailSeriesWorks(d), width, func() {
 				if d.Adaptations.HasMore {
-					go a.loadSupplement(d.ID, generation, true, true)
+					go a.retryAdaptationsPage(d.ID, generation)
 				} else {
 					go a.RetrySupplement(true)
 				}
