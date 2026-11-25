@@ -2,7 +2,11 @@
   "name": "MyGuo",
   "slug": "myguo",
   "identifier": "com.myguo.app",
-  "version": "0.1.5",
+  "version": "0.1.6",
+  "updates": {
+    "github": "zcyoung2000/MyGuo",
+    "publicKey": "pdQBroRbpvu34/y+6fdmdP7wmJxHEe7BeGpyuLmFfdI="
+  },
   "macos": {
     "icon": "resources/AppIcon.icon",
     "minimumSystemVersion": "13.0"

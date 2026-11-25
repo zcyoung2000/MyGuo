@@ -57,7 +57,7 @@ CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -skip-dmg
 CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -platform darwin/arm64
 ```
 
-MyGo 会生成 `dist/darwin-arm64/myguo-0.1.5-arm64.dmg`，内含 `MyGuo.app` 和 Applications 快捷方式，拖入即可安装。已发布的版本可以从 [Releases](https://github.com/zcyoung2000/MyGuo/releases) 下载。
+MyGo 会生成 `dist/darwin-arm64/myguo-0.1.6-arm64.dmg`，内含 `MyGuo.app` 和 Applications 快捷方式，拖入即可安装。已发布的版本可以从 [Releases](https://github.com/zcyoung2000/MyGuo/releases) 下载。
 
 编译精简应用并直接安装到 `/Applications`：
 
@@ -75,7 +75,7 @@ MyGo 会生成 `dist/darwin-arm64/myguo-0.1.5-arm64.dmg`，内含 `MyGuo.app` �
 go run ./scripts/build-windows.go
 ```
 
-如果 `resources/windows-amd64` 已有精简 FFmpeg 和构建清单，脚本会校验并复用它；否则下载校验固定版本的 Gyan FFmpeg 9.0.2。脚本编译无控制台窗口的应用，并生成 `dist/myguo-0.1.5-windows-x64.zip`。完整解压 ZIP 后，运行 `myguo/MyGuo.exe`。FFmpeg 和许可说明随程序一起打包，无需额外安装。也可以通过 `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip` 显式使用完整版 FFmpeg，脚本仍会验证校验值。
+如果 `resources/windows-amd64` 已有精简 FFmpeg 和构建清单，脚本会校验并复用它；否则下载校验固定版本的 Gyan FFmpeg 9.0.2。打包前需安装 NSIS（macOS 执行 `brew install makensis`，Linux 执行 `sudo apt-get install nsis`）。脚本生成 `dist/windows-amd64/myguo-setup-0.1.6-amd64.exe`，运行 EXE 即可安装，支持开始菜单快捷方式和系统设置中的卸载入口。FFmpeg 和许可说明随程序一起安装，无需额外安装。也可以通过 `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip` 显式使用完整版 FFmpeg，脚本仍会验证校验值。
 
 在 macOS/Linux 上重新构建 Windows 精简工具，需要 Zig 0.15.2、Bash、curl、tar、shasum、make 和 Python 3：
 
@@ -87,6 +87,18 @@ go run ./scripts/build-windows.go -ffmpeg-dir ./tmp_ffmpeg_minimal/output
 精简配置保留 CENC 解密、MP4/HLS 封装、HTTP/HTTPS、H.264/HEVC/AAC 解码及 JPEG/HEIC 封面处理，移除无关编码器、外部编解码库、滤镜和调试信息。后续打包会校验并复用已安装的工具。构建脚本固定 FFmpeg 源码校验值，并在 `ffmpeg-build-info.json` 中记录目标平台、编译器、许可和文件校验值。
 
 Windows 画中画使用可调整大小的置顶小窗。推荐流切换时显示下一部剧的封面，不截取上一部视频的 GPU 画面。由于 MyGo 未公开 Windows 缓冲区范围，媒体预加载采取保守策略，续播和拖动进度会使用完整的本地 MP4。H.264/AAC 使用系统解码器；HEVC 视频需要 Windows HEVC 编解码器，Windows N 版本需要 Media Feature Pack。真实 Windows 播放和画中画仍需在 Windows 机器上验收。
+
+## 应用更新
+
+从 0.1.6 开始，可以在 **帮助 → 检查更新** 或 **设置 → 软件更新** 中检查
+GitHub 上的新版本。默认开启自动检查，自动下载需要用户主动开启；后台更新在
+下次启动时生效，不会中断播放。应用安装目录必须可写。0.1.5 及更早版本需要
+先手动安装 0.1.6 一次，之后即可在应用内更新。
+
+发布时，每个平台都必须附带 `update-<platform>.json` 和带签名的 `.tar.gz`
+更新包。发布工作流使用仓库 Secret `MYGO_UPDATER_PRIVATE_KEY` 签名，缺少文件
+或签名校验失败时会停止发布。密钥保存、本机构建及不用 GitHub Actions 的
+发布方法见 [发布维护说明](docs/releases.md)。
 
 ## 推荐流续接
 

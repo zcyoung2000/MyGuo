@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Build the Windows x64 portable package on Windows, macOS or Linux:
+// Build the Windows x64 installer on Windows, macOS or Linux:
 //
 //	go run ./scripts/build-windows.go
 //
@@ -15,7 +15,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -87,17 +86,17 @@ func build(archive, minimal string) error {
 		}
 	}
 
-	cmd := exec.Command("go", "run", "github.com/egoist/mygo/cmd/mygo", "build", "-platform", "windows/amd64", "-skip-installer")
+	cmd := exec.Command("go", "run", "github.com/egoist/mygo/cmd/mygo", "build", "-platform", "windows/amd64")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	output := filepath.Join(config.Out, config.Slug+"-"+config.Version+"-windows-x64.zip")
-	if err := packageZip(filepath.Join(config.Out, "windows-amd64"), output, config.Slug); err != nil {
-		return err
+	output := filepath.Join(config.Out, "windows-amd64", config.Slug+"-setup-"+config.Version+"-amd64.exe")
+	if info, err := os.Stat(output); err != nil || info.Size() == 0 {
+		return fmt.Errorf("Windows installer was not generated; install NSIS (makensis) and rebuild")
 	}
-	fmt.Printf("\nWindows portable package: %s\nSHA256: %s\n", output, checksum(output))
+	fmt.Printf("\nWindows installer: %s\nSHA256: %s\n", output, checksum(output))
 	return nil
 }
 
@@ -259,59 +258,4 @@ func extractFFmpeg(archive string) error {
 		return err
 	}
 	return nil
-}
-
-func packageZip(directory, destination, root string) error {
-	f, err := os.CreateTemp(filepath.Dir(destination), "windows-package-*.zip")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	z := zip.NewWriter(f)
-	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("cannot package non-regular resource %s", path)
-		}
-		relative, err := filepath.Rel(directory, path)
-		if err != nil {
-			return err
-		}
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-		header.Name = root + "/" + filepath.ToSlash(relative)
-		header.Method = zip.Deflate
-		writer, err := z.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-		reader, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer reader.Close()
-		_, err = io.Copy(writer, reader)
-		return err
-	})
-	zipErr := z.Close()
-	closeErr := f.Close()
-	if err != nil {
-		return err
-	}
-	if zipErr != nil {
-		return zipErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return os.Rename(f.Name(), destination)
 }

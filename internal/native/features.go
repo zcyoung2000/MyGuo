@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 	"myguo/internal/mediautil"
 )
 
@@ -245,6 +246,12 @@ func setupAppMenu() {
 			},
 		},
 		{Role: mygo.RoleWindowMenu},
+		{
+			Label: "帮助",
+			Submenu: []*mygo.MenuItem{
+				updater.MenuItem(),
+			},
+		},
 	})
 	mygo.App.SetMenu(menu)
 }

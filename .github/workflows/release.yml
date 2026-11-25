@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -57,6 +59,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -67,10 +71,14 @@ jobs:
       - name: Prepare minimal FFmpeg
         run: ./scripts/fetch-ffmpeg.sh "darwin/${{ matrix.arch }}"
 
-      - name: Build DMG
+      - name: Build DMG and signed update
         env:
           CGO_ENABLED: '0'
-        run: go run github.com/egoist/mygo/cmd/mygo build -platform "darwin/${{ matrix.arch }}"
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo 'Missing update signing key'; exit 1; }
+          go run github.com/egoist/mygo/cmd/mygo build -platform "darwin/${{ matrix.arch }}"
+          go run ./scripts/verify-release.go -dir "dist/darwin-${{ matrix.arch }}" -targets "darwin-${{ matrix.arch }}"
 
       - name: Verify DMG
         run: |
@@ -81,7 +89,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-macos-${{ matrix.arch }}
-          path: dist/darwin-${{ matrix.arch }}/*.dmg
+          path: |
+            dist/darwin-${{ matrix.arch }}/*.dmg
+            dist/darwin-${{ matrix.arch }}/*.tar.gz
+            dist/darwin-${{ matrix.arch }}/*.delta
+            dist/darwin-${{ matrix.arch }}/update-*.json
           if-no-files-found: error
           retention-days: 7
 
@@ -92,6 +104,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -104,16 +118,26 @@ jobs:
         with:
           version: 0.15.2
 
-      - name: Build minimal FFmpeg and portable ZIP
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      - name: Build minimal FFmpeg and EXE installer
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: |
+          test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo 'Missing update signing key'; exit 1; }
           ./scripts/build-ffmpeg-minimal.sh windows/amd64
           go run ./scripts/build-windows.go -ffmpeg-dir ./tmp_ffmpeg_minimal/output
+          mkdir -p dist/release-windows
+          cp dist/windows-amd64/*-setup-*.exe dist/windows-amd64/*.tar.gz dist/windows-amd64/update-*.json dist/release-windows/
+          find dist/windows-amd64 -maxdepth 1 -name '*.delta' -exec cp {} dist/release-windows/ \;
+          go run ./scripts/verify-release.go -dir dist/release-windows -targets windows-amd64
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: release-windows-amd64
-          path: dist/myguo-*-windows-x64.zip
+          path: dist/release-windows/*
           if-no-files-found: error
           retention-days: 7
 
@@ -122,6 +146,17 @@ jobs:
     needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
@@ -129,23 +164,30 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Verify all signed updates
+        run: go run ./scripts/verify-release.go -dir release-assets
+
       - name: Create checksums
         working-directory: release-assets
-        run: sha256sum *.dmg *.zip > SHA256SUMS
+        run: find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
         run: |
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-          else
-            gh release create "$RELEASE_TAG" release-assets/* \
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --title "MyGuo ${RELEASE_TAG#v}" \
+              --draft \
               --generate-notes
           fi
+          # Upload archives before manifests, so an already published feed
+          # never advertises update files that have not arrived yet.
+          find release-assets -maxdepth 1 -type f ! -name 'update-*.json' -print0 | \
+            xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" release-assets/update-*.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

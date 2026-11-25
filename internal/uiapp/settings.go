@@ -375,6 +375,7 @@ func (a *App) renderSettings(c *ui.Context) {
 		a.settingsCard(c, "settings-storage", func() {
 			a.settingsItemRow(c, "cache-row", "本地媒体缓存", "", formatCacheSize(state.CacheSize), "清理缓存", "subtle", a.ClearSettingsCache)
 		})
+		a.renderSoftwareUpdates(c)
 
 		if state.Error != "" {
 			ui.Text(c, state.Error).FontSize(12).TextColor(ui.Hex("#ff8f98"))

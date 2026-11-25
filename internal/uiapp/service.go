@@ -155,6 +155,8 @@ type Settings struct {
 
 // App state and all render snapshots are protected by mu. Network work never holds it.
 type App struct {
+	softwareUpdate              SoftwareUpdateState
+	softwareUpdateActions       SoftwareUpdateActions
 	playerFullscreen            bool
 	playerEpisodesList          ui.ListState
 	playerCommentsList          ui.ListState
@@ -565,6 +567,7 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 		go a.loadSupplement(seriesID, generation, true)
 	}
 }
+
 // Search cards represent a series, even when separate result sections supply
 // different episodes of it. Keep one UI key per series and leave the source
 // slice intact so returning from detail cannot mutate the original snapshot.

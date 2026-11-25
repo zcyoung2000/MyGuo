@@ -43,6 +43,9 @@ func main() {
 	if err := os.MkdirAll(appDir, 0755); err != nil {
 		log.Fatalf("failed to create app dir: %v", err)
 	}
+	// Keep updater preferences beside the rest of the app's per-user data,
+	// including the isolated data root used by native integration runs.
+	mygo.App.SetPath(mygo.PathUserData, appDir)
 
 	// GUI launches discard stdout/stderr, so retain backend diagnostics on disk.
 	if logFile, err := resourcelog.OpenRotated(
@@ -139,6 +142,7 @@ func main() {
 		log.Printf("[native-player] preference migration: %v", err)
 	}
 	app := uiapp.NewApp(service)
+	setupUpdates(app)
 	appRef.Store(app)
 	controller := playback.New(service, playerengine.New, filepath.Join(appDir, "native-player.json"), playback.Hooks{
 		Changed: app.PlaybackChanged,

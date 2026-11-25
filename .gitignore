@@ -41,6 +41,11 @@ __pycache__/
 # Native module build output
 /.mygo/
 
+# Update signing keys must stay outside source control.
+mygo-update.key
+*.p12
+*.pfx
+
 # Local reverse-engineering materials
 /ghidra/
 /docs/hongguo-api-reverse-engineering-2026-11-14.md
