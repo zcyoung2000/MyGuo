@@ -61,19 +61,21 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 				a.renderNativeDanmaku(c, s)
 			}
 		})
-		if !clear {
+		titleBottom := float32(148)
+		if !clear || s.ProgressOnly {
 			dock := ui.Column(c.Key("player-controls-overlay")).Absolute().Left(18).Right(18).Bottom(16).MinWidth(0).PassThrough().Transition(playerChromeTransition)
 			dock.Children(func() { a.renderNativePlayerControls(c, s, command) })
-			if s.Mode == playback.Series && s.Panel == "" {
-				a.renderSeriesPlaybackButton(c, s, command)
-			}
-			titleBottom := float32(148)
 			if dock.Bounds().H > 0 {
 				titleBottom = dock.Bounds().H + 32
 			} else {
 				// Settle the measured title anchor before its first click, rather
 				// than moving the link between pointer down and pointer up.
 				c.Invalidate()
+			}
+		}
+		if !clear {
+			if s.Mode == playback.Series && s.Panel == "" {
+				a.renderSeriesPlaybackButton(c, s, command)
 			}
 			a.renderNativePlayerHeading(c, s, titleBottom, available, command)
 			if s.Panel == "" {
@@ -248,6 +250,12 @@ func (a *App) renderNativePlayerControls(c *ui.Context, s playback.State, comman
 			duration = float64(s.Playback.DurationSec)
 		}
 		playerSlider(c, "player-seek", "播放进度", position, math.Max(1, duration), s.Status.Buffered, func(v float64) { command("seek", v) }).FillWidth()
+		// Reuse SliderBase and its buffered track in both chrome modes; only
+		// the full menu owns playback actions, navigation and settings.
+		if s.Preferences.Clear {
+			ui.Text(c.Key("player-time"), playerTime(position)+" / "+playerTime(duration)).FontSize(11).TextColor(ui.RGBA(255, 255, 255, .66)).SingleLine().PassThrough()
+			return
+		}
 		ui.Row(c.Key("player-controls-row")).Wrap().Gap(6).AlignItems(ui.Center).PassThrough().Children(func() {
 			a.playerAction(c, "player-play", chooseText(s.Paused || s.Status.Ended || s.Error != "", "播放", "暂停"), func() { command("toggle", nil) })
 			a.playerAction(c, "player-prev-episode", "上一集", func() { command("prevEpisode", nil) })

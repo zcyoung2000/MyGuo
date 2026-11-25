@@ -79,7 +79,7 @@ func TestPromotionGraceCoversResolveAndEndsOnPlayback(t *testing.T) {
 	waitSource(t, c, "series", 1)
 	eventually(t, func() bool { return c.Snapshot().Status.Ready })
 
-	c.selectSlot(ipc.SeriesCard{ID: "series"}, 2, -1, 1)
+	c.post(func() { c.selectSlot(ipc.SeriesCard{ID: "series"}, 2, -1, 1) })
 	if runtime.GOOS == "windows" {
 		eventually(t, func() bool {
 			s := c.Snapshot()

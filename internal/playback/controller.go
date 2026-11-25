@@ -91,7 +91,10 @@ type State struct {
 	Status             avkit.Status
 	Updated            time.Time
 	Preferences        Preferences
-	Loading            bool
+	// ProgressOnly temporarily reveals the seek bar while Clear keeps the
+	// full menu hidden. It belongs to this playback scene, never preferences.
+	ProgressOnly bool
+	Loading      bool
 	// LoadingGrace suppresses the loading spinner for a brief window after an
 	// auto-advance promotion on Windows, until the first decoded frame lands.
 	// LoadingSince anchors that window; tick flips LoadingGrace to false when
@@ -100,23 +103,23 @@ type State struct {
 	// original immediate-spinner behavior.
 	LoadingGrace    bool
 	LoadingSince    time.Time
-	Error              string
-	Notice             string
-	Paused             bool
-	Favorite           bool
-	Channel            string
-	Index              int
-	FeedCount          int
-	HasMore            bool
-	Panel              string
-	CommentItems       []ipc.CommentDTO
-	CommentTotal       int64
-	CommentLoading     bool
-	CommentError       string
-	CommentHasMore     bool
-	Replies            map[string]ReplyPage
-	DanmakuItems       []ipc.Danmaku
-	DanmakuError       string
+	Error           string
+	Notice          string
+	Paused          bool
+	Favorite        bool
+	Channel         string
+	Index           int
+	FeedCount       int
+	HasMore         bool
+	Panel           string
+	CommentItems    []ipc.CommentDTO
+	CommentTotal    int64
+	CommentLoading  bool
+	CommentError    string
+	CommentHasMore  bool
+	Replies         map[string]ReplyPage
+	DanmakuItems    []ipc.Danmaku
+	DanmakuError    string
 	Transition      int
 	TransitionID    uint64
 	TransitionFrame []byte
@@ -407,8 +410,8 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 	c.preloadAdmitted = false
 	if c.state.Mode == Series {
 		c.chromeActivity = time.Now()
-		c.state.Preferences.Clear = false
 	}
+	c.state.ProgressOnly = false
 	c.uiSelection++
 	c.saveCurrent()
 	promotion := c.current != nil
@@ -903,10 +906,17 @@ func (c *Controller) clearEpisodeUI() {
 func (c *Controller) Command(command string, value any) {
 	c.post(func() {
 		if command == "activity" {
-			c.markChromeActivity()
+			c.noteProgressActivity()
 			return
 		}
-		if command != "surface" && command != "clear" {
+		switch command {
+		case "surface", "clear":
+		case "seek", "seekBy":
+			c.noteProgressActivity()
+		case "next", "prev":
+			// Arrow-key navigation preserves the current full-menu visibility.
+			c.markChromeActivity()
+		default:
 			c.notePlayerActivity()
 		}
 		s := c.current
@@ -1051,6 +1061,8 @@ func (c *Controller) Command(command string, value any) {
 				}
 			}
 		case "clear":
+			c.state.ProgressOnly = false
+			c.markChromeActivity()
 			if clear, ok := value.(bool); ok {
 				c.state.Preferences.Clear = clear
 			} else {
@@ -1101,6 +1113,7 @@ func (c *Controller) nextEpisode(delta int) {
 	if s == nil {
 		return
 	}
+	c.state.ProgressOnly = false
 	n := s.number + delta
 	if n < 1 {
 		c.state.Notice = "已经是第一集"
@@ -1134,6 +1147,7 @@ func (c *Controller) nextEpisode(delta int) {
 					c.state.Notice = "本剧已播放完"
 					if c.state.Status.Ended {
 						c.state.Paused = true
+						c.notePlayerActivity()
 						c.state.Preferences.Clear = false
 					}
 					c.system()

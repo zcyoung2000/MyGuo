@@ -47,14 +47,34 @@ func (p *nativeUIPlayer) Command(command string, value any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.commands = append(p.commands, command)
-	if command != "surface" && command != "clear" && command != "activity" && p.state.Mode == playback.Series {
-		p.state.Preferences.Clear = false
+	if p.state.Mode == playback.Series {
+		switch command {
+		case "activity", "seek", "seekBy":
+			p.state.ProgressOnly = p.state.Preferences.Clear
+		case "surface", "clear", "next", "prev":
+			p.state.ProgressOnly = false
+		default:
+			p.state.Preferences.Clear = false
+			p.state.ProgressOnly = false
+		}
 	}
 	if p.values == nil {
 		p.values = map[string]any{}
 	}
 	p.values[command] = value
 	switch command {
+	case "seek", "seekBy":
+		var position float64
+		switch v := value.(type) {
+		case float64:
+			position = v
+		case int:
+			position = float64(v)
+		}
+		if command == "seekBy" {
+			position += p.state.Status.Position
+		}
+		p.state.Status.Position = position
 	case "panel":
 		panel, _ := value.(string)
 		if panel == p.state.Panel {
@@ -95,9 +115,9 @@ func (p *nativeUIPlayer) Command(command string, value any) {
 		}
 	}
 }
-func (p *nativeUIPlayer) Close()             {}
-func (p *nativeUIPlayer) ToggleFavorite()    {}
-func (p *nativeUIPlayer) ToggleLike()        {}
-func (p *nativeUIPlayer) MoreComments()      {}
-func (p *nativeUIPlayer) LoadReplies(string) {}
+func (p *nativeUIPlayer) Close()                   {}
+func (p *nativeUIPlayer) ToggleFavorite()          {}
+func (p *nativeUIPlayer) ToggleLike()              {}
+func (p *nativeUIPlayer) MoreComments()            {}
+func (p *nativeUIPlayer) LoadReplies(string)       {}
 func (p *nativeUIPlayer) LikeDanmaku(string, bool) {}

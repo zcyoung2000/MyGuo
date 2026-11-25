@@ -15,6 +15,7 @@ func (c *Controller) surfaceClick() {
 	if c.state.Mode == Idle {
 		return
 	}
+	c.state.ProgressOnly = false
 	if c.state.Panel != "" {
 		c.state.Panel = ""
 		c.state.Preferences.Clear = false
@@ -48,6 +49,15 @@ func (c *Controller) notePlayerActivity() {
 	}
 	c.markChromeActivity()
 	c.state.Preferences.Clear = false
+	c.state.ProgressOnly = false
+}
+
+func (c *Controller) noteProgressActivity() {
+	if c.state.Mode != Series {
+		return
+	}
+	c.markChromeActivity()
+	c.state.ProgressOnly = c.state.Preferences.Clear
 }
 
 func (c *Controller) markChromeActivity() {
@@ -58,13 +68,14 @@ func (c *Controller) markChromeActivity() {
 }
 
 func (c *Controller) hideIdleChrome(now time.Time) bool {
-	if c.state.Mode != Series || c.state.Panel != "" || c.state.Preferences.Clear || c.chromeActivity.IsZero() {
+	if c.state.Mode != Series || c.state.Panel != "" || (c.state.Preferences.Clear && !c.state.ProgressOnly) || c.chromeActivity.IsZero() {
 		return false
 	}
 	if now.Sub(c.chromeActivity) < playerChromeIdleTimeout {
 		return false
 	}
 	c.state.Preferences.Clear = true
+	c.state.ProgressOnly = false
 	return true
 }
 
@@ -116,6 +127,7 @@ func (c *Controller) setPaused(paused bool) {
 	c.state.Paused = paused
 	if paused {
 		c.state.Preferences.Clear = false
+		c.state.ProgressOnly = false
 	}
 	if !paused && s != nil && s.engine != nil && c.state.Status.Ended {
 		c.state.Loading = false

@@ -6,7 +6,126 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"myguo/internal/ipc"
 )
+
+func TestCleanSeriesSeekAndPointerOnlyRevealProgress(t *testing.T) {
+	for _, command := range []string{"seek", "seekBy", "activity"} {
+		t.Run(command, func(t *testing.T) {
+			c, _ := newControllerTest(t, &testBackend{})
+			c.Play("A", 1, 0, 1)
+			waitSource(t, c, "A", 1)
+			c.Command("clear", true)
+			c.Command(command, 5)
+			barrier(t, c)
+			s := c.Snapshot()
+			if !s.Preferences.Clear || !s.ProgressOnly || s.Paused || !s.Status.Playing {
+				t.Fatalf("%s interrupted clean playback: %+v", command, s)
+			}
+			if command != "activity" && (s.Status.Position < 5 || s.Status.Position > 5.2) {
+				t.Fatalf("seek did not reach target: %g", s.Status.Position)
+			}
+			c.post(func() {
+				activity := c.chromeActivity
+				if c.hideIdleChrome(activity.Add(playerChromeIdleTimeout - time.Millisecond)) {
+					t.Error("progress disappeared before two seconds")
+				}
+				c.chromeActivity = time.Now().Add(-playerChromeIdleTimeout)
+				oldDeadline := c.chromeActivity.Add(playerChromeIdleTimeout)
+				c.noteProgressActivity()
+				if c.hideIdleChrome(oldDeadline) {
+					t.Error("progress activity did not restart the idle deadline")
+				}
+				if !c.hideIdleChrome(c.chromeActivity.Add(playerChromeIdleTimeout)) {
+					t.Error("progress stayed visible after two idle seconds")
+				}
+			})
+			barrier(t, c)
+			if s := c.Snapshot(); !s.Preferences.Clear || s.ProgressOnly {
+				t.Fatal("idle progress did not return to fully hidden")
+			}
+		})
+	}
+}
+
+func TestProgressOnlyReturnsToFullMenuForSurfacePauseAndPanel(t *testing.T) {
+	for _, command := range []string{"surface", "pause", "panel", "clear"} {
+		t.Run(command, func(t *testing.T) {
+			c, _ := newControllerTest(t, &testBackend{})
+			c.Play("A", 1, 0, 1)
+			waitSource(t, c, "A", 1)
+			c.Command("clear", true)
+			c.Command("seekBy", 5)
+			value := any(nil)
+			if command == "panel" {
+				value = "episodes"
+			} else if command == "clear" {
+				value = false
+			}
+			c.Command(command, value)
+			barrier(t, c)
+			if s := c.Snapshot(); s.Preferences.Clear || s.ProgressOnly {
+				t.Fatalf("%s did not restore the full menu: %+v", command, s)
+			}
+			c.Command("seekBy", 5)
+			barrier(t, c)
+			if s := c.Snapshot(); s.Preferences.Clear || s.ProgressOnly {
+				t.Fatal("seek replaced an already open full menu")
+			}
+		})
+	}
+}
+
+func TestSeriesNavigationPreservesCleanPlayback(t *testing.T) {
+	for _, command := range []string{"auto", "next-season", "next", "prev", "nextEpisode", "prevEpisode"} {
+		t.Run(command, func(t *testing.T) {
+			b := &testBackend{nextSeason: &ipc.SeriesCard{ID: "B"}}
+			c, _ := newControllerTest(t, b)
+			start, target, id := 2, 3, "A"
+			if command == "prev" || command == "prevEpisode" {
+				target = 1
+			} else if command == "next-season" {
+				start, target, id = 4, 1, "B"
+			}
+			c.Play("A", start, 0, 1)
+			s := waitSource(t, c, "A", start)
+			c.Command("clear", true)
+			c.Command("seekBy", 5)
+			barrier(t, c)
+			if command == "auto" || command == "next-season" {
+				e := s.Engine.(*testEngine)
+				c.post(func() {
+					// Let the seek land before simulating the episode's EOF.
+					c.tick(time.Now())
+					e.mu.Lock()
+					e.status.Position, e.status.Ended = e.status.Duration, true
+					e.mu.Unlock()
+					c.tick(time.Now())
+				})
+			} else {
+				c.Command(command, nil)
+			}
+			s = waitSource(t, c, id, target)
+			wantClear := command != "nextEpisode" && command != "prevEpisode"
+			if s.Preferences.Clear != wantClear || s.ProgressOnly || s.Paused {
+				t.Fatalf("%s changed chrome or retained old progress: %+v", command, s)
+			}
+		})
+	}
+}
+
+func TestFeedSeekNeverUsesProgressOnlyChrome(t *testing.T) {
+	c, _ := newControllerTest(t, &testBackend{})
+	c.ShowFeed("推荐")
+	waitSource(t, c, "A", 1)
+	c.Command("seekBy", 5)
+	c.Command("activity", nil)
+	barrier(t, c)
+	if s := c.Snapshot(); s.Preferences.Clear || s.ProgressOnly {
+		t.Fatal("feed seek hid full controls")
+	}
+}
 
 func TestSeriesSurfaceClickOnlyTogglesChromeAndPlaybackButtonTogglesVideo(t *testing.T) {
 	b := &testBackend{}

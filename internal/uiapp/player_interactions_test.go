@@ -81,8 +81,13 @@ func TestNativeSeriesPictureOnlyTogglesControlsAndCenterButtonTogglesPlayback(t 
 	}
 	tt.Move(x+8, y+8)
 	tt.Frame()
-	if !p.state.Preferences.Clear || p.state.Paused || !p.state.Status.Playing {
-		t.Fatalf("pointer movement revealed controls or interrupted playback: %+v", p.state)
+	if !p.state.Preferences.Clear || !p.state.ProgressOnly || p.state.Paused || !p.state.Status.Playing {
+		t.Fatalf("pointer movement did not reveal only progress: %+v", p.state)
+	}
+	tt.Advance(200 * time.Millisecond)
+	assertNoFullPlayerMenu(t, tt)
+	if _, ok := tt.AccessByRole(ui.RoleSlider, "播放进度"); !ok || !tt.HasText("00:48 / 03:20") {
+		t.Fatal("pointer movement did not reveal seek bar and time")
 	}
 	tt.ClickAt(x, y)
 	tt.Frame()
@@ -101,6 +106,87 @@ func TestNativeSeriesPictureOnlyTogglesControlsAndCenterButtonTogglesPlayback(t 
 	}
 	if _, ok := tt.AccessByRole(ui.RoleButton, "暂停视频"); ok {
 		t.Fatal("paused video still exposes the pause action")
+	}
+}
+
+func assertNoFullPlayerMenu(t *testing.T, tt *ui.Tester) {
+	t.Helper()
+	stage, ok := tt.Find("播放画面")
+	if !ok {
+		t.Fatal("missing player stage")
+	}
+	for _, label := range []string{"暂停视频", "播放视频", "暂停", "上一集", "下一集", "点赞", "评论", "收藏", "选集", "画中画", "全屏", "设置", "弹幕设置"} {
+		if item, ok := tt.AccessByRole(ui.RoleButton, label); ok && item.Bounds.X >= stage.X {
+			t.Errorf("progress-only chrome exposed %s", label)
+		}
+	}
+	if _, ok := tt.AccessByRole(ui.RoleLink, "查看《原生播放测试》详情"); ok {
+		t.Error("progress-only chrome exposed the title")
+	}
+}
+
+func TestNativeCleanSeriesKeyboardSeekAndDragOnlyShowProgress(t *testing.T) {
+	p := newNativeUIPlayer()
+	a := NewTestApp()
+	a.SetMediaHost(&MediaHost{controller: p})
+	a.OpenView("recommend")
+	p.state.Mode = playback.Series
+	p.state.Preferences.Clear = true
+	tt := ui.NewTester(a.Render, 1280, 820)
+	if _, ok := tt.AccessByRole(ui.RoleSlider, "播放进度"); ok {
+		t.Fatal("fully hidden chrome exposed a seek bar")
+	}
+	tt.Key(0, ui.KeyDown)
+	tt.Frame()
+	if !p.state.Preferences.Clear || p.state.ProgressOnly || p.commands[len(p.commands)-1] != "next" {
+		t.Fatal("down-arrow navigation did not retain clean playback")
+	}
+	assertNoFullPlayerMenu(t, tt)
+	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+	tt.Advance(200 * time.Millisecond)
+	if !p.state.Preferences.Clear || !p.state.ProgressOnly || p.state.Status.Position != 53 {
+		t.Fatalf("keyboard seek did not keep clean playback: %+v", p.state)
+	}
+	if !tt.HasText("00:53 / 03:20") {
+		t.Fatal("progress-only chrome omitted the time label")
+	}
+	assertNoFullPlayerMenu(t, tt)
+	slider, ok := tt.AccessByRole(ui.RoleSlider, "播放进度")
+	if !ok {
+		t.Fatal("keyboard seek did not reveal an accessible seek bar")
+	}
+	r := slider.Bounds
+	tt.Press(r.X+r.W*.4, r.Y+r.H/2)
+	tt.Move(r.X+r.W*.7, r.Y+r.H/2)
+	tt.Release(r.X+r.W*.7, r.Y+r.H/2)
+	tt.Frame()
+	if !p.state.Preferences.Clear || !p.state.ProgressOnly || p.state.Status.Position < 130 || p.state.Status.Position > 150 {
+		t.Fatalf("dragging the progress bar opened the menu or failed to seek: %+v", p.state)
+	}
+	assertNoFullPlayerMenu(t, tt)
+}
+
+func TestNativeCleanSeriesLoadingKeepsFeedbackWithoutMenu(t *testing.T) {
+	p := newNativeUIPlayer()
+	a := NewTestApp()
+	a.SetMediaHost(&MediaHost{controller: p})
+	a.OpenView("recommend")
+	p.state.Mode = playback.Series
+	p.state.Preferences.Clear = true
+	p.state.Loading = true
+	tt := ui.NewTester(a.Render, 1280, 820)
+	if !tt.HasText("正在加载视频") {
+		t.Fatal("clean episode loading lost its feedback")
+	}
+	assertNoFullPlayerMenu(t, tt)
+	if _, ok := tt.AccessByRole(ui.RoleSlider, "播放进度"); ok {
+		t.Fatal("clean episode loading exposed progress from the previous episode")
+	}
+	p.state.LoadingGrace = true
+	tt.Frame()
+	if tt.HasText("正在加载视频") {
+		t.Fatal("clean playback bypassed the loading grace")
 	}
 }
 
