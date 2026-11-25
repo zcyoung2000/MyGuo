@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -82,7 +83,6 @@ func TestProtectedFullCacheDownloadUsesContentKeyAndDecrypts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContentKey() error = %v", err)
 	}
-	ffmpegName := "ffmpeg"
 	script := fmt.Sprintf(`#!/bin/bash
 key=
 url=
@@ -97,29 +97,52 @@ if [ "$key" != "%s" ] || [ "$url" != "%s" ]; then
 fi
 dd if=/dev/zero of="${@: -1}" bs=1024 count=2 status=none
 `, key.Hex, sourceURL)
+	var ffmpegPath string
 	if runtime.GOOS == "windows" {
-		// Windows requires an executable extension; the bash stub above cannot
-		// be launched there. Mirror the argument check with a batch stub.
-		ffmpegName = "ffmpeg.bat"
-		script = "@echo off\r\n" +
-			"setlocal EnableDelayedExpansion\r\n" +
-			"set \"key=\"\r\n" +
-			"set \"url=\"\r\n" +
-			"set \"previous=\"\r\n" +
-			"set \"out=\"\r\n" +
-			"for %%A in (%*) do (\r\n" +
-			"  if \"!previous!\"==\"-decryption_key\" set \"key=%%~A\"\r\n" +
-			"  if \"!previous!\"==\"-i\" set \"url=%%~A\"\r\n" +
-			"  set \"previous=%%~A\"\r\n" +
-			"  set \"out=%%~A\"\r\n" +
-			")\r\n" +
-			"if not \"!key!\"==\"" + key.Hex + "\" exit /b 97\r\n" +
-			"if not \"!url!\"==\"" + sourceURL + "\" exit /b 97\r\n" +
-			"fsutil file createnew \"!out!\" 2048 >nul\r\n"
+		// A .bat file is not a native executable and cannot be passed directly
+		// to exec.CommandContext on Windows. Build a tiny native helper instead,
+		// so this test exercises the same process-launch path as real ffmpeg.
+		dir := t.TempDir()
+		sourcePath := filepath.Join(dir, "ffmpeg_stub.go")
+		ffmpegPath = filepath.Join(dir, "ffmpeg_stub.exe")
+		const helper = `package main
+
+import (
+	"os"
+)
+
+func main() {
+	args := os.Args[1:]
+	key, url := "", ""
+	for i, arg := range args {
+		if i > 0 && args[i-1] == "-decryption_key" {
+			key = arg
+		}
+		if i > 0 && args[i-1] == "-i" {
+			url = arg
+		}
 	}
-	ffmpegPath := filepath.Join(t.TempDir(), ffmpegName)
-	if err := os.WriteFile(ffmpegPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
+	if key != os.Getenv("MYGO_TEST_FFMPEG_KEY") || url != os.Getenv("MYGO_TEST_FFMPEG_URL") || len(args) == 0 {
+		os.Exit(97)
+	}
+	if err := os.WriteFile(args[len(args)-1], make([]byte, 2048), 0600); err != nil {
+		os.Exit(98)
+	}
+}
+`
+		if err := os.WriteFile(sourcePath, []byte(helper), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command("go", "build", "-o", ffmpegPath, sourcePath).CombinedOutput(); err != nil {
+			t.Fatalf("build ffmpeg test helper: %v\n%s", err, output)
+		}
+		t.Setenv("MYGO_TEST_FFMPEG_KEY", key.Hex)
+		t.Setenv("MYGO_TEST_FFMPEG_URL", sourceURL)
+	} else {
+		ffmpegPath = filepath.Join(t.TempDir(), "ffmpeg")
+		if err := os.WriteFile(ffmpegPath, []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("HONGGUO_FFMPEG", ffmpegPath)
 

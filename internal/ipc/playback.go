@@ -111,27 +111,28 @@ func (s *HongguoService) updateFullPrefetchWindow(currentEpisodeID, currentQuali
 	s.media.ReplacePrefetchWindow(tasks)
 }
 
-// RefreshCachedEpisode re-resolves an episode whose PlaybackDTO was produced
-// before its complete-file prefetch finished. prepareNeighbors resolves the
-// next slot early, so its dto carries IsFullCached=false and an HLS StreamURL
-// even after the MP4 lands on disk; auto-advance then reuses that stale dto and
-// takes Windows' slow HLS cold path. When a complete MP4 is now present,
-// PlayEpisode's cached fast path rebuilds the dto in milliseconds (no quality
-// negotiation), pointing StreamURL at the local full file. Windows only;
-// every other case returns the original dto untouched.
-func (s *HongguoService) RefreshCachedEpisode(ctx context.Context, dto *PlaybackDTO) (*PlaybackDTO, error) {
+// RefreshCachedEpisode upgrades a neighbor DTO after its complete MP4 prefetch
+// finishes. Promotion runs on the controller loop, so this must stay local and
+// must not call PlayEpisode (which can fetch episode metadata from the network).
+// Windows only; every other case returns the original DTO untouched.
+func (s *HongguoService) RefreshCachedEpisode(_ context.Context, dto *PlaybackDTO) (*PlaybackDTO, error) {
 	if runtime.GOOS != "windows" || dto == nil || dto.IsFullCached || dto.EpisodeID == "" {
+		return dto, nil
+	}
+	if s.media == nil {
 		return dto, nil
 	}
 	path := media.EpisodeCachePath(s.media.CacheDir(), dto.EpisodeID, dto.Quality)
 	if path == "" || !media.FileExists(path) {
 		return dto, nil
 	}
-	refreshed, err := s.PlayEpisode(ctx, dto.SeriesID, dto.EpisodeID, dto.EpisodeNum, dto.Quality, false)
-	if err != nil || refreshed == nil || !refreshed.IsFullCached {
-		return dto, nil
+	refreshed := *dto
+	refreshed.IsFullCached = true
+	if refreshed.FullStreamURL == "" {
+		refreshed.FullStreamURL = s.media.VideoURL(dto.EpisodeID, dto.SeriesID, dto.EpisodeNum, dto.Quality)
 	}
-	return refreshed, nil
+	refreshed.StreamURL = refreshed.FullStreamURL
+	return &refreshed, nil
 }
 
 func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (result *PlaybackDTO, playbackErr error) {

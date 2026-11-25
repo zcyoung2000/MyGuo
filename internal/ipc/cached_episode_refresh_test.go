@@ -2,23 +2,30 @@ package ipc
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"myguo/internal/hgapi"
+	"myguo/internal/hgapi/adapters"
+	"myguo/internal/hgapi/adapters/memstore"
 )
 
 // A neighbor slot resolved before its full-file prefetch completed carries a
-// stale HLS dto. Once the MP4 lands on disk, RefreshCachedEpisode must rebuild
-// the dto through PlayEpisode's cache fast path so promotion uses the local
-// complete file instead of Windows' slow HLS cold start.
+// stale HLS DTO. Once the MP4 lands on disk, RefreshCachedEpisode must upgrade
+// it locally so promotion uses the complete file without blocking on metadata.
 func TestRefreshCachedEpisodeUpgradesStaleHLSDTO(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("full-file prefetch dto refresh is Windows-only")
 	}
 	home := t.TempDir()
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +47,22 @@ func TestRefreshCachedEpisodeUpgradesStaleHLSDTO(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &HongguoService{store: store, media: ms}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unexpected metadata request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client, err := adapters.NewClient("", hgapi.Options{
+		ProfileStore:   memstore.New(),
+		APIOrigin:      server.URL,
+		RegisterOrigin: server.URL,
+		RetryAttempts:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &HongguoService{store: store, media: ms, client: client}
 	stale := &PlaybackDTO{
 		SeriesID:     series,
 		EpisodeID:    episode,
@@ -58,8 +80,11 @@ func TestRefreshCachedEpisodeUpgradesStaleHLSDTO(t *testing.T) {
 	if got == stale || !got.IsFullCached {
 		t.Fatalf("stale HLS dto was not upgraded to a complete local file: %+v", got)
 	}
-	if got.StreamURL != got.FullStreamURL {
+	if got.StreamURL != got.FullStreamURL || got.FullStreamURL == "" || got.ProgressiveStreamURL != "" {
 		t.Fatalf("upgraded dto must point StreamURL at the full file: stream=%q full=%q", got.StreamURL, got.FullStreamURL)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("cache refresh made %d upstream requests; expected local-only DTO refresh", requests.Load())
 	}
 }
 
