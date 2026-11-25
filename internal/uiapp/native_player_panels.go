@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// MyGo v0.9.1 Scroll and List draw overlay scrollbars without reserving space.
+// Pad their content (not the viewport) by the full hit area plus a 2 DIP gap,
+// so controls remain clear of both the thumb and its drag target.
+func playerPanelScrollbarGutter(c *ui.Context) float32 {
+	return (ui.ScrollbarStyle{}).Resolve(c.Theme()).TrackWidth + 2
+}
+
 func (a *App) renderNativeEpisodes(c *ui.Context, s playback.State, command func(string, any)) {
 	count := len(s.Episodes)
 	if count == 0 {
@@ -19,7 +26,7 @@ func (a *App) renderNativeEpisodes(c *ui.Context, s playback.State, command func
 	ui.Text(c, fmt.Sprintf("共 %d 集", count)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, .6))
 	const columns = 4
 	ui.List(c.Key("player-episodes-list"), &a.playerEpisodesList, (count+columns-1)/columns, func(row int) {
-		ui.Row(c.Key(row)).Gap(6).Padding(0, 0, 6, 0).Children(func() {
+		ui.Row(c.Key(row)).Gap(6).Padding(0, playerPanelScrollbarGutter(c), 6, 0).Children(func() {
 			for column := 0; column < columns; column++ {
 				index := row*columns + column
 				if index >= count {
@@ -79,7 +86,7 @@ func (a *App) renderNativeComments(c *ui.Context, s playback.State) {
 	a.playerCommentsList.Key = func(row int) any { return s.CommentItems[row].ID }
 	ui.List(c.Key("player-comment-list"), &a.playerCommentsList, len(s.CommentItems), func(row int) {
 		item := s.CommentItems[row]
-		ui.Column(c.Key(item.ID)).Padding(0, 0, 14, 0).Gap(7).Children(func() {
+		ui.Column(c.Key(item.ID)).Padding(0, playerPanelScrollbarGutter(c), 14, 0).Gap(7).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				if avatar := a.Artwork(item.AvatarURL); avatar != nil {
 					ui.Image(c, avatar).Size(28, 28).Fit(ui.Cover).Radius(14)
@@ -137,7 +144,7 @@ func renderNativeReply(c *ui.Context, item ipc.CommentDTO) {
 }
 func (a *App) renderNativePlayerSettings(c *ui.Context, s playback.State, command func(string, any)) {
 	ui.Scroll(c.Key("player-settings-scroll")).Grow(1).FillWidth().Children(func() {
-		ui.Column(c).Gap(16).FillWidth().Children(func() {
+		ui.Column(c).Gap(16).FillWidth().Padding(0, playerPanelScrollbarGutter(c), 0, 0).Children(func() {
 			if s.Panel == "quality" || s.Panel == "settings" {
 				nativeSettingTitle(c, "画质")
 				if s.Playback == nil {
@@ -228,7 +235,7 @@ func (a *App) renderNativeDanmakuItems(c *ui.Context, s playback.State) {
 	}
 	ui.List(c.Key("player-danmaku-list"), &a.playerDanmakuList, len(items), func(row int) {
 		item := items[row]
-		ui.Column(c.Key(item.ID)).Gap(7).Padding(0, 0, 12, 0).Children(func() {
+		ui.Column(c.Key(item.ID)).Gap(7).Padding(0, playerPanelScrollbarGutter(c), 12, 0).Children(func() {
 			ui.Text(c, item.Text).FontSize(13).LineHeight(1.4).TextColor(ui.RGB(255, 255, 255))
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, playerTime(float64(item.TimeMs)/1000)).FontSize(10).TextColor(ui.RGBA(255, 255, 255, .5))
