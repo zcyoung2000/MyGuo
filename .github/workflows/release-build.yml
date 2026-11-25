@@ -145,6 +145,7 @@ jobs:
         uses: ./.release-tools/.github/actions/release-go
         with:
           scope: ${{ inputs.macos_runner }}-${{ matrix.arch }}
+          fallback-scope: ${{ inputs.macos_runner }}-test
           source-sha: ${{ inputs.source_sha }}
       - name: Fingerprint FFmpeg toolchain
         id: toolchain
@@ -216,6 +217,7 @@ jobs:
         uses: ./.release-tools/.github/actions/release-go
         with:
           scope: windows-amd64-zig-0.15.2
+          fallback-scope: verify-packages
           source-sha: ${{ inputs.source_sha }}
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
@@ -287,6 +289,7 @@ jobs:
         uses: ./.release-tools/.github/actions/release-go
         with:
           scope: verify-packages
+          fallback-scope: windows-amd64-zig-0.15.2
           source-sha: ${{ inputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:

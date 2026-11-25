@@ -7,6 +7,10 @@ inputs:
   source-sha:
     description: Immutable application source commit
     required: true
+  fallback-scope:
+    description: Compatible same-host cache to seed a new target scope
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -26,3 +30,4 @@ runs:
         key: release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-${{ inputs.source-sha }}
         restore-keys: |
           release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-
+          release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.fallback-scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-
