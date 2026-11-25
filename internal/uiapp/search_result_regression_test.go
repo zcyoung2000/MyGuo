@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/ipc"
 )
 
 func TestSearchResultsMergeSeriesAndExcludeKnownNonVideoCards(t *testing.T) {
@@ -65,5 +66,24 @@ func TestSearchFirstCardRemainsClickableAfterDetailBack(t *testing.T) {
 		if a.View() != "search" {
 			t.Fatal("back lost search navigation")
 		}
+	}
+}
+
+func TestNewReleasesDeduplicateSeriesCards(t *testing.T) {
+	provider := &parityProvider{releaseResult: ipc.NewReleaseResponse{
+		CurrentDate: "20261125",
+		Items: []ipc.NewReleaseItemDTO{
+			{SeriesID: "same", Title: "重复新剧一", Online: true},
+			{SeriesID: "same", Title: "重复新剧二", Online: true},
+			{SeriesID: "other", Title: "另一部新剧", Online: true},
+		},
+	}}
+	a := NewTestApp()
+	a.featuresSource = provider
+	a.releases = ReleaseState{Calendar: true, Date: "20261125"}
+	a.LoadReleases()
+
+	if len(a.releases.Items) != 2 || a.releases.Items[0].ID != "same" || a.releases.Items[1].ID != "other" {
+		t.Fatalf("new releases kept duplicate series cards: %+v", a.releases.Items)
 	}
 }

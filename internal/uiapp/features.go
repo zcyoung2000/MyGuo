@@ -392,7 +392,7 @@ func (a *App) LoadReleases() {
 	if err != nil {
 		a.releases.Error = featureError("new releases", err)
 	} else {
-		a.releases.Items, a.releases.Dates, a.releases.Error = items, dates, ""
+		a.releases.Items, a.releases.Dates, a.releases.Error = dedupeCards(items), dates, ""
 		a.releaseResultVersion++
 		if calendar {
 			a.releases.Date = selected
@@ -556,7 +556,7 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 	if err != nil {
 		value.Error = "关联作品加载失败，请重试"
 	} else if result != nil {
-		value.Title, value.Items = result.Title, convertCards(result.Items)
+		value.Title, value.Items = result.Title, dedupeCards(convertCards(result.Items))
 		if adaptations {
 			seen := a.detail.Adaptations.seenCursors
 			if !more {

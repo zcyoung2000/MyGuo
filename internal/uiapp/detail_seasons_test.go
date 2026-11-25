@@ -21,7 +21,7 @@ func (p *groupedRelatedProvider) GetSeriesAdaptations(context.Context, string, s
 
 func TestOfficialRelatedPageRestoresOtherSeasonsAndCardNavigation(t *testing.T) {
 	p := &groupedRelatedProvider{parityProvider: &parityProvider{}, page: &ipc.SeriesCollectionDTO{
-		Title: "同一剧本改编", Items: []ipc.SeriesCard{{ID: "version", Title: "其他改编版本"}, {ID: "season-two", Title: "不得混入改编"}},
+		Title: "同一剧本改编", Items: []ipc.SeriesCard{{ID: "version", Title: "其他改编版本"}, {ID: "version", Title: "重复改编版本"}, {ID: "season-two", Title: "不得混入改编"}},
 		Seasons: []ipc.SeriesCard{{ID: "current", Title: "当前版本"}, {ID: "season-two", Title: "续作第二季", EpisodeCount: 119, BadgeText: "第2季"}, {ID: "season-two", Title: "重复第二季"}, {ID: "season-three", Title: "续作第三季", Upcoming: true, BadgeText: "第3季"}},
 	}}
 	a := NewTestApp()
