@@ -8,7 +8,9 @@
 
 MyGuo 以 MyGo GPU 自绘的原生 UI 作为应用主体：侧栏导航、搜索、目录、详情、选集以及本地历史/收藏/预约直接调用 Go 服务。macOS 使用原生 AVKit，Windows 使用 MyGo `ui/video` 的 Media Foundation 后端；两者共用切集、续播和系统媒体控制。仓库内的 `internal/hgapi` 负责上游协议，播放使用批量模型接口、专用 profile 和 Medusa V5；本地 MediaServer 负责缓存、流式传输和解密，不再依赖外部 OpenHongguo SDK。
 
-所有红果业务接口、账号请求和官网扫码协议统一封装在 `internal/hgapi`；业务层负责缓存、账号归属、同步队列和页面数据组合。分层与扩展方式见 [API 架构](docs/api-architecture.md)。
+所有红果业务接口、账号请求和官网扫码协议统一封装在 `internal/hgapi`；业务层负责缓存、账号归属、同步队列和页面数据组合。分层与扩展方式见 [API 架构](doc/architecture/api-architecture.md)。
+
+开发约定、播放实现、发布维护与历史审查按主题整理在 [项目文档](doc/README.md)。
 
 本项目仅供个人技术研究与本地使用，与上游内容平台没有隶属或认可关系。
 
@@ -98,7 +100,7 @@ GitHub 上的新版本。默认开启自动检查，自动下载需要用户主�
 发布时，每个平台都必须附带 `update-<platform>.json` 和带签名的 `.tar.gz`
 更新包。发布工作流使用仓库 Secret `MYGO_UPDATER_PRIVATE_KEY` 签名，缺少文件
 或签名校验失败时会停止发布。密钥保存、本机构建及不用 GitHub Actions 的
-发布方法见 [发布维护说明](docs/releases.md)。
+发布方法见 [发布维护说明](doc/release/releases.md)。
 
 ## 推荐流续接
 
@@ -131,7 +133,7 @@ SQLite 保存登录凭据、设备身份、个人资料、历史、收藏、点�
 - `internal/hgapi` 封装上游接口、请求与响应模型、签名、账号会话和官网扫码授权。
 - `internal/media` 负责 CDN 下载、缓存、流式传输与 FFmpeg 解密；`internal/playerengine` 选择平台播放器，其中 `internal/avkit` 提供 macOS 原生播放。
 
-请求边界、会话策略和新增接口的流程见 [API 架构](docs/api-architecture.md)。
+请求边界、会话策略和新增接口的流程见 [API 架构](doc/architecture/api-architecture.md)。
 
 ## 开发
 
@@ -150,4 +152,4 @@ node --test e2e/*.test.cjs
 
 本项目仅供个人技术研究与本地使用。短剧内容和元数据版权归原权利人所有。
 
-重新分发前请阅读 `THIRD_PARTY.md`。FFmpeg 需要遵守所选构建的许可：macOS 和 Windows 精简工具使用 LGPL，完整版编解码构建使用 GPL。
+重新分发前请阅读 [第三方组件与许可](doc/legal/THIRD_PARTY.md)。FFmpeg 需要遵守所选构建的许可：macOS 和 Windows 精简工具使用 LGPL，完整版编解码构建使用 GPL。

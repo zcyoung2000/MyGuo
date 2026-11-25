@@ -1,9 +1,9 @@
-# AGENTS.md
+# 项目工作指南
 
-本仓库是一个原生 macOS 短剧浏览客户端。开始开发前，先检查 `main` 是否包含当前分支缺少的提交；如果有，先合并 `main`。
+本仓库是一个原生 macOS 短剧浏览客户端。此文件只作为工作规则与项目文档的引用入口。
 
-发布和修改 CI 前阅读 `docs/releases.md`。统一从默认分支的 `Release` 调度器启动，
-重发旧版本不要重跑旧的失败工作流。runner 配置/排队错误最多切换一次，代码和签名
-错误不盲目重试；保留全平台验证。修改发布流程后先运行调度器测试，再做
-`publish=false` 演练；排队与执行耗时分别报告。历史经验见
-`docs/release-retrospective-2026-11-25.md`。
+- 开始开发前必读：[开发与协作约定](doc/development/README.md)。
+- 文档总览与主题导航：[项目文档](doc/README.md)。
+- 发布或修改 CI 前必读：[发布与自动更新](doc/release/releases.md)。
+- 发布故障与改进经验：[2026-11-25 发布复盘](doc/release/release-retrospective-2026-11-25.md)。
+- 修改原生播放器模块前必读：[avkit 模块约定](doc/development/native-module-avkit.md)。

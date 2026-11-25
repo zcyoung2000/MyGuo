@@ -23,7 +23,7 @@ func TestChineseReadmeAndSettingsParityDocsStayCurrent(t *testing.T) {
 		}
 	}
 
-	parity, err := os.ReadFile("../../docs/native-feature-parity.md")
+	parity, err := os.ReadFile("../../doc/architecture/native-feature-parity.md")
 	if err != nil {
 		t.Fatalf("read native feature parity document: %v", err)
 	}

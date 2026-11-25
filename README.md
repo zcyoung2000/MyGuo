@@ -8,7 +8,9 @@ A native macOS and Windows client for short dramas, built with Go.
 
 MyGuo uses a MyGo GPU-drawn native UI: sidebar navigation, search, catalogs, series details, episode selection, and local history/favorites/reservations call Go services directly. macOS uses native AVKit; Windows uses MyGo's `ui/video` Media Foundation backend. Both share episode switching, resume and system media controls. The repository's `internal/hgapi` owns the upstream protocol, including batch playback models, a dedicated player profile and Medusa V5. The local MediaServer handles caching, streaming and decryption; the external OpenHongguo SDK dependency has been removed.
 
-Hongguo business APIs, account requests and website QR authorization are encapsulated in `internal/hgapi`. Business services own caching, account scope, durable synchronization and page composition. See [API architecture](docs/api-architecture.md) for the boundaries and endpoint extension workflow.
+Hongguo business APIs, account requests and website QR authorization are encapsulated in `internal/hgapi`. Business services own caching, account scope, durable synchronization and page composition. See [API architecture](doc/architecture/api-architecture.md) for the boundaries and endpoint extension workflow.
+
+Development guides, playback notes, release operations and historical reviews are grouped in the [project documentation](doc/README.md).
 
 The project is intended for personal technical study and local use. It is not affiliated with or endorsed by the upstream content provider.
 
@@ -100,7 +102,7 @@ once to get the updater.
 Every supported platform must publish its `update-<platform>.json` and signed
 `.tar.gz` update archive alongside the installers. The release workflow signs
 these with the repository secret `MYGO_UPDATER_PRIVATE_KEY` and refuses to
-publish missing or invalid updates. See [release maintenance](docs/releases.md)
+publish missing or invalid updates. See [release maintenance](doc/release/releases.md)
 for signing-key storage, local builds and publishing without GitHub Actions.
 
 ## Recommendation Continuity
@@ -134,7 +136,7 @@ SQLite stores account credentials, device identity, the profile, history, favori
 - `internal/hgapi` encapsulates upstream endpoints, request and response models, signing, account sessions and website QR authorization.
 - `internal/media` handles CDN downloads, caching, streaming and FFmpeg decryption; `internal/playerengine` selects the platform player, with `internal/avkit` providing macOS native playback.
 
-See [API architecture](docs/api-architecture.md) for request boundaries, session policies and the workflow for adding endpoints.
+See [API architecture](doc/architecture/api-architecture.md) for request boundaries, session policies and the workflow for adding endpoints.
 
 ## Development
 
@@ -153,4 +155,4 @@ When changing the UI, keep list views in responsive card grids, use inline SVG r
 
 This project is provided for personal technical study and local use. Drama content and metadata remain the property of their respective owners.
 
-Review `THIRD_PARTY.md` before redistribution. Release builds bundle FFmpeg under the license of the selected build: LGPL for the minimal macOS and Windows helpers, GPL for the full codec builds.
+Review [third-party components](doc/legal/THIRD_PARTY.md) before redistribution. Release builds bundle FFmpeg under the license of the selected build: LGPL for the minimal macOS and Windows helpers, GPL for the full codec builds.

@@ -10,7 +10,7 @@ MyGo UI (v0.9.0). `internal/playback` owns playback state; `internal/avkit`
 provides AVPlayerView/PiP through a generated Swift module. Main creates no
 WebView or playback document. MediaServer and Go library/sync services remain
 in use. Native acceptance evidence and its limits are in
-[native-player-progress.md](native-player-progress.md).
+[native-player-progress.md](../playback/native-player-progress.md).
 
 | Area | Preserved behavior | Implementation and verification evidence |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ screenshots of the running application or user-library records.
 ## Verification and remaining acceptance
 
 The playback migration supersedes the historical November 6 results below. See
-[native-player-progress.md](native-player-progress.md) for the current commands,
+[native-player-progress.md](../playback/native-player-progress.md) for the current commands,
 native runtime evidence and unverified live-account scenarios.
 
 Run from the repository root:

@@ -7,7 +7,7 @@ The updated picture/title click behavior is recorded in
 [`player-interactions-2026-11-14.md`](player-interactions-2026-11-14.md).
 
 The subsequent browsing palette, loading and motion review is recorded in
-[`ui-polish-2026-11-14.md`](ui-polish-2026-11-14.md).
+[`ui-polish-2026-11-14.md`](../ui/ui-polish-2026-11-14.md).
 
 The application uses MyGo v0.9.0 and native UI/AVKit for both recommendation
 and series playback. Main no longer embeds or creates a playback WebView,

@@ -1,6 +1,6 @@
 # hongguo-mygo 补充审查报告 — 2026-11-09
 
-审查对象：`main @ 93f91024acbc12e1431afe8e0a3f35cdee55dad9`。本报告只补查主报告 `AUDIT-2026-11-09.md` 未完成的评论区、弹幕、播放器 WebView、推荐流视觉与详情宽屏布局；只读代码、历史提交与 `/tmp/myguo-audit-screens/detail-ready-1600.png` 夹具截图，不改产品代码、不提交。
+审查对象：`main @ 93f91024acbc12e1431afe8e0a3f35cdee55dad9`。本报告只补查主报告 `doc/audits/AUDIT-2026-11-09.md` 未完成的评论区、弹幕、播放器 WebView、推荐流视觉与详情宽屏布局；只读代码、历史提交与 `/tmp/myguo-audit-screens/detail-ready-1600.png` 夹具截图，不改产品代码、不提交。
 
 ## 1. 评论区
 
