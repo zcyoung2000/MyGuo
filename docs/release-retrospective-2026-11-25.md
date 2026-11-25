@@ -1,0 +1,67 @@
+# 2026-11-25：v0.1.7 发布耗时复盘
+
+本文记录已核实的流水线事实及对应措施。时间均为北京时间（UTC+8），
+以首次发布触发为起点，不包含此前的应用开发和本地准备。
+
+## 实际时间线
+
+| 时间 | 事实 | Actions 运行 |
+| --- | --- | --- |
+| 17:32:57 | 标签触发，`macos-14` 配置立即被平台取消，没有构建步骤执行 | [45586444206](https://github.com/zcyoung2000/MyGuo/actions/runs/45586444206) |
+| 17:49:03 | 手动用同一配置重试，再次立即取消 | [45588993345](https://github.com/zcyoung2000/MyGuo/actions/runs/45588993345) |
+| 18:06:26 | 提交 `bfad57d`，把 runner 改为 `macos-15` | — |
+| 18:16:38—18:31:41 | ARM runner 始终未分配，约 15 分钟后失败 | [45593419517](https://github.com/zcyoung2000/MyGuo/actions/runs/45593419517) |
+| 18:36:10 | 提交 `8a5fb1f`，改为 `macos-15-intel` | — |
+| 18:36:49—18:49:17 | Intel 流水线成功，公开 Release 在 18:49:14 发布 | [45596655435](https://github.com/zcyoung2000/MyGuo/actions/runs/45596655435) |
+
+总计约 76 分钟。成功一轮约 12 分 28 秒；其余时间中约 15 分钟明确是 ARM
+runner 分配失败，另约 49 分钟处于运行之间的定位、修改和重新触发间隔。
+现有 Actions 记录不能证明这些间隔每一分钟的具体用途，不将其全部算作纯等待。
+
+前两次的注释均明确表示 `macos-14-arm64-us-default` 配置不受支持。
+当天更早的 v0.1.6 运行已出现同样问题。第三次的注释则明确表示 hosted runner
+多次未接单，并提示 ARM 容量限制；源码测试、签名和打包没有在这一轮启动。
+
+## 成功一轮的构建基线
+
+| 环节 | 耗时 |
+| --- | ---: |
+| 验证 job（包括环境准备及清理） | 2 分 59 秒 |
+| 其中 `go test ./...` | 1 分 59 秒 |
+| macOS arm64 构建 job | 5 分 58 秒 |
+| macOS amd64 构建 job（并行阶段最长） | 8 分 53 秒 |
+| 其中 amd64 FFmpeg 准备 | 3 分 14 秒 |
+| 其中 amd64 应用、DMG 与签名更新包构建/验证 | 4 分 5 秒 |
+| Windows 构建 job | 4 分 30 秒 |
+| 汇总发布 job | 24 秒 |
+
+并行 job 的时间不能相加作为用户等待时间。历史冷构建的 12—15 分钟可作参考，
+不是新流程的性能承诺或强制截止时间。新缓存的收益必须通过同源、同 runner 的
+冷/热演练测量，不能直接把 FFmpeg 的所有时间当作已经节省。
+
+## 已落实的教训
+
+1. **明确的配置错误不原样重试。** 调度器读取平台注释，区分基础设施故障与代码错误。
+2. **监控必须独立于稀缺 runner。** Linux 调度器在 macOS 没有启动时仍能检测排队并取消。
+3. **有限切换，先停后启。** 固定主/备用 Intel 镜像、3 分钟队列观察、最多两次尝试，
+   取消无法确认时不启动新发布；不循环尝试任意标签。
+4. **工作流修复与应用版本分离。** 从默认分支启动当前工具，应用固定到版本 SHA，
+   重发旧版本时不再误用旧标签里的工作流。
+5. **先复用稳定依赖，再谈减少验证。** 缓存经校验的 FFmpeg 和 Go 编译对象，保留全量
+   测试、全平台安装包验证、更新签名及归档先于清单上传的顺序。
+6. **改进必须可测。** 单元测试覆盖排队、取消、切换、预算、错误分类、重复请求和坏缓存；
+   提供 `publish=false` 的全平台演练入口。
+7. **状态必须准确。** 只有实际获得 runner 才算开工；分别报告排队、构建、上传和公开发布。
+
+日常发布、演练、取消、缓存规则和本地回退命令均维护在
+[发布与自动更新](releases.md)，以后修改工作流时同步更新。
+
+## 参考约束
+
+- [GitHub runner 镜像与标签](https://github.com/actions/runner-images)
+- [工作流语法与执行超时](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+- [使用 GITHUB_TOKEN 触发 workflow_dispatch](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow)
+- [Actions cache：匹配规则、默认分支与缓存范围](https://github.com/actions/cache)
+
+托管 runner 的标签、可用性与容量会变化。更换镜像时重新核对官方清单并演练，
+不能把本次成功当作后续长期可用的保证。

@@ -28,6 +28,7 @@ Thumbs.db
 *.log
 tmp_*
 test_*
+!/scripts/tests/test_*.py
 *.tmp
 !e2e/TEST_CASES.md
 

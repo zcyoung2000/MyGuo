@@ -1,0 +1,28 @@
+name: Release Go toolchain and cache
+description: Cache modules and compiled objects by host, target, dependencies and source
+inputs:
+  scope:
+    description: Distinct test or target scope, including macOS runner label
+    required: true
+  source-sha:
+    description: Immutable application source commit
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: source/go.mod
+        cache: false
+    - name: Restore Go modules and compiled objects
+      uses: actions/cache@v4
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      with:
+        path: |
+          ${{ github.workspace }}/.cache/go-build
+          ${{ github.workspace }}/.cache/go-mod
+        key: release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-${{ inputs.source-sha }}
+        restore-keys: |
+          release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-

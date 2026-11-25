@@ -1,0 +1,323 @@
+name: Release build
+run-name: Release build ${{ inputs.release_tag }} [${{ inputs.request_id }}]
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing application tag (source stays pinned to this tag)
+        required: true
+        type: string
+      source_sha:
+        description: Resolved application commit from preflight
+        required: true
+        type: string
+      tooling_ref:
+        description: Release tooling commit on the default branch
+        required: true
+        type: string
+      macos_runner:
+        description: Approved Intel runner
+        type: choice
+        options: [macos-15-intel, macos-26-intel]
+        default: macos-15-intel
+      request_id:
+        description: Unique dispatch correlation ID
+        required: true
+        type: string
+      publish:
+        description: Upload to the public Release after all targets pass
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-build-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  GOCACHE: ${{ github.workspace }}/.cache/go-build
+  GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+  CGO_ENABLED: '0'
+
+defaults:
+  run:
+    shell: bash
+    working-directory: source
+
+jobs:
+  prepare:
+    name: Check tag and signing configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Fail early on invalid inputs or missing signing key
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TOOLING_REF: ${{ inputs.tooling_ref }}
+          MACOS_RUNNER: ${{ inputs.macos_runner }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo 'Missing update signing key'; exit 1; }
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess
+          for name in ('SOURCE_SHA', 'TOOLING_REF'):
+              if not re.fullmatch(r'[0-9a-f]{40}', os.environ[name]):
+                  raise SystemExit(f'{name} must be an immutable commit SHA')
+          if os.environ['MACOS_RUNNER'] not in ('macos-15-intel', 'macos-26-intel'):
+              raise SystemExit('Unapproved macOS runner')
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', tag):
+              raise SystemExit('Invalid release tag')
+          config = json.load(open('mygo.json'))
+          if tag != 'v' + config['version']:
+              raise SystemExit('Tag does not match app version')
+          key = base64.b64decode(os.environ['MYGO_UPDATER_PRIVATE_KEY'].strip(), validate=True)
+          public = base64.b64decode(config['updates']['publicKey'], validate=True)
+          if len(key) != 64 or len(public) != 32 or key[32:] != public:
+              raise SystemExit('Update signing key does not match the app public key')
+          repo = os.environ['GITHUB_REPOSITORY']
+          actual = subprocess.check_output(['gh', 'api', f'repos/{repo}/commits/{tag}', '--jq', '.sha'], text=True).strip()
+          if actual != os.environ['SOURCE_SHA']:
+              raise SystemExit('Tag changed after preflight; refusing to build different source')
+          PY
+
+  verify:
+    name: Verify source on macOS
+    needs: prepare
+    runs-on: ${{ inputs.macos_runner }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tooling_ref }}
+          path: .release-tools
+          persist-credentials: false
+      - name: Set up Go and reusable test cache
+        timeout-minutes: 3
+        uses: ./.release-tools/.github/actions/release-go
+        with:
+          scope: ${{ inputs.macos_runner }}-test
+          source-sha: ${{ inputs.source_sha }}
+      - name: Test release supervisor
+        working-directory: .release-tools
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Run Go tests
+        timeout-minutes: 5
+        run: go test -timeout 4m ./...
+
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    needs: verify
+    runs-on: ${{ inputs.macos_runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [arm64, amd64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tooling_ref }}
+          path: .release-tools
+          persist-credentials: false
+      - name: Set up Go and reusable target cache
+        timeout-minutes: 3
+        uses: ./.release-tools/.github/actions/release-go
+        with:
+          scope: ${{ inputs.macos_runner }}-${{ matrix.arch }}
+          source-sha: ${{ inputs.source_sha }}
+      - name: Fingerprint FFmpeg toolchain
+        id: toolchain
+        run: |
+          fingerprint="$( { xcrun clang --version; xcrun --sdk macosx --show-sdk-version; } | shasum -a 256 | awk '{print $1}')"
+          echo "hash=$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Restore verified FFmpeg build
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+        with:
+          path: source/resources/darwin-${{ matrix.arch }}/ffmpeg*
+          key: ffmpeg-v2-${{ inputs.macos_runner }}-${{ matrix.arch }}-${{ steps.toolchain.outputs.hash }}-${{ hashFiles('.release-tools/scripts/build-ffmpeg-minimal.sh', '.release-tools/scripts/verify-ffmpeg-minimal.py') }}
+      - name: Verify cached helper or build minimal FFmpeg
+        timeout-minutes: 6
+        env:
+          MYGUO_PROJECT_ROOT: ${{ github.workspace }}/source
+        run: ../.release-tools/scripts/fetch-ffmpeg.sh "darwin/${{ matrix.arch }}"
+      - name: Save verified FFmpeg before application packaging
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        timeout-minutes: 2
+        with:
+          path: source/resources/darwin-${{ matrix.arch }}/ffmpeg*
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+      - name: Build DMG and signed update
+        timeout-minutes: 7
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          go run github.com/egoist/mygo/cmd/mygo build -platform "darwin/${{ matrix.arch }}"
+          go run ./scripts/verify-release.go -dir "dist/darwin-${{ matrix.arch }}" -targets "darwin-${{ matrix.arch }}"
+          dmg="$(find "dist/darwin-${{ matrix.arch }}" -maxdepth 1 -type f -name '*.dmg' -size +0c -print -quit)"
+          test -n "$dmg"
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: |
+            source/dist/darwin-${{ matrix.arch }}/*.dmg
+            source/dist/darwin-${{ matrix.arch }}/*.tar.gz
+            source/dist/darwin-${{ matrix.arch }}/*.delta
+            source/dist/darwin-${{ matrix.arch }}/update-*.json
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    name: Build Windows x64
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tooling_ref }}
+          path: .release-tools
+          persist-credentials: false
+      - name: Set up Go and reusable target cache
+        timeout-minutes: 3
+        uses: ./.release-tools/.github/actions/release-go
+        with:
+          scope: windows-amd64-zig-0.15.2
+          source-sha: ${{ inputs.source_sha }}
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Restore verified FFmpeg build
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+        with:
+          path: source/tmp_ffmpeg_minimal/output
+          key: ffmpeg-v2-windows-amd64-zig-0.15.2-${{ hashFiles('.release-tools/scripts/build-ffmpeg-minimal.sh', '.release-tools/scripts/verify-ffmpeg-minimal.py') }}
+      - name: Verify cached helper or build minimal FFmpeg
+        timeout-minutes: 6
+        env:
+          MYGUO_PROJECT_ROOT: ${{ github.workspace }}/source
+        run: ../.release-tools/scripts/build-ffmpeg-minimal.sh windows/amd64
+      - name: Save verified FFmpeg before application packaging
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        timeout-minutes: 2
+        with:
+          path: source/tmp_ffmpeg_minimal/output
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+      - name: Install NSIS
+        timeout-minutes: 3
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build signed EXE installer and update
+        timeout-minutes: 7
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          go run ./scripts/build-windows.go -ffmpeg-dir ./tmp_ffmpeg_minimal/output
+          mkdir -p dist/release-windows
+          cp dist/windows-amd64/*-setup-*.exe dist/windows-amd64/*.tar.gz dist/windows-amd64/update-*.json dist/release-windows/
+          find dist/windows-amd64 -maxdepth 1 -name '*.delta' -exec cp {} dist/release-windows/ \;
+          go run ./scripts/verify-release.go -dir dist/release-windows -targets windows-amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          path: source/dist/release-windows/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Verify all packages and optionally publish
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tooling_ref }}
+          path: .release-tools
+          persist-credentials: false
+      - name: Set up Go and reusable verification cache
+        timeout-minutes: 3
+        uses: ./.release-tools/.github/actions/release-go
+        with:
+          scope: verify-packages
+          source-sha: ${{ inputs.source_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: source/release-assets
+          merge-multiple: true
+      - name: Verify every platform and create checksums
+        run: |
+          go run ./scripts/verify-release.go -dir release-assets
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Upload verified rehearsal or release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-release-${{ inputs.release_tag }}
+          path: source/release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Publish only after all packages pass
+        if: inputs.publish
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "MyGuo ${RELEASE_TAG#v}" --draft --generate-notes
+          fi
+          # Archives first, manifests last; only a complete bundle becomes latest.
+          find release-assets -maxdepth 1 -type f ! -name 'update-*.json' -print0 | \
+            xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" release-assets/update-*.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
