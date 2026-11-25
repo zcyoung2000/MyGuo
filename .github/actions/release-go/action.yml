@@ -19,6 +19,7 @@ runs:
         go-version-file: source/go.mod
         cache: false
     - name: Restore Go modules and compiled objects
+      id: cache
       uses: actions/cache@v4
       continue-on-error: true
       env:
@@ -31,3 +32,7 @@ runs:
         restore-keys: |
           release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-
           release-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.fallback-scope }}-${{ hashFiles('source/go.mod', 'source/go.sum') }}-
+    - name: Remove incomplete Go cache after restore failure
+      if: steps.cache.outcome != 'success'
+      shell: bash
+      run: rm -rf "$GITHUB_WORKSPACE/.cache/go-build" "$GITHUB_WORKSPACE/.cache/go-mod"

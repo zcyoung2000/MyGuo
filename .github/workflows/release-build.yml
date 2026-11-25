@@ -141,7 +141,7 @@ jobs:
           path: .release-tools
           persist-credentials: false
       - name: Set up Go and reusable target cache
-        timeout-minutes: 3
+        timeout-minutes: 5
         uses: ./.release-tools/.github/actions/release-go
         with:
           scope: ${{ inputs.macos_runner }}-${{ matrix.arch }}
