@@ -17,7 +17,7 @@ permissions:
 jobs:
   verify:
     name: Verify source and tag
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     needs: verify
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
