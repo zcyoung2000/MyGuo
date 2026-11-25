@@ -224,7 +224,7 @@ import CoreImage
                       seekable:seekable,
                       ready:item?.status == .readyToPlay && hadFrame && !seeking && pendingSeek == nil,displayed:item?.status == .readyToPlay && isReadyForDisplay,playing:player?.timeControlStatus == .playing,
                       buffering:wantsPlay && (seeking || item?.status != .readyToPlay || player?.timeControlStatus == .waitingToPlayAtSpecifiedRate || (item?.isPlaybackBufferEmpty ?? false)),
-                      ended:didEnd,pictureInPicture:pipActive,width:Int(size.width),height:Int(size.height),
+                      ended:didEnd,pictureInPicture:pipActive,rangesUnsupported:false,width:Int(size.width),height:Int(size.height),
                       error:item?.error?.localizedDescription ?? player?.error?.localizedDescription ?? "",
                       ambientLeft:ambientLeft,ambientTop:ambientTop)
     }
