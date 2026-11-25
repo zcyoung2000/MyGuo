@@ -6,10 +6,6 @@ on:
       - 'v*'
   workflow_dispatch:
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 permissions:
   contents: write
 
@@ -98,8 +94,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build portable ZIP
-        run: go run ./scripts/build-windows.go
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build minimal FFmpeg and portable ZIP
+        run: |
+          ./scripts/build-ffmpeg-minimal.sh windows/amd64
+          go run ./scripts/build-windows.go -ffmpeg-dir ./tmp_ffmpeg_minimal/output
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
@@ -130,8 +133,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "MyGuo ${RELEASE_TAG#v}" \
-            --generate-notes
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "MyGuo ${RELEASE_TAG#v}" \
+              --generate-notes
+          fi
