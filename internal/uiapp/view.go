@@ -114,6 +114,19 @@ func (a *App) renderWindowDragRegions(c *ui.Context, sidebarWidth float32) {
 	}
 }
 
+// sidebarTopInset is the room the sidebar keeps above its content for the
+// window controls, when they sit over the sidebar: the band macOS draws its
+// traffic lights in, which ends at their bottom edge. Windows and Linux draw
+// their window buttons in the top-right corner, where the sidebar is not, so
+// the sidebar keeps no room for them and its content starts at the top edge.
+// Full screen hides the controls on every platform, and the band with them.
+func sidebarTopInset(bar ui.TitleBar) float32 {
+	if bar.Left <= 0 {
+		return 0
+	}
+	return bar.Bottom
+}
+
 // hongguoTheme aligns native chrome with the established frontend palette:
 // near-black surfaces, the Hongguo red accent and compact control spacing.
 func hongguoTheme(c *ui.Context) ui.Theme {
@@ -140,10 +153,13 @@ func hongguoTheme(c *ui.Context) ui.Theme {
 	return t
 }
 func (a *App) renderSidebar(c *ui.Context) {
+	top := sidebarTopInset(c.TitleBar())
 	ui.Box(c.Key("sidebar-container")).Fill().Children(func() {
 		ui.Scroll(c.Key("sidebar")).Scrollbars(false).Fill().Padding(0, 10, 16, 10).Gap(2).Children(func() {
-			// Draggable traffic light spacer (no brand text)
-			ui.Box(c.Key("sidebar-traffic-lights")).Height(44).DragWindow()
+			// Draggable room for the window controls (no brand text): the
+			// traffic lights on macOS, and nothing above the sidebar content
+			// on Windows and Linux.
+			ui.Box(c.Key("sidebar-traffic-lights")).Height(top).DragWindow()
 
 			// 发现 Section
 			ui.Text(c, "发现").FontSize(11).Bold().TextColor(ui.RGBA(255, 255, 255, 0.48)).Padding(10, 10, 4).LetterSpacing(0.6)
