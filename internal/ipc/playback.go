@@ -132,6 +132,13 @@ func (s *HongguoService) RefreshCachedEpisode(_ context.Context, dto *PlaybackDT
 		refreshed.FullStreamURL = s.media.VideoURL(dto.EpisodeID, dto.SeriesID, dto.EpisodeNum, dto.Quality)
 	}
 	refreshed.StreamURL = refreshed.FullStreamURL
+	// The stale HLS URLs must be dropped: applySlot's preroll path prefers
+	// HLSStreamURL whenever it is non-empty, so keeping the old value here
+	// would send a promoted preroll slot back onto the HLS cold start even
+	// though the complete MP4 is already on disk.
+	refreshed.HLSStreamURL = ""
+	refreshed.ProgressiveStreamURL = ""
+	refreshed.IsHLSCached = s.media.HasCachedHLS(dto.EpisodeID, dto.Quality)
 	return &refreshed, nil
 }
 
