@@ -32,12 +32,15 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 }
 
 func (a *App) cardGridContent(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, render func(int, float32, float32)) ui.Element {
-	host := ui.Column(c.Key(key)).MinWidth(0).MinHeight(0).Transition(resultTransition)
-	width := host.Bounds().W
 	baseTheme := *c.Theme()
 	gridTheme := baseTheme
 	// GridView uses Space(2) for both axes. Match its visible poster gap to list rows.
 	gridTheme.Spacing = dramaCardGap / 2
+	// SetTheme also resets the window root's background, hiding the sidebar's
+	// system material. Keep grid metrics scoped to this subtree (MyGo v0.9.1).
+	host := ui.Themed(c.Key(key), &gridTheme).Background(ui.Transparent).
+		MinWidth(0).MinHeight(0).Transition(resultTransition)
+	width := host.Bounds().W
 	gap := gridTheme.Space(2)
 	columns := max(1, int((width+gap)/(dramaMinCardWidth+gap)))
 	cardWidth := (width - float32(columns-1)*gap) / float32(columns)
@@ -48,12 +51,10 @@ func (a *App) cardGridContent(c *ui.Context, key string, state *ui.GridState, sc
 	// aligned with list rows at 20 DIPs.
 	height := textHeight + cardWidth*posterAspectRatio + max(0, cardGridVerticalGap-gap) + 2*gridCellVerticalInset + gridCellHeightRounding + extra
 	host.Children(func() {
-		c.SetTheme(&gridTheme)
-		defer c.SetTheme(&baseTheme)
 		grid := ui.GridView(c.Key(fmt.Sprintf("result:%d", a.collectionVersion())), state, len(items), dramaMinCardWidth, height, func(index int) {
-			c.SetTheme(&baseTheme)
-			defer c.SetTheme(&gridTheme)
-			render(index, cardWidth, height)
+			ui.Themed(c, &baseTheme).Background(ui.Transparent).Fill().Children(func() {
+				render(index, cardWidth, height)
+			})
 		})
 		grid.Scrollbars(false).Transition(resultTransition)
 		if scroll == nil {

@@ -13,7 +13,7 @@ import (
 )
 
 func TestSidebarTintsSystemMaterialAndKeepsContentOpaque(t *testing.T) {
-	for _, view := range []string{"discover", "history", "recommend"} {
+	for _, view := range []string{"recommend", "discover", "rank", "new", "history", "favorites", "reservations", "settings"} {
 		for _, dark := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/dark=%t", view, dark), func(t *testing.T) {
 				app := NewTestApp()
@@ -59,6 +59,60 @@ func TestSidebarTintsSystemMaterialAndKeepsContentOpaque(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
+	for _, view := range []string{"new", "search", "history", "favorites", "likes", "reservations"} {
+		t.Run(view, func(t *testing.T) {
+			app := NewTestApp()
+			app.view = view
+			tt := ui.NewTesterWith(app.Render, 1200, 800, ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: true}})
+			tt.SetVibrancy(true)
+			tt.Frame()
+			before := tt.Image().RGBAAt(100, 650)
+			app.releases.Loading = true
+			app.search.Loading = true
+			app.library.History.Loading = true
+			app.library.Favorites.Loading = true
+			app.library.Likes.Loading = true
+			app.library.Reserved.Loading = true
+			tt.Frame()
+			if pixel := tt.Image().RGBAAt(100, 650); pixel != before {
+				t.Fatalf("loading changed sidebar material from %+v to %+v", before, pixel)
+			}
+			items := make([]CatalogItem, 12)
+			for i := range items {
+				items[i] = CatalogItem{ID: fmt.Sprint(i), Title: fmt.Sprintf("侧栏回归剧集%d", i)}
+			}
+			app.releases = ReleaseState{Items: items}
+			app.search.Loading = false
+			app.search.Items = items
+			app.library.History = Library{Items: items, Loaded: true}
+			app.library.Favorites = Library{Items: items, Loaded: true}
+			app.library.Likes = Library{Items: items, Loaded: true}
+			app.library.Reserved = Library{Items: items, Loaded: true}
+			app.refreshVisibleLibraryLocked(libraryHistory)
+			app.refreshVisibleLibraryLocked(libraryFavorites)
+			app.refreshVisibleLibraryLocked(libraryLikes)
+			app.refreshVisibleLibraryLocked(libraryReservations)
+			for frame := range 3 {
+				tt.Frame()
+				if _, ok := tt.Find(items[0].Title); !ok {
+					t.Fatal("populated poster grid is missing")
+				}
+				if pixel := tt.Image().RGBAAt(100, 650); pixel != before {
+					t.Fatalf("frame %d: populated grid changed sidebar material from %+v to %+v", frame, before, pixel)
+				}
+			}
+			app.view = "settings"
+			tt.Frame()
+			app.view = view
+			tt.Frame()
+			if pixel := tt.Image().RGBAAt(100, 650); pixel != before {
+				t.Fatalf("returning to a populated grid changed sidebar material: %+v", pixel)
+			}
+		})
 	}
 }
 
