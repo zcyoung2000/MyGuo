@@ -83,6 +83,11 @@ func TestRefreshCachedEpisodeUpgradesStaleHLSDTO(t *testing.T) {
 	if got.StreamURL != got.FullStreamURL || got.FullStreamURL == "" || got.ProgressiveStreamURL != "" {
 		t.Fatalf("upgraded dto must point StreamURL at the full file: stream=%q full=%q", got.StreamURL, got.FullStreamURL)
 	}
+	// applySlot's preroll path prefers HLS whenever HLSStreamURL is non-empty,
+	// so the upgrade must clear it or promotion reloads the HLS cold start.
+	if got.HLSStreamURL != "" {
+		t.Fatalf("upgraded dto still carries a stale HLS url %q; preroll promotion would replay the HLS cold path", got.HLSStreamURL)
+	}
 	if requests.Load() != 0 {
 		t.Fatalf("cache refresh made %d upstream requests; expected local-only DTO refresh", requests.Load())
 	}
