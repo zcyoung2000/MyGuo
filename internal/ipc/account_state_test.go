@@ -44,7 +44,7 @@ func TestLogoutRestartDoesNotImportLegacyCredentials(t *testing.T) {
 	appDir := t.TempDir()
 	service, store := accountTestService(t, appDir, home)
 	if cookies, _ := service.authCredentials(); cookies != "" {
-		t.Fatal("startup imported credentials without an explicit import")
+		t.Fatal("startup imported another app's credentials")
 	}
 	if _, err := service.LoginWithCookies(context.Background(), "sessionid=current", "token"); err != nil {
 		t.Fatal(err)

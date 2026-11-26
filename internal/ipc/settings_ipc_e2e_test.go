@@ -12,17 +12,10 @@ import (
 	userstore "myguo/internal/store"
 )
 
-func TestSettingsIPCReportsStorageDeviceAndLegacyAccountWithoutRuntimeWiring(t *testing.T) {
+func TestSettingsIPCReportsStorageDeviceAndPreservesSignedInAccount(t *testing.T) {
 	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
 	appDir := t.TempDir()
 	home := t.TempDir()
-	legacy := filepath.Join(home, "Library", "Application Support", "hgplayer", "account.json")
-	if err := os.MkdirAll(filepath.Dir(legacy), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(legacy, []byte(`{"cookies":"sessionid=old","profile":{"userId":"710000000000001","nickname":"Old Account"}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
 	cacheDir := t.TempDir()
 	media := newTestMediaServer(t, cacheDir)
 	cacheDir = media.CacheDir()
@@ -38,7 +31,7 @@ func TestSettingsIPCReportsStorageDeviceAndLegacyAccountWithoutRuntimeWiring(t *
 	t.Cleanup(func() { CloseService(service) })
 	service.httpClient = &http.Client{Transport: ipcHandlerTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "user/info") {
-			_, _ = w.Write([]byte(`{"code":0,"data":{"user_id":"710000000000001","user_name":"Old Account"}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user_id":"710000000000001","user_name":"Test account"}}`))
 			return
 		}
 		http.NotFound(w, r)
@@ -52,24 +45,12 @@ func TestSettingsIPCReportsStorageDeviceAndLegacyAccountWithoutRuntimeWiring(t *
 	if err != nil || device["deviceId"] == "" || device["version"] != "2.0.0" || device["arch"] == "" {
 		t.Fatalf("GetDeviceInfo = %+v, %v", device, err)
 	}
-	if _, statErr := os.Stat(legacy); statErr != nil {
-		t.Fatalf("legacy fixture disappeared: %v, home=%s", statErr, home)
-	}
-	t.Setenv("HOME", home)
-	if runtime.GOOS == "windows" {
-		// os.UserHomeDir reads USERPROFILE on Windows, not HOME.
-		t.Setenv("USERPROFILE", home)
-	}
-	existing, err := service.CheckExistingAccount(context.Background())
-	if err != nil || existing["exists"] != true || existing["nickname"] != "Old Account" {
-		t.Fatalf("CheckExistingAccount = %+v, %v", existing, err)
-	}
-	if _, err := service.ImportHgplayerAccount(context.Background()); err != nil {
-		t.Fatalf("ImportHgplayerAccount failed: %v", err)
+	if _, err := service.LoginWithCookies(context.Background(), "sessionid=current", ""); err != nil {
+		t.Fatalf("LoginWithCookies failed: %v", err)
 	}
 	profile, err := service.GetProfile(context.Background())
-	if err != nil || !profile.LoggedIn || profile.Nickname != "Old Account" || profile.UserID != "710000000000001" {
-		t.Fatalf("profile after import = %+v, %v", profile, err)
+	if err != nil || !profile.LoggedIn || profile.Nickname != "Test account" || profile.UserID != "710000000000001" {
+		t.Fatalf("profile after login = %+v, %v", profile, err)
 	}
 	cleared, err := service.ClearCache(context.Background())
 	if err != nil || cleared != 5120 {
@@ -80,36 +61,6 @@ func TestSettingsIPCReportsStorageDeviceAndLegacyAccountWithoutRuntimeWiring(t *
 	}
 	if _, ok := service.store.GetAccountAuth(); !ok {
 		t.Fatal("ClearCache must not clear account credentials")
-	}
-}
-
-func TestSettingsIPCImportRejectsInvalidLegacyData(t *testing.T) {
-	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
-	home := t.TempDir()
-	legacy := filepath.Join(home, "Library", "Application Support", "hgplayer", "account.json")
-	if err := os.MkdirAll(filepath.Dir(legacy), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(legacy, []byte(`{"cookies":""}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	store, storeErr := userstore.NewStore(t.TempDir())
-	if storeErr != nil {
-		t.Fatal(storeErr)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	service := newHongguoService(nil, store, newTestMediaServer(t, t.TempDir()), t.TempDir(), home)
-	t.Cleanup(func() { CloseService(service) })
-	t.Setenv("HOME", home)
-	if runtime.GOOS == "windows" {
-		// os.UserHomeDir reads USERPROFILE on Windows, not HOME.
-		t.Setenv("USERPROFILE", home)
-	}
-	if _, err := service.ImportHgplayerAccount(context.Background()); err == nil {
-		t.Fatal("invalid legacy account was accepted")
-	}
-	if existing, err := service.CheckExistingAccount(context.Background()); err != nil || existing["exists"] != false {
-		t.Fatalf("invalid legacy account visible = %+v, %v", existing, err)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 )
 
 func anonymousUserProfile(deviceID string) UserProfile {
-	return UserProfile{UserID: "anonymous", Nickname: "myguo用户", DeviceID: deviceID}
+	return UserProfile{UserID: "anonymous", Nickname: "MyGuo 用户", DeviceID: deviceID}
 }
 
 func clearUserDataTx(tx *sql.Tx) error {
@@ -339,7 +339,7 @@ func (s *Store) migrateOwnAccountJSON() error {
 	}
 	legacy.Profile.LoggedIn = true
 	if legacy.Profile.Nickname == "" {
-		legacy.Profile.Nickname = "myguo用户"
+		legacy.Profile.Nickname = "MyGuo 用户"
 	}
 	if err := s.SetAuthenticatedAccount(AccountAuth{
 		Cookies: legacy.Cookies,

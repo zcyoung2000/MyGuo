@@ -3,6 +3,7 @@ package uiapp
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -15,7 +16,6 @@ type settingsTestProvider struct {
 	profile ipc.UserProfile
 	cache   int64
 	device  map[string]string
-	legacy  map[string]any
 	calls   []string
 	err     error
 }
@@ -27,10 +27,6 @@ func (f *settingsTestProvider) GetProfile(context.Context) (ipc.UserProfile, err
 func (f *settingsTestProvider) GetCacheSize(context.Context) (int64, error) {
 	f.calls = append(f.calls, "GetCacheSize")
 	return f.cache, nil
-}
-func (f *settingsTestProvider) CheckExistingAccount(context.Context) (map[string]any, error) {
-	f.calls = append(f.calls, "CheckExistingAccount")
-	return f.legacy, nil
 }
 func (f *settingsTestProvider) LoginWithCookies(_ context.Context, cookie, _ string) (*ipc.UserProfile, error) {
 	f.calls = append(f.calls, "LoginWithCookies:"+cookie)
@@ -52,10 +48,6 @@ func (f *settingsTestProvider) RefreshUserProfile(context.Context) (*ipc.UserPro
 func (f *settingsTestProvider) Logout(context.Context) error {
 	f.calls = append(f.calls, "Logout")
 	return nil
-}
-func (f *settingsTestProvider) ImportHgplayerAccount(context.Context) (*ipc.UserProfile, error) {
-	f.calls = append(f.calls, "ImportHgplayerAccount")
-	return &ipc.UserProfile{UserID: "710", Nickname: "Old Account", LoggedIn: true}, nil
 }
 func (f *settingsTestProvider) ClearCache(context.Context) (int64, error) {
 	f.calls = append(f.calls, "ClearCache")
@@ -102,7 +94,7 @@ func settingsFixture() (*App, *settingsTestProvider, *ui.Tester) {
 	app.view = "settings"
 	app.settings = Settings{
 		Profile: fake.profile, CacheSize: fake.cache,
-		LegacyNickname: "Old Account", HasLegacy: true, LoginOpen: true,
+		LoginOpen: true,
 	}
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
@@ -120,7 +112,7 @@ func TestSettingsRendersNativeSectionsAndActions(t *testing.T) {
 	for _, text := range []string{
 		"设置", "Henry", "已登录账号", "刷新资料", "退出登录", "切换账号",
 		"存储管理", "本地媒体缓存", "5.0 MB", "清理缓存",
-		"扫码登录", "打开手机红果 App，扫一扫后确认登录", "刷新二维码", "取消",
+		"扫码登录", "打开手机 App，扫一扫后确认登录", "刷新二维码", "取消",
 	} {
 		if !tt.HasText(text) {
 			t.Fatalf("native settings missing %q: %v", text, tt.Texts())
@@ -137,23 +129,41 @@ func TestSettingsRendersNativeSectionsAndActions(t *testing.T) {
 	}
 }
 
-func TestAnonymousSettingsShowsLegacyImportAndLogin(t *testing.T) {
-	app := NewTestApp()
-	fake := &settingsTestProvider{profile: ipc.UserProfile{}, cache: 1048576, legacy: map[string]any{"exists": true, "nickname": "Old Account", "userId": "710000000000001"}}
-	app.settingsTestProvider = fake
-	app.view = "settings"
-	app.settings = Settings{CacheSize: fake.cache, LegacyNickname: "Old Account", HasLegacy: true}
+func TestAnonymousSettingsOffersNormalLogin(t *testing.T) {
+	app, fake := qrSettingsFixture(t)
+	fake.profile = ipc.UserProfile{UserID: "anonymous", Nickname: "myguo用户"}
+	fake.cache = 1048576
+	app.settings = Settings{Loading: true}
+	app.LoadSettings()
+	if !slices.Equal(fake.calls, []string{"GetProfile", "GetCacheSize"}) {
+		t.Fatalf("settings load made unexpected calls: %v", fake.calls)
+	}
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
-	for _, text := range []string{"myguo用户", "匿名设备访问", "检测到本机旧版账号：Old Account", "一键同步登录", "立即登录"} {
+	for _, text := range []string{"MyGuo 用户", "匿名设备访问", "立即登录", "本地媒体缓存", "1.0 MB"} {
 		if !tt.HasText(text) {
 			t.Fatalf("anonymous settings missing %q: %v", text, tt.Texts())
 		}
 	}
-	if _, ok := tt.Find("退出登录"); ok {
-		t.Fatal("anonymous settings exposed logout")
+	for _, text := range []string{"退出登录", "检测到本机已有登录凭据", "检测到本机旧版账号", "一键同步登录"} {
+		if tt.HasText(text) {
+			t.Fatalf("anonymous settings exposed %q", text)
+		}
 	}
-	_ = app
+	exportAuditScreenshot(t, tt, "settings-anonymous")
+	if err := tt.Click("立即登录"); err != nil {
+		t.Fatal(err)
+	}
+	waitQRState(t, app, "waiting")
+	tt.Frame()
+	for _, text := range []string{"扫码登录", "刷新二维码", "取消"} {
+		if !tt.HasText(text) {
+			t.Fatalf("normal login missing %q: %v", text, tt.Texts())
+		}
+	}
+	if app.SettingsState().Profile.LoggedIn {
+		t.Fatal("opening QR login authenticated the anonymous profile")
+	}
 }
 
 func TestSettingsMediaRoutingKeepsRecommendAndDetail(t *testing.T) {
@@ -183,13 +193,8 @@ func TestSettingsLoadAggregatesIPCError(t *testing.T) {
 	fake := &settingsTestProvider{err: errors.New("boom")}
 	app.settingsTestProvider = fake
 	app.settings = Settings{Loading: true}
-	_, profileErr := fake.GetProfile(context.Background())
-	_, cacheErr := fake.GetCacheSize(context.Background())
-	_, legacyErr := fake.CheckExistingAccount(context.Background())
-	app.mu.Lock()
-	app.settings.Error = settingsError(errors.Join(profileErr, cacheErr, legacyErr))
-	app.mu.Unlock()
-	if app.SettingsState().Error == "" {
+	app.LoadSettings()
+	if state := app.SettingsState(); state.Loading || state.Error == "" {
 		t.Fatal("aggregated settings load error missing")
 	}
 }

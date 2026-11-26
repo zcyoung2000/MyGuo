@@ -943,26 +943,6 @@ func (s *Store) importOldAppData() {
 	if err != nil {
 		return
 	}
-	oldAccountPath := filepath.Join(home, "Library", "Application Support", "hgplayer", "account.json")
-	if accBytes, err := os.ReadFile(oldAccountPath); err == nil {
-		var oldAcc struct {
-			Profile struct {
-				LoggedIn bool   `json:"loggedIn"`
-				UserID   string `json:"userId"`
-				Nickname string `json:"nickname"`
-				Avatar   string `json:"avatar"`
-			} `json:"profile"`
-		}
-		if json.Unmarshal(accBytes, &oldAcc) == nil && oldAcc.Profile.Nickname != "" {
-			_ = s.UpdateProfile(UserProfile{
-				UserID:   oldAcc.Profile.UserID,
-				Nickname: oldAcc.Profile.Nickname,
-				Avatar:   oldAcc.Profile.Avatar,
-				LoggedIn: oldAcc.Profile.LoggedIn,
-			})
-		}
-	}
-
 	oldDbPath := filepath.Join(home, "Library", "Application Support", "hgplayer", "hgplayer.db")
 	if _, err := os.Stat(oldDbPath); err == nil {
 		s.importOldRecords(oldDbPath)
@@ -2274,7 +2254,7 @@ func (s *Store) GetProfile() UserProfile {
 	if err != nil {
 		return UserProfile{
 			UserID:   "anonymous",
-			Nickname: "myguo用户",
+			Nickname: "MyGuo 用户",
 			Avatar:   "",
 			DeviceID: "",
 			LoggedIn: false,

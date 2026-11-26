@@ -129,7 +129,6 @@ func (a *App) runQRLogin(ctx context.Context, cancel context.CancelFunc, version
 			a.settings.Profile = *result.Profile
 			a.generation++
 			a.settings.Loading = false
-			a.settings.HasLegacy = false
 			a.settings.LoginOpen = false
 			a.settings.QR = QRLoginState{}
 			a.settings.Success = "登录成功！欢迎回来，" + settingsDisplayName(result.Profile.Nickname)
@@ -161,11 +160,11 @@ func (a *App) renderSettingsLogin(c *ui.Context, state Settings) {
 	ui.Divider(c)
 	ui.Column(c.Key("settings-login")).Gap(12).FillWidth().Children(func() {
 		ui.Text(c, "扫码登录").FontSize(14).Bold()
-		ui.Text(c, "打开手机红果 App，扫一扫后确认登录").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "打开手机 App，扫一扫后确认登录").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Box(c.Key("login-qr-host")).Size(216, 216).Shrink(0).Radius(12).Padding(12).
 			Background(ui.Hex("#191b23")).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 			if state.QR.Image != nil {
-				ui.Box(c).Size(192, 192).Padding(8).Background(ui.Hex("#ffffff")).Children(func() { ui.Image(c, state.QR.Image).Size(176, 176).Label("红果登录二维码") })
+				ui.Box(c).Size(192, 192).Padding(8).Background(ui.Hex("#ffffff")).Children(func() { ui.Image(c, state.QR.Image).Size(176, 176).Label("登录二维码") })
 			} else if state.QR.Error != "" {
 				ui.Text(c, state.QR.Error).FontSize(12).TextColor(c.Theme().TextMuted).MaxLines(4)
 			}

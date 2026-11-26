@@ -142,15 +142,13 @@ type LibraryView struct {
 }
 
 type Settings struct {
-	Profile        ipc.UserProfile
-	CacheSize      int64
-	LegacyNickname string
-	HasLegacy      bool
-	Loading        bool
-	LoginOpen      bool
-	QR             QRLoginState
-	Success        string
-	Error          string
+	Profile   ipc.UserProfile
+	CacheSize int64
+	Loading   bool
+	LoginOpen bool
+	QR        QRLoginState
+	Success   string
+	Error     string
 }
 
 // App state and all render snapshots are protected by mu. Network work never holds it.

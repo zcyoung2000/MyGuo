@@ -647,10 +647,9 @@ func TestNativePageScreens(t *testing.T) {
 		}},
 		{name: "settings", view: "settings", prepare: func(app *App) {
 			app.settings = Settings{
-				Profile:        ipc.UserProfile{UserID: "710000000000001", Nickname: "视觉审查账号", LoggedIn: true},
-				CacheSize:      5 << 20,
-				LegacyNickname: "Old Account",
-				LoginOpen:      true,
+				Profile:   ipc.UserProfile{UserID: "710000000000001", Nickname: "视觉审查账号", LoggedIn: true},
+				CacheSize: 5 << 20,
+				LoginOpen: true,
 			}
 		}},
 	}

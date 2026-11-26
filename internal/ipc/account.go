@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -209,57 +207,6 @@ func (s *HongguoService) Logout(ctx context.Context) error {
 	s.invalidateUserDataCaches()
 
 	return nil
-}
-
-func (s *HongguoService) CheckExistingAccount(ctx context.Context) (map[string]any, error) {
-	home, _ := os.UserHomeDir()
-	oldAccPath := filepath.Join(home, "Library", "Application Support", "hgplayer", "account.json")
-	data, err := os.ReadFile(oldAccPath)
-	if err != nil {
-		return sanitizeIPC(map[string]any{"exists": false}), nil
-	}
-	var acc struct {
-		Cookies string `json:"cookies"`
-		Token   string `json:"token"`
-		Profile struct {
-			UserID   string `json:"userId"`
-			Nickname string `json:"nickname"`
-			Avatar   string `json:"avatar"`
-			LoggedIn bool   `json:"loggedIn"`
-		} `json:"profile"`
-	}
-	if err := json.Unmarshal(data, &acc); err != nil || acc.Cookies == "" {
-		return sanitizeIPC(map[string]any{"exists": false}), nil
-	}
-
-	avatar := acc.Profile.Avatar
-	if avatar != "" {
-		avatar = s.media.ImageURL(avatar)
-	}
-
-	return sanitizeIPC(map[string]any{
-		"exists":   true,
-		"nickname": acc.Profile.Nickname,
-		"userId":   acc.Profile.UserID,
-		"avatar":   avatar,
-	}), nil
-}
-
-func (s *HongguoService) ImportHgplayerAccount(ctx context.Context) (*UserProfile, error) {
-	home, _ := os.UserHomeDir()
-	oldAccPath := filepath.Join(home, "Library", "Application Support", "hgplayer", "account.json")
-	data, err := os.ReadFile(oldAccPath)
-	if err != nil {
-		return nil, fmt.Errorf("未找到旧版应用账号数据")
-	}
-	var acc struct {
-		Cookies string `json:"cookies"`
-		Token   string `json:"token"`
-	}
-	if err := json.Unmarshal(data, &acc); err != nil || acc.Cookies == "" {
-		return nil, fmt.Errorf("旧版账号数据无效")
-	}
-	return s.LoginWithCookies(ctx, acc.Cookies, acc.Token)
 }
 
 // ============================================================================

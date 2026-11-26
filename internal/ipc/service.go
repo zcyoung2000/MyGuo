@@ -242,8 +242,8 @@ func newHongguoService(client *hgapi.Client, store *Store, media *MediaServer, a
 			svc.media.SetSpareDevicePool(svc.spareDevices)
 		}
 	}
-	// Restore only credentials explicitly saved by this app. Legacy import is
-	// offered separately and must never undo an explicit logout on restart.
+	// Restore only credentials explicitly saved by this app. Never import
+	// another app's credentials or undo an explicit logout on restart.
 	if err := svc.restoreSavedAccount(); err != nil {
 		log.Printf("[account] restore failed: %v", err)
 	}

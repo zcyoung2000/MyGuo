@@ -14,12 +14,10 @@ import (
 type settingsProvider interface {
 	GetProfile(context.Context) (ipc.UserProfile, error)
 	GetCacheSize(context.Context) (int64, error)
-	CheckExistingAccount(context.Context) (map[string]any, error)
 	BeginQRLogin(context.Context) (*ipc.QRLoginDTO, error)
 	PollQRLogin(context.Context, string) (*ipc.QRLoginStatusDTO, error)
 	RefreshUserProfile(context.Context) (*ipc.UserProfile, error)
 	Logout(context.Context) error
-	ImportHgplayerAccount(context.Context) (*ipc.UserProfile, error)
 	ClearCache(context.Context) (int64, error)
 }
 
@@ -39,7 +37,7 @@ func (a *App) LoadSettings() {
 	version := uint64(a.generation)
 	provider := a.settingsProvider()
 	if provider == nil {
-		a.finishSettingsLoadLocked(version, ipc.UserProfile{}, 0, nil, errSettingsUnavailable)
+		a.finishSettingsLoadLocked(version, ipc.UserProfile{}, 0, errSettingsUnavailable)
 		a.mu.Unlock()
 		return
 	}
@@ -48,27 +46,24 @@ func (a *App) LoadSettings() {
 	defer cancel()
 	profile, profileErr := provider.GetProfile(ctx)
 	cacheSize, cacheErr := provider.GetCacheSize(ctx)
-	legacy, legacyErr := provider.CheckExistingAccount(ctx)
-	err := firstError(profileErr, cacheErr, legacyErr)
-	a.finishSettingsLoad(version, profile, cacheSize, legacy, err)
+	err := firstError(profileErr, cacheErr)
+	a.finishSettingsLoad(version, profile, cacheSize, err)
 }
 
-func (a *App) finishSettingsLoad(version uint64, profile ipc.UserProfile, cacheSize int64, legacy map[string]any, err error) {
+func (a *App) finishSettingsLoad(version uint64, profile ipc.UserProfile, cacheSize int64, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	success := a.settings.Success
-	a.finishSettingsLoadLocked(version, profile, cacheSize, legacy, err)
+	a.finishSettingsLoadLocked(version, profile, cacheSize, err)
 	a.settings.Success = success
 }
 
-func (a *App) finishSettingsLoadLocked(version uint64, profile ipc.UserProfile, cacheSize int64, legacy map[string]any, err error) {
+func (a *App) finishSettingsLoadLocked(version uint64, profile ipc.UserProfile, cacheSize int64, err error) {
 	if version != uint64(a.generation) {
 		return
 	}
 	a.settings.Profile = profile
 	a.settings.CacheSize = cacheSize
-	a.settings.HasLegacy = !profile.LoggedIn && legacy != nil && legacy["exists"] == true
-	a.settings.LegacyNickname, _ = legacy["nickname"].(string)
 	a.settings.Loading = false
 	a.settings.Error = settingsError(err)
 	a.invalidate()
@@ -107,13 +102,6 @@ func accountBadge(loggedIn bool) string {
 	return "匿名设备访问"
 }
 
-func legacyAccountName(state Settings) string {
-	if state.LegacyNickname != "" {
-		return state.LegacyNickname
-	}
-	return "旧账号"
-}
-
 func settingsDisplayName(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "用户"
@@ -143,16 +131,6 @@ func (a *App) LogoutSettings() {
 			return "", err
 		}
 		return "已安全退出登录", nil
-	})
-}
-
-func (a *App) ImportSettingsLegacy() {
-	a.beginSettingsAction("settings-import", func(ctx context.Context, provider settingsProvider) (string, error) {
-		profile, err := provider.ImportHgplayerAccount(ctx)
-		if err != nil {
-			return "", err
-		}
-		return "账号导入成功！当前用户：" + settingsDisplayName(profile.Nickname), nil
 	})
 }
 
@@ -226,9 +204,8 @@ func (a *App) runSettingsMutation(key string, version uint64, action func(contex
 	a.mu.Unlock()
 	profile, profileErr := provider.GetProfile(ctx)
 	cacheSize, cacheErr := provider.GetCacheSize(ctx)
-	legacy, legacyErr := provider.CheckExistingAccount(ctx)
-	err = firstError(profileErr, cacheErr, legacyErr)
-	a.finishSettingsLoad(version, profile, cacheSize, legacy, err)
+	err = firstError(profileErr, cacheErr)
+	a.finishSettingsLoad(version, profile, cacheSize, err)
 }
 
 func (a *App) settingsButton(c *ui.Context, key, label, variant string, action func()) {
@@ -243,9 +220,6 @@ func (a *App) settingsButton(c *ui.Context, key, label, variant string, action f
 	case "danger":
 		row.Background(ui.RGBA(255, 77, 95, 0.14)).Border(1, ui.RGBA(255, 77, 95, 0.30))
 		hoverBackground(row, ui.RGBA(255, 77, 95, 0.14), ui.RGBA(255, 77, 95, 0.24))
-	case "accent":
-		row.Background(ui.RGBA(254, 44, 85, 0.16)).Border(1, ui.RGBA(254, 44, 85, 0.36))
-		hoverBackground(row, ui.RGBA(254, 44, 85, 0.16), ui.RGBA(254, 44, 85, 0.28))
 	default:
 		row.Background(ui.RGBA(255, 255, 255, 0.06)).Border(1, ui.RGBA(255, 255, 255, 0.09))
 		hoverBackground(row, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
@@ -260,8 +234,6 @@ func (a *App) settingsButton(c *ui.Context, key, label, variant string, action f
 			text.Bold().TextColor(ui.Hex("#ffffff"))
 		case "danger":
 			text.TextColor(ui.Hex("#ff8f98"))
-		case "accent":
-			text.TextColor(ui.Hex("#ff5d7c"))
 		default:
 			text.TextColor(ui.RGBA(255, 255, 255, 0.82))
 		}
@@ -321,8 +293,8 @@ func (a *App) renderSettingsProfile(c *ui.Context, state Settings) {
 			ui.Column(c.Key("settings-profile-info")).Grow(1).Gap(6).MinWidth(0).Children(func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).MinWidth(0).Children(func() {
 					nickname := settingsDisplayName(state.Profile.Nickname)
-					if !state.Profile.LoggedIn && state.Profile.Nickname == "" {
-						nickname = "myguo用户"
+					if !state.Profile.LoggedIn && (state.Profile.Nickname == "" || state.Profile.Nickname == "myguo用户") {
+						nickname = "MyGuo 用户"
 					}
 					ui.Text(c, nickname).FontSize(16).Bold().TextColor(ui.Hex("#ffffff")).SingleLine().MinWidth(0)
 					badgeColor, textColor := ui.RGBA(255, 255, 255, 0.08), ui.RGBA(255, 255, 255, 0.70)
@@ -352,16 +324,6 @@ func (a *App) renderSettings(c *ui.Context) {
 		state = a.settings
 		a.settingsCard(c, "settings-account", func() {
 			a.renderSettingsProfile(c, state)
-			if !state.Profile.LoggedIn && state.HasLegacy {
-				ui.Row(c.Key("settings-import-banner")).Gap(16).AlignItems(ui.Center).Padding(12, 16).Radius(10).
-					Background(ui.RGBA(254, 44, 85, 0.08)).Border(1, ui.RGBA(254, 44, 85, 0.25)).Children(func() {
-					ui.Column(c.Key("legacy-info")).Grow(1).Gap(2).Children(func() {
-						ui.Text(c, "检测到本机已有登录凭据").FontSize(13).Bold().TextColor(ui.Hex("#ffffff"))
-						ui.Textf(c, "检测到本机旧版账号：%s，支持一键同步", legacyAccountName(state)).FontSize(11).TextColor(c.Theme().TextMuted)
-					})
-					a.settingsButton(c, "import-legacy", "一键同步登录", "accent", a.ImportSettingsLegacy)
-				})
-			}
 			if state.LoginOpen {
 				a.renderSettingsLogin(c, state)
 			}

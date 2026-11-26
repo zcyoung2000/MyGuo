@@ -3,7 +3,7 @@ package ipc
 import "fmt"
 
 func anonymousProfile(deviceID string) UserProfile {
-	return UserProfile{UserID: "anonymous", Nickname: "myguo用户", DeviceID: deviceID}
+	return UserProfile{UserID: "anonymous", Nickname: "MyGuo 用户", DeviceID: deviceID}
 }
 
 func (s *HongguoService) restoreSavedAccount() error {

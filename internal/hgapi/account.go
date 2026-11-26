@@ -66,7 +66,7 @@ func (c *SessionClient) ValidateAccount(ctx context.Context) (*AccountProfile, e
 	}
 	nickname := strings.TrimSpace(res.Data.UserName)
 	if nickname == "" {
-		nickname = "myguo用户"
+		nickname = "MyGuo 用户"
 	}
 	avatar := strings.TrimSpace(res.Data.AvatarURL)
 
