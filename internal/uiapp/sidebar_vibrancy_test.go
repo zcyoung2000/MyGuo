@@ -28,20 +28,22 @@ func TestSidebarExposesSystemMaterialAndKeepsContentOpaque(t *testing.T) {
 						c.Root().Background(ui.RGB(255, 0, 255))
 					}
 				}, 1200, 800, ui.TesterOptions{Dark: dark, Preferences: ui.Preferences{ReduceMotion: true}})
+				// Keep the full DIP layout while limiting interpreted shader pixels.
+				tt.SetScale(.5)
 				tt.SetVibrancy(true)
 				tt.Frame()
-				if pixel := tt.Image().RGBAAt(24, 650); pixel.A != 0 {
+				if pixel := tt.Image().RGBAAt(12, 325); pixel.A != 0 {
 					t.Fatalf("sidebar adds a layer over the system material: %+v", pixel)
 				}
-				if pixel := tt.Image().RGBAAt(400, 650); pixel.A != 255 {
+				if pixel := tt.Image().RGBAAt(200, 325); pixel.A != 255 {
 					t.Fatalf("content pane became transparent: %+v", pixel)
 				}
 				pressure = true
 				tt.Frame()
-				if pixel := tt.Image().RGBAAt(24, 650); pixel != (color.RGBA{255, 0, 255, 255}) {
+				if pixel := tt.Image().RGBAAt(12, 325); pixel != (color.RGBA{255, 0, 255, 255}) {
 					t.Fatalf("a sidebar layer blocks the material stress background: %+v", pixel)
 				}
-				if pixel := tt.Image().RGBAAt(400, 650); pixel == (color.RGBA{255, 0, 255, 255}) {
+				if pixel := tt.Image().RGBAAt(200, 325); pixel == (color.RGBA{255, 0, 255, 255}) {
 					t.Fatal("material stress background leaked through the content pane")
 				}
 				if dir := os.Getenv("MYGUO_SIDEBAR_SHOTS"); dir != "" {
@@ -68,9 +70,11 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 			app := NewTestApp()
 			app.view = view
 			tt := ui.NewTesterWith(app.Render, 1200, 800, ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: true}})
+			// Keep the full DIP layout while limiting interpreted shader pixels.
+			tt.SetScale(.5)
 			tt.SetVibrancy(true)
 			tt.Frame()
-			before := tt.Image().RGBAAt(24, 650)
+			before := tt.Image().RGBAAt(12, 325)
 			app.releases.Loading = true
 			app.search.Loading = true
 			app.library.History.Loading = true
@@ -78,7 +82,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 			app.library.Likes.Loading = true
 			app.library.Reserved.Loading = true
 			tt.Frame()
-			if pixel := tt.Image().RGBAAt(24, 650); pixel != before {
+			if pixel := tt.Image().RGBAAt(12, 325); pixel != before {
 				t.Fatalf("loading changed sidebar material from %+v to %+v", before, pixel)
 			}
 			items := make([]CatalogItem, 12)
@@ -101,7 +105,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 				if _, ok := tt.Find(items[0].Title); !ok {
 					t.Fatal("populated poster grid is missing")
 				}
-				if pixel := tt.Image().RGBAAt(24, 650); pixel != before {
+				if pixel := tt.Image().RGBAAt(12, 325); pixel != before {
 					t.Fatalf("frame %d: populated grid changed sidebar material from %+v to %+v", frame, before, pixel)
 				}
 			}
@@ -109,7 +113,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 			tt.Frame()
 			app.view = view
 			tt.Frame()
-			if pixel := tt.Image().RGBAAt(24, 650); pixel != before {
+			if pixel := tt.Image().RGBAAt(12, 325); pixel != before {
 				t.Fatalf("returning to a populated grid changed sidebar material: %+v", pixel)
 			}
 		})
