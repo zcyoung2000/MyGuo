@@ -12,7 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-func TestSidebarTintsSystemMaterialAndKeepsContentOpaque(t *testing.T) {
+func TestSidebarExposesSystemMaterialAndKeepsContentOpaque(t *testing.T) {
 	for _, view := range []string{"recommend", "discover", "rank", "new", "history", "favorites", "reservations", "settings"} {
 		for _, dark := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/dark=%t", view, dark), func(t *testing.T) {
@@ -30,15 +30,15 @@ func TestSidebarTintsSystemMaterialAndKeepsContentOpaque(t *testing.T) {
 				}, 1200, 800, ui.TesterOptions{Dark: dark, Preferences: ui.Preferences{ReduceMotion: true}})
 				tt.SetVibrancy(true)
 				tt.Frame()
-				if pixel := tt.Image().RGBAAt(100, 650); pixel.A < 160 || pixel.A > 170 || pixel.R > 20 || pixel.G > 20 || pixel.B > 20 {
-					t.Fatalf("sidebar must retain the guide's dark 65%% veil over native frost: %+v", pixel)
+				if pixel := tt.Image().RGBAAt(24, 650); pixel.A != 0 {
+					t.Fatalf("sidebar adds a layer over the system material: %+v", pixel)
 				}
 				if pixel := tt.Image().RGBAAt(400, 650); pixel.A != 255 {
 					t.Fatalf("content pane became transparent: %+v", pixel)
 				}
 				pressure = true
 				tt.Frame()
-				if pixel := tt.Image().RGBAAt(100, 650); pixel != (color.RGBA{255, 0, 255, 255}) {
+				if pixel := tt.Image().RGBAAt(24, 650); pixel != (color.RGBA{255, 0, 255, 255}) {
 					t.Fatalf("a sidebar layer blocks the material stress background: %+v", pixel)
 				}
 				if pixel := tt.Image().RGBAAt(400, 650); pixel == (color.RGBA{255, 0, 255, 255}) {
@@ -70,7 +70,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 			tt := ui.NewTesterWith(app.Render, 1200, 800, ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: true}})
 			tt.SetVibrancy(true)
 			tt.Frame()
-			before := tt.Image().RGBAAt(100, 650)
+			before := tt.Image().RGBAAt(24, 650)
 			app.releases.Loading = true
 			app.search.Loading = true
 			app.library.History.Loading = true
@@ -78,7 +78,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 			app.library.Likes.Loading = true
 			app.library.Reserved.Loading = true
 			tt.Frame()
-			if pixel := tt.Image().RGBAAt(100, 650); pixel != before {
+			if pixel := tt.Image().RGBAAt(24, 650); pixel != before {
 				t.Fatalf("loading changed sidebar material from %+v to %+v", before, pixel)
 			}
 			items := make([]CatalogItem, 12)
@@ -101,7 +101,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 				if _, ok := tt.Find(items[0].Title); !ok {
 					t.Fatal("populated poster grid is missing")
 				}
-				if pixel := tt.Image().RGBAAt(100, 650); pixel != before {
+				if pixel := tt.Image().RGBAAt(24, 650); pixel != before {
 					t.Fatalf("frame %d: populated grid changed sidebar material from %+v to %+v", frame, before, pixel)
 				}
 			}
@@ -109,7 +109,7 @@ func TestPopulatedGridDoesNotChangeSidebarMaterial(t *testing.T) {
 			tt.Frame()
 			app.view = view
 			tt.Frame()
-			if pixel := tt.Image().RGBAAt(100, 650); pixel != before {
+			if pixel := tt.Image().RGBAAt(24, 650); pixel != before {
 				t.Fatalf("returning to a populated grid changed sidebar material: %+v", pixel)
 			}
 		})
@@ -123,22 +123,14 @@ func TestSidebarMaterialFollowsTransparencyPreference(t *testing.T) {
 		tt.SetVibrancy(state.material)
 		tt.SetPreferences(ui.Preferences{ReduceMotion: true, ReduceTransparency: state.reduce})
 		tt.Frame()
-		alpha := tt.Image().RGBAAt(100, 650).A
-		if translucent := state.material && !state.reduce; translucent != (alpha > 0 && alpha < 255) {
+		alpha := tt.Image().RGBAAt(24, 650).A
+		wantAlpha := uint8(255)
+		if state.material && !state.reduce {
+			wantAlpha = 0
+		}
+		if alpha != wantAlpha {
 			t.Fatalf("material=%t reduceTransparency=%t sidebar alpha=%d", state.material, state.reduce, alpha)
 		}
-	}
-}
-
-func TestSidebarVeilKeepsBrightSystemMaterialDark(t *testing.T) {
-	// The acrylic guide measures the brightest system material at #898c8d.
-	// A transparent root exposes that gray; the Ground veil must darken it.
-	background := windowGroundColor(true).Over(ui.Hex("#898c8d"))
-	if background.R > 65 || background.G > 65 || background.B > 70 {
-		t.Fatalf("system material washes out the dark sidebar: %+v", background)
-	}
-	if windowGroundColor(false).A != 255 {
-		t.Fatal("a window without system material must use a solid Ground fallback")
 	}
 }
 

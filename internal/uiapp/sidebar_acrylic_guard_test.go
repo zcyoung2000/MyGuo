@@ -11,7 +11,7 @@ import (
 )
 
 // Adapted from mygo-acrylic's acrylic_guard_test.go. Only sidebar functions
-// sit on the system material: Render owns the Ground veil, and renderBody owns
+// sit on the system material: Render leaves it exposed, and renderBody owns
 // opaque content. The existing red navigation selection is intentional.
 func sidebarAcrylicViolations(source []byte) ([]string, error) {
 	fset := token.NewFileSet()

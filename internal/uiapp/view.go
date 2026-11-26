@@ -79,20 +79,25 @@ func (a *App) Render(c *ui.Context) {
 	a.beginArtworkFrame()
 	theme := hongguoTheme(c)
 	c.SetTheme(&theme)
-	// MyGo's system frost needs the acrylic guide's dark Ground veil; an
-	// entirely clear root exposes a bright gray material. Content stays opaque.
+	// Expose the system sidebar material directly, as in MyGo Music. The
+	// content pane paints its own opaque background; accessibility keeps a fallback.
 	c.Root().Background(windowGroundColor(c.Vibrancy() && !c.Preferences().ReduceTransparency))
 	width := a.sidebarWidth
 	if width == 0 {
 		width = defaultSidebarWidth
 	}
-	ui.Box(c.Key("app-shell")).Fill().Children(func() {
+	shell := ui.Box(c.Key("app-shell")).Fill()
+	shell.Children(func() {
 		if a.playerFullscreen && a.hostedScene() {
 			a.renderBody(c)
 			return
 		}
 		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().OnChange(func() { a.SetSidebarWidth(width) })
 	})
+	prefs := c.Preferences()
+	if c.Vibrancy() && !prefs.ReduceTransparency && !prefs.HighContrast && !a.hostedScene() && !a.playerFixture {
+		shell.Effect(sidebarBleedEffect{width: width})
+	}
 }
 
 // sidebarTopInset is the room the sidebar keeps above its content for the

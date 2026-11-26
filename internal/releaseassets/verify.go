@@ -16,8 +16,13 @@ import (
 )
 
 type Config struct {
+	Name    string
 	Slug    string
 	Version string
+	MacOS   struct {
+		Icon      string
+		InfoPlist map[string]string
+	}
 	Updates struct {
 		GitHub    string
 		PublicKey string
@@ -76,6 +81,11 @@ func Verify(dir string, config Config, targets []string) error {
 		var installer string
 		switch target {
 		case "darwin-arm64", "darwin-amd64":
+			if strings.EqualFold(filepath.Ext(config.MacOS.Icon), ".car") {
+				if err := verifyMacOSIcons(filepath.Join(dir, name), config); err != nil {
+					return fmt.Errorf("%s: %w", target, err)
+				}
+			}
 			installer = config.Slug + "-" + config.Version + "-" + strings.TrimPrefix(target, "darwin-") + ".dmg"
 		case "windows-amd64":
 			installer = config.Slug + "-setup-" + config.Version + "-amd64.exe"

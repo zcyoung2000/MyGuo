@@ -40,7 +40,9 @@
 ## 发布、构建与更新 `release/`
 
 - [发布手册、签名密钥、队列监控、构建缓存和本机回退](release/releases.md)
+- [MyGuo 发布 skill：版本准备、提交、监控与完成判断](../.agents/skills/myguo-release/SKILL.md)
 - [2026-11-25 发布耗时复盘与改进经验](release/release-retrospective-2026-11-25.md)
+- [2026-11-26 发布执行复盘：42 分钟反馈、重复操作与状态误判](release/release-execution-retrospective-2026-11-26.md)
 
 ## 历史审查 `audits/`
 

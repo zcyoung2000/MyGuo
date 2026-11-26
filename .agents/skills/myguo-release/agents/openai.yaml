@@ -1,0 +1,7 @@
+interface:
+  display_name: "MyGuo 发布"
+  short_description: "准备版本、提交代码并发布三平台版本，记录总耗时并准确监控构建状态"
+  default_prompt: "使用 $myguo-release 完成本项目的代码提交与新版本发布，并报告总处理耗时和 GitHub 发布耗时。"
+
+policy:
+  allow_implicit_invocation: true

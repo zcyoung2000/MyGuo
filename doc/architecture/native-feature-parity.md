@@ -39,6 +39,14 @@ at 1000 × 640 with the widest allowed sidebar. It also supports optional PNG
 export with `MYGUO_NATIVE_SCREENSHOT_DIR`; these are test-fixture renders, not
 screenshots of the running application or user-library records.
 
+The sidebar exposes the native system material directly. Browsing pages softly
+reflect a blurred strip of adjacent content into its rightmost 144 DIPs, fading
+leftward while preserving navigation pixels and the existing split-pane input.
+`sidebar_bleed.go` samples the current painted frame, so artwork and scrolling
+update the tint together. Native playback, Reduce Transparency and High Contrast
+do not use this effect. `TestSidebarBleed*` covers artwork updates, scrolling,
+navigation, idle frames and accessibility fallbacks.
+
 ## Verification and remaining acceptance
 
 Run from the repository root:
