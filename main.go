@@ -230,48 +230,17 @@ func main() {
 			}
 		}()
 		win.Invalidate()
-		// Keep AppKit running while the actor captures its final native clock.
-		// Waiting for it from OnClosed would deadlock the main-thread native bridge.
-		var stopping, stopped, quitRequested atomic.Bool
-		beginShutdown := func(quit bool) {
-			if quit {
-				quitRequested.Store(true)
-			}
-			if !stopping.CompareAndSwap(false, true) {
-				return
-			}
-			app.CloseQRLogin()
-			go func() {
+		setupShutdown(win, shutdownTasks{
+			closeLogin: app.CloseQRLogin,
+			drain: func() {
 				host.Close()
 				service.FlushPendingProgress()
 				app.FlushPreferences()
-				stopped.Store(true)
-				mygo.RunOnMain(func() {
-					if quitRequested.Load() {
-						mygo.App.Quit()
-					} else {
-						win.Close()
-					}
-				})
-			}()
-		}
-		win.OnClose(func(e *mygo.CloseEvent) {
-			if !stopped.Load() {
-				e.PreventDefault()
-				beginShutdown(false)
-			}
-		})
-		mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
-			if e.SessionEnding {
-				app.CloseQRLogin()
+			},
+			flushSession: func() {
 				controller.FlushSnapshotForSessionEnd()
 				app.FlushPreferences()
-				return
-			}
-			if !stopped.Load() {
-				e.PreventDefault()
-				beginShutdown(true)
-			}
+			},
 		})
 		win.OnClosed(native.Cleanup)
 	})

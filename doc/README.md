@@ -9,6 +9,7 @@
 
 - [开发、验证和文档维护约定](development/README.md)
 - [avkit 原生模块约定](development/native-module-avkit.md)
+- [退出、更新与重启协调](development/application-shutdown.md)
 
 ## 架构与原生迁移 `architecture/`
 
