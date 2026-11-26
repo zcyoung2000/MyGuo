@@ -50,12 +50,12 @@ func (a *App) renderSoftwareUpdates(c *ui.Context) {
 		if !s.LastCheck.IsZero() {
 			description = "上次检查：" + s.LastCheck.Local().Format("2006-01-02 15:04")
 		}
-		a.settingsItemRow(c, "update-version", "MyGuo", description, "当前版本 "+s.Version, "检查更新", "subtle", actions.Check)
+		a.settingsItemRow(c, "update-version", "当前版本 "+s.Version, description, "", "检查更新", "subtle", actions.Check)
 		if !s.Enabled {
 			ui.Text(c, "当前版本或安装位置不支持自动安装更新，请将正式版安装到可写目录后重试。").TextColor(c.Theme().TextMuted)
 		}
-		a.softwareUpdateSwitch(c, "update-checks", "自动检查更新", "启动后检查新版本，运行期间每天检查一次", s.AutomaticChecks, s.Enabled, actions.SetAutomaticChecks)
-		a.softwareUpdateSwitch(c, "update-downloads", "自动下载并安装更新", "开启自动检查后可用；更新在下次启动时生效，不中断播放", s.AutomaticDownloads, s.Enabled && s.AutomaticChecks, actions.SetAutomaticDownloads)
+		a.softwareUpdateSwitch(c, "update-checks", "自动检查更新", s.AutomaticChecks, s.Enabled, actions.SetAutomaticChecks)
+		a.softwareUpdateSwitch(c, "update-downloads", "自动下载并安装更新", s.AutomaticDownloads, s.Enabled && s.AutomaticChecks, actions.SetAutomaticDownloads)
 		if s.Installed {
 			a.settingsItemRow(c, "update-installed", "更新已准备好", "下次启动时生效，也可以现在重启", s.AvailableVersion, "重启应用", "accent", actions.Restart)
 		} else if s.AvailableVersion != "" {
@@ -65,13 +65,10 @@ func (a *App) renderSoftwareUpdates(c *ui.Context) {
 }
 
 // MyGo v0.9.1: Switch carries immediate on/off preferences, ButtonBase in
-// settingsItemRow carries actions; Row/Column only arrange their descriptions.
-func (a *App) softwareUpdateSwitch(c *ui.Context, key, title, description string, value, enabled bool, change func(bool)) {
-	ui.Row(c.Key(key)).Gap(c.Theme().Space(4)).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(c.Theme().Space(1)).Children(func() {
-			ui.Text(c, title).TextColor(c.Theme().Text)
-			ui.Text(c, description).FontSize(c.Theme().Rem(.85)).TextColor(c.Theme().TextMuted)
-		})
+// settingsItemRow carries actions; Row aligns each setting label and switch.
+func (a *App) softwareUpdateSwitch(c *ui.Context, key, title string, value, enabled bool, change func(bool)) {
+	ui.Row(c.Key(key)).Gap(c.Theme().Space(4)).MinHeight(c.Theme().Space(8)).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, title).Grow(1).MinWidth(0).TextColor(c.Theme().Text)
 		if ui.Switch(c.Key(key+"-switch"), &value).Label(title).Disabled(!enabled || change == nil).Changed() {
 			// Plugin callbacks refresh the snapshot through SetSoftwareUpdateState;
 			// don't hold Render's mutex while calling into the plugin.

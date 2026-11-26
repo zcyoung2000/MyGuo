@@ -126,6 +126,141 @@ func TestMultiModelBatcherFailureDoesNotRememberModels(t *testing.T) {
 	}
 }
 
+func TestClearingReplacedMultiModelWindowDoesNotBlockPlayback(t *testing.T) {
+	batcher := NewMultiVideoModelBatcher(&hgapi.Client{})
+	requests := make(chan string, 2)
+	cancelled := make(chan struct{})
+	releaseCtx, release := context.WithCancel(context.Background())
+	defer release()
+	batcher.loadModels = func(ctx context.Context, episodes []model.Episode) {
+		requests <- episodes[0].ID
+		if episodes[0].ID == "old" {
+			<-ctx.Done()
+			close(cancelled)
+			// Keep cancellation cleanup pending while another selection clears
+			// the window, as a cached episode without lookahead does.
+			<-releaseCtx.Done()
+		}
+	}
+	batcher.ReplaceWindow([]model.Episode{{ID: "old"}})
+	runDone := make(chan struct{})
+	go func() {
+		batcher.Run(context.Background(), nil)
+		close(runDone)
+	}()
+	select {
+	case <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("initial model prefetch did not start")
+	}
+	batcher.ReplaceWindow([]model.Episode{{ID: "new"}})
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("replacing the window did not cancel old prefetch")
+	}
+	cleared := make(chan struct{})
+	go func() {
+		batcher.forgetWindow()
+		close(cleared)
+	}()
+	select {
+	case <-cleared:
+	case <-time.After(time.Second):
+		t.Fatal("clearing an already-cancelled prefetch blocked subsequent playback")
+	}
+	release()
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled model prefetch could not release its loads")
+	}
+	batcher.ReplaceWindow([]model.Episode{{ID: "new"}})
+	batcher.Run(context.Background(), nil)
+	select {
+	case id := <-requests:
+		if id != "new" {
+			t.Fatalf("next prefetch requested %q, want new episode", id)
+		}
+	default:
+		t.Fatal("new playback could not prefetch after clearing the old window")
+	}
+}
+
+func TestStaleMultiModelTaskCannotRestartAfterWindowIsCleared(t *testing.T) {
+	batcher := NewMultiVideoModelBatcher(&hgapi.Client{})
+	batcher.loadModels = func(context.Context, []model.Episode) {
+		t.Error("stale task started a model request after its window was cleared")
+	}
+	batcher.ReplaceWindow([]model.Episode{{ID: "old"}})
+	windowID, tasks, _ := batcher.snapshotWindow()
+	batcher.forgetWindow()
+	// A worker can be scheduled between snapshotting a window and registering
+	// its loads. That registration must not resurrect the cancelled window.
+	batcher.runTask(context.Background(), tasks[0], nil, windowID)
+	if len(batcher.loads) != 0 {
+		t.Fatal("stale task retained loads after its window was cleared")
+	}
+}
+
+func TestReplacingMultiModelWindowStartsOverlappingEpisodesBeforeOldCleanup(t *testing.T) {
+	batcher := NewMultiVideoModelBatcher(&hgapi.Client{})
+	requests := make(chan []model.Episode, 2)
+	oldRelease, releaseOld := context.WithCancel(context.Background())
+	defer releaseOld()
+	newRelease, releaseNew := context.WithCancel(context.Background())
+	defer releaseNew()
+	newContext := make(chan context.Context, 1)
+	batcher.loadModels = func(ctx context.Context, episodes []model.Episode) {
+		requests <- episodes
+		if episodes[0].ID == "A" {
+			<-ctx.Done()
+			<-oldRelease.Done()
+		} else {
+			newContext <- ctx
+			<-newRelease.Done()
+		}
+	}
+	batcher.ReplaceWindow([]model.Episode{{ID: "A"}, {ID: "B"}})
+	oldDone := make(chan struct{})
+	go func() { batcher.Run(context.Background(), nil); close(oldDone) }()
+	select {
+	case <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("old window did not start")
+	}
+	batcher.ReplaceWindow([]model.Episode{{ID: "B"}, {ID: "C"}})
+	newDone := make(chan struct{})
+	go func() { batcher.Run(context.Background(), nil); close(newDone) }()
+	select {
+	case episodes := <-requests:
+		if len(episodes) != 2 || episodes[0].ID != "B" || episodes[1].ID != "C" {
+			t.Fatalf("replacement requested the wrong episodes: %v", episodes)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("overlap with cancelled loads silently discarded the replacement window")
+	}
+	ctx := <-newContext
+	releaseOld()
+	select {
+	case <-oldDone:
+	case <-time.After(time.Second):
+		t.Fatal("old window did not finish cleanup")
+	}
+	batcher.mu.Lock()
+	retained := batcher.loads["B"] != nil && batcher.loads["C"] != nil
+	batcher.mu.Unlock()
+	if !retained || ctx.Err() != nil {
+		t.Fatal("old cleanup cancelled or removed the replacement window's loads")
+	}
+	releaseNew()
+	select {
+	case <-newDone:
+	case <-time.After(time.Second):
+		t.Fatal("replacement window did not finish")
+	}
+}
+
 func TestRememberedMultiModelUsesExistingCacheExpiry(t *testing.T) {
 	ms := &MediaServer{pbCache: make(map[string]playbackCacheItem)}
 	ms.RememberPlayback("episode", &model.Playback{Streams: []model.Stream{{URL: "https://media.invalid/a"}}})

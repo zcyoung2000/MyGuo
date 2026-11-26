@@ -40,7 +40,7 @@ func TestSettingsProfileFitsNarrowWindow(t *testing.T) {
 		tt.SetDark(true)
 		tt.Frame()
 		tt.Frame()
-		badge, badgeOK := tt.Find("已登录官方账号")
+		badge, badgeOK := tt.Find("已登录账号")
 		refresh, refreshOK := tt.Find("刷新资料")
 		if !badgeOK || !refreshOK {
 			t.Fatalf("%s: profile controls missing: %v", entry.name, tt.Texts())

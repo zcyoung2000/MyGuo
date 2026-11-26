@@ -29,14 +29,22 @@ func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version in
 	// episode is downloaded while the current one plays. macOS keeps its
 	// original behavior and is untouched.
 	if runtime.GOOS == "windows" {
-		s.updateFullPrefetchWindow(currentEpisodeID, currentQuality, items)
+		s.updateFullPrefetchWindow(version, currentEpisodeID, currentQuality, items)
 	}
 	return statuses, nil
 }
 
 // updateFullPrefetchWindow mirrors the renderer's lookahead into the complete
 // file prefetch scheduler. It is Windows-only; callers guard with GOOS.
-func (s *HongguoService) updateFullPrefetchWindow(currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) {
+func (s *HongguoService) updateFullPrefetchWindow(version int64, currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) {
+	s.fullPrefetchMu.Lock()
+	defer s.fullPrefetchMu.Unlock()
+	if version <= s.fullPrefetchVersion {
+		return
+	}
+	// Even an empty promotion advances the revision. Otherwise an older
+	// response can cancel its download or resurrect work after a reset.
+	s.fullPrefetchVersion = version
 	// A transient empty lookahead must not replace the window. It happens on
 	// every auto-advance: the promoted episode is not Ready yet, so admission
 	// is hard-blocked and the renderer submits no neighbor item. Replacing an
@@ -72,8 +80,6 @@ func (s *HongguoService) updateFullPrefetchWindow(currentEpisodeID, currentQuali
 		sb.WriteString(items[i].Quality)
 	}
 	signature := sb.String()
-	s.fullPrefetchMu.Lock()
-	defer s.fullPrefetchMu.Unlock()
 	if signature == s.fullPrefetchSignature {
 		return
 	}

@@ -25,8 +25,8 @@ type multiModelTask struct {
 }
 
 type multiModelLoad struct {
-	done      chan struct{}
-	setCancel chan context.CancelFunc
+	cancel   context.CancelFunc
+	windowID uint64
 }
 
 type multiModelWindow struct {
@@ -94,21 +94,18 @@ func (b *MultiVideoModelBatcher) forgetWindow() uint64 {
 	b.windowID++
 	b.window = nil
 	for _, load := range b.loads {
-		if cancel, ok := <-load.setCancel; ok {
-			cancel()
-		}
-		select {
-		case <-load.done:
-		default:
-			close(load.done)
-		}
+		load.cancel()
 	}
+	clear(b.loads)
 	return b.windowID
 }
 
-func (b *MultiVideoModelBatcher) acquireLoads(episodes []model.Episode) bool {
+func (b *MultiVideoModelBatcher) acquireLoads(episodes []model.Episode, windowID uint64, cancel context.CancelFunc) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.windowID != windowID {
+		return false
+	}
 	if b.loads == nil {
 		b.loads = make(map[string]*multiModelLoad)
 	}
@@ -118,27 +115,20 @@ func (b *MultiVideoModelBatcher) acquireLoads(episodes []model.Episode) bool {
 		}
 	}
 	for _, episode := range episodes {
-		load := &multiModelLoad{done: make(chan struct{}), setCancel: make(chan context.CancelFunc, 1)}
-		b.loads[episode.ID] = load
+		// Register cancellation with the load while holding the same lock used
+		// to replace/clear windows. Clearing must never wait for the worker to
+		// publish a cancel function, or consume one already taken by a switch.
+		b.loads[episode.ID] = &multiModelLoad{cancel: cancel, windowID: windowID}
 	}
 	return true
 }
 
-func (b *MultiVideoModelBatcher) releaseLoads(loadIDs []string) {
+func (b *MultiVideoModelBatcher) releaseLoads(loadIDs []string, windowID uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, id := range loadIDs {
-		if load := b.loads[id]; load != nil {
-			select {
-			case cancel := <-load.setCancel:
-				cancel()
-			default:
-			}
-			select {
-			case <-load.done:
-			default:
-				close(load.done)
-			}
+		if load := b.loads[id]; load != nil && load.windowID == windowID {
+			load.cancel()
 			delete(b.loads, id)
 		}
 	}
@@ -155,17 +145,11 @@ func (b *MultiVideoModelBatcher) ReplaceWindow(episodes []model.Episode) uint64 
 	b.windowID++
 	b.window = &window
 	for _, load := range b.loads {
-		select {
-		case cancel := <-load.setCancel:
-			cancel()
-		default:
-		}
-		select {
-		case <-load.done:
-		default:
-			close(load.done)
-		}
+		load.cancel()
 	}
+	// A cancelled worker can still be unwinding. Detach its registrations so
+	// overlap cannot discard the new window; releaseLoads checks ownership.
+	clear(b.loads)
 	return b.windowID
 }
 
@@ -206,38 +190,18 @@ func (b *MultiVideoModelBatcher) Run(ctx context.Context, remember func(string, 
 }
 
 func (b *MultiVideoModelBatcher) runTask(ctx context.Context, task multiModelTask, remember func(string, *model.Playback), windowID uint64) {
-	if !b.acquireLoads(task.episodes) {
+	fetchCtx, fetchCancel := context.WithCancel(ctx)
+	defer fetchCancel()
+	if !b.acquireLoads(task.episodes, windowID, fetchCancel) {
 		return
 	}
 	loadIDs := make([]string, 0, len(task.episodes))
 	for _, episode := range task.episodes {
 		loadIDs = append(loadIDs, episode.ID)
 	}
-	defer b.releaseLoads(loadIDs)
-	loads := make([]*multiModelLoad, 0, len(task.episodes))
-	b.mu.Lock()
-	for _, episode := range task.episodes {
-		if load := b.loads[episode.ID]; load != nil {
-			loads = append(loads, load)
-		}
-	}
-	b.mu.Unlock()
-	fetchCtx, fetchCancel := context.WithCancel(ctx)
-	defer fetchCancel()
-	for _, load := range loads {
-		select {
-		case <-load.done:
-			fetchCancel()
-			return
-		case load.setCancel <- fetchCancel:
-		}
-		defer func() {
-			select {
-			case <-load.done:
-			default:
-				close(load.done)
-			}
-		}()
+	defer b.releaseLoads(loadIDs, windowID)
+	if fetchCtx.Err() != nil {
+		return
 	}
 
 	if b.loadModels != nil {
@@ -245,7 +209,7 @@ func (b *MultiVideoModelBatcher) runTask(ctx context.Context, task multiModelTas
 		return
 	}
 	playbacks, err := b.fetch(fetchCtx, task.episodes)
-	if err != nil || ctx.Err() != nil || !b.windowUnchanged(windowID) {
+	if err != nil || fetchCtx.Err() != nil || !b.windowUnchanged(windowID) {
 		return
 	}
 	for _, episode := range task.episodes {

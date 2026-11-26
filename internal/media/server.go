@@ -148,6 +148,7 @@ type playbackCacheItem struct {
 
 type playbackLoad struct {
 	done   chan struct{}
+	owner  context.Context
 	result playbackLoadResult
 }
 
@@ -422,6 +423,10 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 }
 
 func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID, session string) (*model.Playback, error) {
+	return ms.resolvePlaybackForSessionAttempt(ctx, episodeID, session, true)
+}
+
+func (ms *MediaServer) resolvePlaybackForSessionAttempt(ctx context.Context, episodeID, session string, retryCanceledOwner bool) (*model.Playback, error) {
 	if episodeID == "" {
 		return nil, fmt.Errorf("empty episode id")
 	}
@@ -443,10 +448,21 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	if ms.pbLoads == nil {
 		ms.pbLoads = make(map[string]*playbackLoad)
 	}
-	if load, active := ms.pbLoads[episodeID]; active {
+	// Cancelled owners may still be unwinding. Their identity-checked finish
+	// cannot overwrite a replacement, so they must not block a live caller.
+	if load, active := ms.pbLoads[episodeID]; active && (load.owner == nil || load.owner.Err() == nil) {
 		ms.pbLoadMu.Unlock()
 		select {
 		case <-load.done:
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			// A speculative owner's cancellation is not this caller's intent.
+			// Rejoin once with the live caller rather than spending a playback
+			// retry on a request that belonged to a retired prefetch window.
+			if retryCanceledOwner && (errors.Is(load.result.err, context.Canceled) || errors.Is(load.result.err, context.DeadlineExceeded)) {
+				return ms.resolvePlaybackForSessionAttempt(ctx, episodeID, session, false)
+			}
 			return load.result.pb, load.result.err
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -468,7 +484,7 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 		ms.pbLoadMu.Unlock()
 		return nil, err
 	}
-	load := &playbackLoad{done: make(chan struct{})}
+	load := &playbackLoad{done: make(chan struct{}), owner: ctx}
 	ms.pbLoads[episodeID] = load
 	ms.pbLoadMu.Unlock()
 

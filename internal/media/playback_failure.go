@@ -77,13 +77,16 @@ func (ms *MediaServer) loadPlaybackModels(ctx context.Context, episodes []model.
 	requested := make([]model.Episode, 0, len(episodes))
 	ms.pbCacheMu.RLock()
 	for _, episode := range episodes {
-		if episode.ID == "" || ms.pbLoads[episode.ID] != nil {
+		if episode.ID == "" {
+			continue
+		}
+		if load := ms.pbLoads[episode.ID]; load != nil && (load.owner == nil || load.owner.Err() == nil) {
 			continue
 		}
 		if item, cached := ms.pbCache[episode.ID]; cached && time.Now().Before(item.expiresAt) {
 			continue
 		}
-		load := &playbackLoad{done: make(chan struct{})}
+		load := &playbackLoad{done: make(chan struct{}), owner: ctx}
 		ms.pbLoads[episode.ID] = load
 		loads[episode.ID] = load
 		requested = append(requested, episode)

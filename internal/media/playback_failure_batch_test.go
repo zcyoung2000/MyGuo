@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,52 @@ import (
 	"myguo/internal/hgapi/adapters/memstore"
 	"myguo/internal/hgapi/model"
 )
+
+func TestModelLookaheadReplacesCanceledFlightBeforeCleanup(t *testing.T) {
+	requests := make(chan []string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request multiVideoModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		ids := request.MixedVideoIDMap["1004"]
+		requests <- ids
+		data := map[string]any{}
+		for _, id := range ids {
+			data[id] = map[string]any{"video_model": map[string]any{"video_list": []any{map[string]any{"main_url": "https://media.invalid/" + id, "video_meta": map[string]any{"codec_type": "h264"}}}}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
+	}))
+	defer upstream.Close()
+	profiles := memstore.New()
+	if err := profiles.Save(context.Background(), &hgapi.DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := adapters.NewClient("", hgapi.Options{ProfileStore: profiles, APIOrigin: upstream.URL, RetryAttempts: 1, DeviceResets: hgapi.Int(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, cancel := context.WithCancel(context.Background())
+	cancel()
+	old := &playbackLoad{done: make(chan struct{}), owner: owner}
+	episodes := []model.Episode{{ID: "7100000000000201"}, {ID: "7100000000000202"}}
+	ms := &MediaServer{multiModel: NewMultiVideoModelBatcher(client), pbLoads: map[string]*playbackLoad{episodes[0].ID: old}}
+	ms.loadPlaybackModels(context.Background(), episodes)
+	select {
+	case ids := <-requests:
+		if len(ids) != 2 || ids[0] != episodes[0].ID || ids[1] != episodes[1].ID {
+			t.Fatalf("cancelled flight excluded an overlapping episode from the new batch: %v", ids)
+		}
+	default:
+		t.Fatal("replacement model window did not fetch its episodes")
+	}
+	// A late cancelled batch must not remove models published by its successor.
+	ms.finishPlaybackLoad(episodes[0].ID, old, nil, context.Canceled)
+	if pb, err := ms.resolvePlayback(context.Background(), episodes[0].ID); pb == nil || err != nil {
+		t.Fatalf("old batch cleanup damaged the replacement model: %v/%v", pb, err)
+	}
+}
 
 func TestModelLookaheadSharesFailedFlightCacheAndCooldown(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})

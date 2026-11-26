@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"myguo/internal/ipc"
 )
 
 func updateSettingsFixture() (*App, SoftwareUpdateState, *ui.Tester) {
@@ -112,11 +113,12 @@ func TestSoftwareUpdateDisabledAndReadyToRestart(t *testing.T) {
 func TestSoftwareUpdatesInNativeSettings(t *testing.T) {
 	a := NewTestApp()
 	a.view = "settings"
-	a.SetSoftwareUpdateState(SoftwareUpdateState{Version: "0.1.6", Enabled: true, AutomaticChecks: true})
+	a.settings = Settings{Profile: ipc.UserProfile{Nickname: "布局测试用户", LoggedIn: true}, CacheSize: 900202496}
+	a.SetSoftwareUpdateState(SoftwareUpdateState{Version: "0.1.8", Enabled: true, AutomaticChecks: true, LastCheck: time.Date(2026, 11, 26, 13, 57, 0, 0, time.Local)})
 	a.SetSoftwareUpdateActions(SoftwareUpdateActions{Check: func() {}, SetAutomaticChecks: func(bool) {}, SetAutomaticDownloads: func(bool) {}})
 	tt := ui.NewTester(a.Render, 1200, 820)
 	tt.Frame()
-	for _, text := range []string{"软件更新", "当前版本 0.1.6", "检查更新", "自动检查更新", "自动下载并安装更新"} {
+	for _, text := range []string{"已登录账号", "软件更新", "当前版本 0.1.8", "检查更新", "自动检查更新", "自动下载并安装更新"} {
 		if !tt.HasText(text) {
 			t.Fatalf("settings missing %q", text)
 		}
@@ -128,13 +130,23 @@ func TestSoftwareUpdatesInNativeSettings(t *testing.T) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		f, err := os.Create(filepath.Join(dir, "settings-updates.png"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		if err := png.Encode(f, tt.Image()); err != nil {
-			t.Fatal(err)
+		for _, shot := range []struct {
+			name          string
+			width, height int
+		}{{"settings-updates.png", 1200, 820}, {"settings-updates-minimum.png", 1000, 640}} {
+			tt.SetSize(shot.width, shot.height)
+			tt.Advance(300 * time.Millisecond)
+			f, err := os.Create(filepath.Join(dir, shot.name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := png.Encode(f, tt.Image()); err != nil {
+				f.Close()
+				t.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }

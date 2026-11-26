@@ -150,6 +150,7 @@ type HongguoService struct {
 	cache                 *resourcecache.LRU
 	feedMu                sync.Mutex
 	fullPrefetchMu        sync.Mutex
+	fullPrefetchVersion   int64
 	fullPrefetchSignature string
 	episodeMu             sync.Mutex
 	episodeCache          map[string]episodeCacheEntry
@@ -709,6 +710,13 @@ func (s *HongguoService) GetRecommend(ctx context.Context) ([]SeriesCard, error)
 // listEpisodesCached deduplicates concurrent protocol calls and avoids repeating the
 // same series-detail request while a feed item is played and preloaded.
 func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string) (*hgapi.Page[model.Episode], error) {
+	return s.listEpisodesCachedAttempt(ctx, seriesID, true)
+}
+
+func (s *HongguoService) listEpisodesCachedAttempt(ctx context.Context, seriesID string, retryCanceledOwner bool) (*hgapi.Page[model.Episode], error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.episodeMu.Lock()
 	s.ensureEpisodeCache()
 	s.forgetExpiredEpisodes(time.Now())
@@ -724,6 +732,15 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 		s.episodeMu.Unlock()
 		select {
 		case <-load.done:
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			// A detail request can be retired while foreground playback still
+			// needs the same episodes. Its cancelled result must not cancel
+			// that independent caller; allow one fresh shared load.
+			if retryCanceledOwner && (errors.Is(load.result.err, context.Canceled) || errors.Is(load.result.err, context.DeadlineExceeded)) {
+				return s.listEpisodesCachedAttempt(ctx, seriesID, false)
+			}
 			return load.result.page, load.result.err
 		case <-ctx.Done():
 			return nil, ctx.Err()

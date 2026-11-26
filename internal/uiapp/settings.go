@@ -102,7 +102,7 @@ func formatCacheSize(size int64) string {
 
 func accountBadge(loggedIn bool) string {
 	if loggedIn {
-		return "已登录官方账号"
+		return "已登录账号"
 	}
 	return "匿名设备访问"
 }
