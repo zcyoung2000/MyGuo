@@ -47,9 +47,10 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 			Material(a.playerChromeMaterial()).
 			OnChange(func() { go a.SelectFeedChannel(feedChannels[selected].value) })
 
-		if a.ambientActive {
-			track.Border(1, a.ambientTop.Alpha(0.40)).
-				Shadow(0, 8, 24, 0, a.ambientTop.Alpha(0.25))
+		_, ambient := a.playerAmbientColors(c, track, true)
+		if ambient.A != 0 {
+			track.Border(1, ui.RGBA(255, 255, 255, .12)).
+				Shadow(0, 6, 20, 0, ambient.Alpha(.25))
 		} else {
 			track.Border(1, ui.RGBA(255, 255, 255, 0.12)).
 				Shadow(0, 8, 24, 0, ui.RGBA(0, 0, 0, 0.32))

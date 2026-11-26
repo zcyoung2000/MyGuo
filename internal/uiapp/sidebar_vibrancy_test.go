@@ -134,7 +134,7 @@ func TestSidebarMaterialFollowsTransparencyPreference(t *testing.T) {
 	}
 }
 
-func TestVideoAmbientColoursDoNotTintSidebar(t *testing.T) {
+func TestVideoAmbientColoursLeaveFarSidebarUntouched(t *testing.T) {
 	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{controller: newNativeUIPlayer()})
 	app.OpenView("recommend")
@@ -148,7 +148,7 @@ func TestVideoAmbientColoursDoNotTintSidebar(t *testing.T) {
 	image = tt.Image()
 	for y := 0; y < image.Bounds().Dy(); y++ {
 		start := y * image.Stride
-		end := start + int(defaultSidebarWidth-1)*4
+		end := start + int(defaultSidebarWidth-playerAmbientWidth)*4
 		if !bytes.Equal(before[start:end], image.Pix[start:end]) {
 			t.Fatalf("video colour changed the sidebar at row %d", y)
 		}

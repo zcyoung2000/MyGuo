@@ -57,49 +57,6 @@ func (s *Service) resolveHistoryEpisodeID(item HistoryItem) string {
 	return ""
 }
 
-func (s *Service) requestHistoryDelete(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
-	if len(items) == 0 || len(items) != len(episodeIDs) {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if len(items) > 1 {
-		err := s.updateHistory(ctx, items, episodeIDs, true)
-		if err == nil || !errors.Is(err, errParameterInvalid) {
-			return err
-		}
-		// Split only after the server explicitly rejects the parameters,
-		// isolating a batch-size limit without acknowledging a partial page.
-		middle := len(items) / 2
-		if err := s.requestHistoryDelete(ctx, items[:middle], episodeIDs[:middle]); err != nil {
-			return err
-		}
-		return s.requestHistoryDelete(ctx, items[middle:], episodeIDs[middle:])
-	}
-	return s.updateHistory(ctx, items, episodeIDs, true)
-}
-
-func (s *Service) reportPlaybackProgress(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
-	if len(items) == 0 || len(items) != len(episodeIDs) {
-		return nil
-	}
-	if len(items) > 1 {
-		if err := s.reportPlaybackProgressBatch(ctx, items, episodeIDs); err == nil {
-			return nil
-		} else if !errors.Is(err, errParameterInvalid) {
-			return err
-		}
-		// Split only after the server explicitly rejects the parameters,
-		// isolating a batch-size limit without acknowledging a partial page.
-		middle := len(items) / 2
-		if err := s.reportPlaybackProgress(ctx, items[:middle], episodeIDs[:middle]); err != nil {
-			return err
-		}
-		return s.reportPlaybackProgress(ctx, items[middle:], episodeIDs[middle:])
-	}
-	return s.reportPlaybackProgressBatch(ctx, items, episodeIDs)
-}
-
 func (s *Service) reportPlaybackProgressBatch(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -126,6 +83,7 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 	}
 	s.historyMutationSyncing = true
 	s.historyMutationMu.Unlock()
+	defer s.schedulePendingHistorySync()
 
 	processed := 0
 	for {
@@ -172,15 +130,26 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 	}
 }
 
-func historyUploadKey(item userstore.PendingHistoryUpload) string {
-	// New local clocks replace the durable revision every few seconds. They
-	// must not bypass an upstream failure's cooldown for this account/series.
-	return item.Scope + "\x00" + item.SeriesID
-}
-
 func (s *Service) markHistoryUploadFailed(items []userstore.PendingHistoryUpload, err error) {
+	s.historyRetryMu.Lock()
+	defer s.historyRetryMu.Unlock()
 	if s.historyUploadRetries == nil {
 		s.historyUploadRetries = make(map[string]historyUploadRetry)
+	}
+	if errors.Is(err, hgapi.ErrRateLimited) {
+		if s.historyScopeRetries == nil {
+			s.historyScopeRetries = make(map[string]historyUploadRetry)
+		}
+		scopes := make(map[string]bool)
+		for _, item := range items {
+			if !scopes[item.Scope] {
+				retry := s.historyScopeRetries[item.Scope]
+				retry.attempt++
+				retry.nextAt = time.Now().Add(min(time.Minute<<min(retry.attempt-1, 5), historyUploadMaxBackoff))
+				s.historyScopeRetries[item.Scope] = retry
+				scopes[item.Scope] = true
+			}
+		}
 	}
 	base := historyUploadBaseBackoff
 	if errors.Is(err, errParameterInvalid) || errors.Is(err, hgapi.ErrRateLimited) {
@@ -202,11 +171,6 @@ func (s *Service) markHistoryUploadFailed(items []userstore.PendingHistoryUpload
 		retry.nextAt = time.Now().Add(delay)
 		s.historyUploadRetries[key] = retry
 	}
-}
-
-func (s *Service) historyUploadReady(item userstore.PendingHistoryUpload) bool {
-	retry, ok := s.historyUploadRetries[historyUploadKey(item)]
-	return !ok || !time.Now().Before(retry.nextAt)
 }
 
 func (s *Service) processPendingHistoryUploads() (int, error) {
@@ -240,11 +204,14 @@ func (s *Service) processPendingHistoryUploads() (int, error) {
 	valid := make([]HistoryItem, 0, len(due))
 	ack := make([]userstore.PendingHistoryUpload, 0, len(due))
 	validEpisodeIDs := make([]string, 0, len(due))
+	processed := 0
+	var validationErr error
 	for _, pending := range due {
 		if s.store.HistoryDeleted(pending.SeriesID) {
 			if err := s.store.AckHistoryUploads([]userstore.PendingHistoryUpload{pending}); err != nil {
 				return 0, err
 			}
+			processed++
 			continue
 		}
 		item := pending.HistoryItem
@@ -252,34 +219,70 @@ func (s *Service) processPendingHistoryUploads() (int, error) {
 		if episodeID == "" {
 			episodeID = s.resolveHistoryEpisodeID(item)
 		}
-		if _, err := contentInt(item.SeriesID); err != nil {
-			return 0, err
-		}
-		if _, err := contentInt(episodeID); err != nil {
-			return 0, fmt.Errorf("历史 %s 缺少有效分集 ID", item.SeriesID)
+		_, seriesErr := contentInt(item.SeriesID)
+		_, episodeErr := contentInt(episodeID)
+		if seriesErr != nil || episodeErr != nil {
+			err := fmt.Errorf("历史 %s 缺少有效内容或分集 ID: %w", item.SeriesID, errParameterInvalid)
+			s.markHistoryUploadFailed([]userstore.PendingHistoryUpload{pending}, err)
+			validationErr = errors.Join(validationErr, err)
+			continue
 		}
 		valid = append(valid, item)
 		ack = append(ack, pending)
 		validEpisodeIDs = append(validEpisodeIDs, episodeID)
 	}
 	if len(valid) == 0 {
-		return 0, nil
+		return processed, validationErr
 	}
-	if err := s.reportPlaybackProgress(ctx, valid, validEpisodeIDs); err != nil {
-		s.markHistoryUploadFailed(ack, err)
-		return 0, err
+	uploaded, uploadErr := s.uploadPendingHistoryBatches(ctx, session, ack, valid, validEpisodeIDs)
+	return processed + uploaded, errors.Join(validationErr, uploadErr)
+}
+
+// Parameter rejection is unambiguous, so split it to isolate bad records.
+// Acknowledge each accepted sub-batch immediately; a failure in another branch
+// must not replay accepted clocks. Transport/account errors stop this run.
+func (s *Service) uploadPendingHistoryBatches(ctx context.Context, session syncSession, pending []userstore.PendingHistoryUpload, items []HistoryItem, episodeIDs []string) (int, error) {
+	type batch struct{ start, end int }
+	batches := []batch{{0, len(items)}}
+	processed := 0
+	var failures error
+	for len(batches) > 0 {
+		current := batches[0]
+		batches = batches[1:]
+		if !s.syncSessionCurrent(session) {
+			return processed, errors.Join(failures, errSyncSessionChanged)
+		}
+		ack := pending[current.start:current.end]
+		err := s.reportPlaybackProgressBatch(ctx, items[current.start:current.end], episodeIDs[current.start:current.end])
+		if err != nil {
+			if errors.Is(err, errParameterInvalid) && len(ack) > 1 {
+				middle := current.start + len(ack)/2
+				batches = append([]batch{{current.start, middle}, {middle, current.end}}, batches...)
+				continue
+			}
+			s.markHistoryUploadFailed(ack, err)
+			failures = errors.Join(failures, err)
+			if !errors.Is(err, errParameterInvalid) {
+				return processed, failures
+			}
+			continue
+		}
+		if !s.syncSessionCurrent(session) {
+			return processed, errors.Join(failures, errSyncSessionChanged)
+		}
+		if err := s.store.AckHistoryUploads(ack); err != nil {
+			s.markHistoryUploadFailed(ack, err)
+			return processed, errors.Join(failures, err)
+		}
+		processed += len(ack)
+		s.historyRetryMu.Lock()
+		for _, item := range ack {
+			delete(s.historyUploadRetries, historyUploadKey(item))
+		}
+		delete(s.historyScopeRetries, session.scope)
+		s.historyRetryMu.Unlock()
 	}
-	if !s.syncSessionCurrent(session) {
-		return 0, errSyncSessionChanged
-	}
-	acknowledged := len(ack)
-	if s.historyUploadRetries == nil {
-		s.historyUploadRetries = make(map[string]historyUploadRetry)
-	}
-	for _, item := range ack {
-		delete(s.historyUploadRetries, historyUploadKey(item))
-	}
-	return acknowledged, s.store.AckHistoryUploads(ack)
+	return processed, failures
 }
 
 func (s *Service) processPendingHistoryDeletes() (int, error) {
@@ -302,11 +305,16 @@ func (s *Service) processPendingHistoryDeletes() (int, error) {
 	ack := make([]userstore.PendingHistoryDelete, 0, len(items))
 	sendEpisodeIDs := make([]string, 0, len(items))
 	for i, item := range items {
+		retryItem := userstore.PendingHistoryUpload{HistoryItem: item, Scope: pending[i].Scope}
+		if !s.historyUploadReady(retryItem) {
+			continue
+		}
 		episodeID := pending[i].EpisodeID
 		if episodeID == "" {
 			episodeID = s.resolveHistoryEpisodeID(item)
 		}
 		if episodeID == "" {
+			s.markHistoryUploadFailed([]userstore.PendingHistoryUpload{retryItem}, errParameterInvalid)
 			continue
 		}
 		send = append(send, item)
@@ -314,13 +322,63 @@ func (s *Service) processPendingHistoryDeletes() (int, error) {
 		sendEpisodeIDs = append(sendEpisodeIDs, episodeID)
 	}
 	if len(send) == 0 {
-		return 0, fmt.Errorf("待删除历史缺少可解析分集")
+		return 0, nil
 	}
-	if err := s.requestHistoryDelete(ctx, send, sendEpisodeIDs); err != nil {
-		return 0, err
+	return s.deletePendingHistoryBatches(ctx, session, ack, send, sendEpisodeIDs)
+}
+
+func (s *Service) deletePendingHistoryBatches(ctx context.Context, session syncSession, pending []userstore.PendingHistoryDelete, items []HistoryItem, episodeIDs []string) (int, error) {
+	type batch struct{ start, end int }
+	batches := []batch{{0, len(items)}}
+	processed := 0
+	var failures error
+	for len(batches) > 0 {
+		current := batches[0]
+		batches = batches[1:]
+		if !s.syncSessionCurrent(session) {
+			return processed, errors.Join(failures, errSyncSessionChanged)
+		}
+		ack := pending[current.start:current.end]
+		requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err := s.updateHistory(requestCtx, items[current.start:current.end], episodeIDs[current.start:current.end], true)
+		cancel()
+		if err != nil {
+			if errors.Is(err, errParameterInvalid) && len(ack) > 1 {
+				middle := current.start + len(ack)/2
+				batches = append([]batch{{current.start, middle}, {middle, current.end}}, batches...)
+				continue
+			}
+			failed := make([]userstore.PendingHistoryUpload, len(ack))
+			for i, item := range ack {
+				failed[i] = userstore.PendingHistoryUpload{HistoryItem: item.HistoryItem, Scope: item.Scope}
+			}
+			s.markHistoryUploadFailed(failed, err)
+			failures = errors.Join(failures, err)
+			if !errors.Is(err, errParameterInvalid) {
+				return processed, failures
+			}
+			continue
+		}
+		if !s.syncSessionCurrent(session) {
+			return processed, errors.Join(failures, errSyncSessionChanged)
+		}
+		if err := s.store.AckHistoryDeletes(ack); err != nil {
+			failed := make([]userstore.PendingHistoryUpload, len(ack))
+			for i, item := range ack {
+				failed[i] = userstore.PendingHistoryUpload{HistoryItem: item.HistoryItem, Scope: item.Scope}
+			}
+			s.markHistoryUploadFailed(failed, err)
+			return processed, errors.Join(failures, err)
+		}
+		processed += len(ack)
+		s.historyRetryMu.Lock()
+		for _, item := range ack {
+			delete(s.historyUploadRetries, historyUploadKey(userstore.PendingHistoryUpload{HistoryItem: item.HistoryItem, Scope: item.Scope}))
+		}
+		delete(s.historyScopeRetries, session.scope)
+		s.historyRetryMu.Unlock()
 	}
-	acknowledged := len(ack)
-	return acknowledged, s.store.AckHistoryDeletes(ack)
+	return processed, failures
 }
 func (s *Service) triggerPendingFavoriteSync() {
 	s.background.Go(func(context.Context) {

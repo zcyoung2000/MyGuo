@@ -17,8 +17,8 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 	ctx = s.bindSyncSession(ctx)
 	session := ctx.Value(syncSessionContextKey{}).(syncSession)
 	s.historyMu.Lock()
-	generation := s.historyGeneration
 	local, _ := s.store.GetHistoryItem(seriesID)
+	initial := local
 	s.historyMu.Unlock()
 	if !mediautil.ValidContentID(seriesID) {
 		return local, fmt.Errorf("历史 ID 无效")
@@ -27,7 +27,7 @@ func (s *Service) ReconcileSeriesProgress(ctx context.Context, seriesID string) 
 	s.historyMu.Lock()
 	defer s.historyMu.Unlock()
 	local, hasLocal := s.store.GetHistoryItem(seriesID)
-	if generation != s.historyGeneration || !s.syncSessionCurrent(session) {
+	if !historyItemsEqual(initial, local) || !s.syncSessionCurrent(session) {
 		return local, nil
 	}
 	if err != nil || remote == nil {

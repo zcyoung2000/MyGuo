@@ -75,6 +75,7 @@ func (a *App) renderNativePlayerVideo(c *ui.Context, s playback.State) {
 					ui.Image(c.Key("player-poster"), poster).Absolute().Fill().Fit(ui.Contain).PassThrough()
 				}
 			}
+			a.renderPlayerAmbient(c, s)
 		})
 		if offset > 0 && a.playerTransitionBitmap != nil {
 			outgoing := ui.Box(c.Key("player-outgoing-page")).Absolute().Fill().Background(ui.RGB(0, 0, 0)).Translate(0, -direction*(1-offset)*height).PassThrough()

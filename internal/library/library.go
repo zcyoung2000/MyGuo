@@ -266,6 +266,14 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	if err != nil {
 		return err
 	}
+	initialItems, err := s.store.GetHistory()
+	if err != nil {
+		return err
+	}
+	initialByID := make(map[string]HistoryItem, len(initialItems))
+	for _, item := range initialItems {
+		initialByID[item.SeriesID] = item
+	}
 	if count, countErr := s.store.PendingHistoryMetadataCount(session.scope); countErr != nil {
 		return countErr
 	} else if count > 0 {
@@ -349,6 +357,27 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 			remoteEpisodeProgress[key] = progress
 		}
 	}
+	if len(latestByID) == 0 && !snapshotComplete {
+		return readErr
+	}
+
+	// Playback may save while the cloud pages are in flight. Re-read local
+	// clocks and intents under the same lock as SaveProgress, preserving only
+	// changed series rather than throwing away unrelated remote progress.
+	s.historyMu.Lock()
+	if !s.syncSessionCurrent(session) {
+		s.historyMu.Unlock()
+		return nil
+	}
+	currentPending, err := s.store.PendingHistoryMutationIDs(session.scope)
+	if err != nil {
+		s.historyMu.Unlock()
+		return err
+	}
+	for id := range currentPending {
+		pendingIDs[id] = true
+	}
+	protectedSeries := make(map[string]bool)
 	for _, it := range latestByID {
 		id := it.SeriesID
 		epNum := it.VidIndex + 1
@@ -387,30 +416,23 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 			if exist.EpisodeNum == epNum {
 				current.DurationSec = exist.DurationSec
 			}
-			if pendingIDs[id] || exist.UpdatedAt >= updatedAt {
+			changed := !historyItemsEqual(initialByID[id], exist)
+			if pendingIDs[id] || changed || exist.UpdatedAt >= updatedAt {
 				current.EpisodeNum = exist.EpisodeNum
 				current.EpisodeTitle = exist.EpisodeTitle
 				current.PositionSec = exist.PositionSec
 				current.DurationSec = exist.DurationSec
 				current.UpdatedAt = exist.UpdatedAt
 			}
+			protectedSeries[id] = pendingIDs[id] || changed
 		}
 		remoteSnapshot = append(remoteSnapshot, current)
 		histBatch = append(histBatch, current)
 	}
-	if len(latestByID) == 0 && !snapshotComplete {
-		return readErr
-	}
-
-	historySettled := s.historySnapshotSettled()
-	s.historyMu.Lock()
-	if s.historyGeneration != generation || !s.syncSessionCurrent(session) {
-		s.historyMu.Unlock()
-		return nil
-	}
+	historySettled := time.Since(s.historyMutationAt) >= remoteSnapshotSettleDelay
 	// A snapshot can remove local-only rows only after every page is read and
 	// the local write queue and recent playback clock have settled.
-	authoritative := len(pendingIDs) == 0 && snapshotComplete && historySettled
+	authoritative := len(pendingIDs) == 0 && snapshotComplete && historySettled && s.historyGeneration == generation
 	var applied bool
 	var storeErr error
 	if authoritative {
@@ -426,21 +448,24 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		s.historyMu.Unlock()
 		return errSyncSessionChanged
 	}
-	s.historyMu.Unlock()
-
 	progressSnapshot := make([]userstore.EpisodeProgress, 0, len(remoteEpisodeProgress))
 	for _, item := range remoteEpisodeProgress {
-		progressSnapshot = append(progressSnapshot, item)
+		if !protectedSeries[item.SeriesID] {
+			progressSnapshot = append(progressSnapshot, item)
+		}
 	}
 	if authoritative {
 		if _, err := s.store.ReplaceEpisodeProgressIfCurrentScope(progressSnapshot, session.scope); err != nil {
+			s.historyMu.Unlock()
 			return errors.Join(readErr, err)
 		}
 	} else if len(progressSnapshot) > 0 {
 		if _, err := s.store.SaveEpisodeProgressBatchIfCurrentScope(progressSnapshot, session.scope); err != nil {
+			s.historyMu.Unlock()
 			return errors.Join(readErr, err)
 		}
 	}
+	s.historyMu.Unlock()
 
 	var metadataIDs []string
 	metadataResolverAvailable := s.seriesBatch != nil || s.series != nil

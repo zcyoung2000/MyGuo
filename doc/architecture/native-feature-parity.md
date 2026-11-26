@@ -47,6 +47,17 @@ update the tint together. Native playback, Reduce Transparency and High Contrast
 do not use this effect. `TestSidebarBleed*` covers artwork updates, scrolling,
 navigation, idle frames and accessibility fallbacks.
 
+During native playback, `player_ambient.go` instead reuses AVKit's existing
+16×16 color samples. Hue recovery makes averaged colors visible over the gray
+system material, while saturation and peak brightness remain bounded. Washes
+stay within the sidebar's rightmost 180 DIPs and the video picture's empty
+aspect-fit gutters; they never cover picture pixels. Peak opacity is capped at
+32% (with a broad transparent falloff), and sampled colors
+ease over 650 ms rather than flashing with scene cuts. PiP, missing video,
+Reduce Transparency and High Contrast disable the wash. Static colors settle
+without requesting more animation frames. No additional decoding, frame
+captures or blur passes are introduced.
+
 ## Verification and remaining acceptance
 
 Run from the repository root:

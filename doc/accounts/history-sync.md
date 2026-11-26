@@ -29,8 +29,10 @@ the account-scoped cloud snapshot.
 - `SaveProgress` persists authentic playback progress, invalidates the history
   cache and queues an upload under the current identity. Background upload uses
   `read_progress/upload` as the authoritative playback clock and acknowledges
-  only successful writes; failed writes remain queued for retry on subsequent
-  saves or refreshes. `read_history/update` is retained for delete compatibility.
+  only successful writes. Failed writes stay queued and retry automatically
+  after bounded backoff; queued work resumes at startup. Account-wide rate limits
+  pause all history mutations for that identity. `read_history/update` is
+  retained for delete compatibility.
 - `GetHistory` returns local rows promptly and revalidates in the background.
   `RefreshHistory` uploads pending local progress independently, reads every
   cloud page, persists progress, then returns the current SQLite snapshot.
@@ -66,10 +68,12 @@ the account-scoped cloud snapshot.
   scoped upload and ends local-only retention. Account switches and signout
   clear retained visible history as usual; tasks owned by known accounts are
   untouched.
-- Generation and identity checks discard stale reads. A recent local mutation
-  prevents a lagging cloud snapshot from replacing local rows. Complete, settled
-  snapshots can reflect deletions made elsewhere. HTTP failures, nonzero response
-  codes and missing history payloads cannot become an authoritative empty list.
+- Identity checks discard stale account reads. Playback changes made while a
+  cloud snapshot is in flight are merged by series; they no longer discard
+  unrelated remote rows. A recent local mutation prevents a lagging cloud
+  snapshot from replacing local rows. Complete, settled snapshots can reflect
+  deletions made elsewhere. HTTP failures, nonzero response codes and missing
+  history payloads cannot become an authoritative empty list.
 - Single-record deletion and clear-all are removed from native and embedded UI,
   application callbacks, library service and exported IPC. Store deletion helpers
   and legacy pending-operation handling remain internal compatibility machinery.

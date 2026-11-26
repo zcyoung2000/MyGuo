@@ -72,7 +72,7 @@ func newSyncTestService(t *testing.T, handler http.Handler) (*Service, *userstor
 		Runtime:    func() (string, string) { return "test-agent", "cn-gd" },
 		HTTPClient: &http.Client{Transport: handlerTransport{handler: handler}},
 	})
-	t.Cleanup(service.WaitForBackgroundSync)
+	t.Cleanup(service.Close)
 	return service, store
 }
 

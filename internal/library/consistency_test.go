@@ -101,6 +101,9 @@ func TestPendingOperationsDoNotCrossCredentialChanges(t *testing.T) {
 		sentCookies = append(sentCookies, r.Header.Get("Cookie"))
 		writeJSON(w, map[string]any{"code": 0})
 	}))
+	service.historyRetryMu.Lock()
+	service.historyRetryClosed = true
+	service.historyRetryMu.Unlock()
 	original := service.credentials
 	originalScope := service.currentSyncSession().scope
 	if err := store.QueueFavoriteOp("710000000000001", true); err != nil {

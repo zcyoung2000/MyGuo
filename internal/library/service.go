@@ -74,7 +74,12 @@ type Service struct {
 	historyMutationSyncing bool
 	historyMutationWake    bool
 	historyMutationErr     error
+	historyRetryMu         sync.Mutex
 	historyUploadRetries   map[string]historyUploadRetry
+	historyScopeRetries    map[string]historyUploadRetry
+	historyRetryTimer      *time.Timer
+	historyRetryEpoch      uint64
+	historyRetryClosed     bool
 	historyMetadataMu      sync.Mutex
 	historyMetadataSyncing bool
 	historyMetadataWake    bool
@@ -110,6 +115,14 @@ type Service struct {
 func (s *Service) WaitForBackgroundSync() { s.background.Wait() }
 
 func (s *Service) Close() {
+	s.historyRetryMu.Lock()
+	s.historyRetryClosed = true
+	s.historyRetryEpoch++
+	if s.historyRetryTimer != nil {
+		s.historyRetryTimer.Stop()
+		s.historyRetryTimer = nil
+	}
+	s.historyRetryMu.Unlock()
 	s.historyMetadataMu.Lock()
 	if s.historyMetadataTimer != nil {
 		s.historyMetadataTimer.Stop()
@@ -173,6 +186,7 @@ func NewService(deps Dependencies) *Service {
 	}
 	if service.store != nil {
 		service.store.SetSyncScope(service.currentSyncSession().scope)
+		service.schedulePendingHistorySync()
 	}
 	return service
 }
@@ -207,6 +221,7 @@ func (s *Service) InvalidateUserData() {
 	s.resCachedAt = time.Time{}
 	s.resGeneration++
 	s.resMu.Unlock()
+	s.schedulePendingHistorySync()
 }
 
 func (s *Service) currentHistoryGeneration() uint64 {

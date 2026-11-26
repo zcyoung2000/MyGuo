@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 	"myguo/internal/native"
+	"myguo/internal/playback"
 )
 
 const serviceTimeout = 15 * time.Second
@@ -168,6 +169,7 @@ type App struct {
 	playerNativeBackdrop        bool
 	playerTransitionBitmap      *ui.Bitmap
 	ambientActive               bool
+	ambientLeft                 ui.Color
 	ambientTop                  ui.Color
 	feedChannel                 string
 	discoverPageScroll          ui.ScrollState
@@ -312,11 +314,14 @@ func (a *App) SetLibraryGrids(grids [4]*ui.GridState) {
 	defer a.mu.Unlock()
 	a.library.Grids = grids
 }
-func (a *App) SetAmbientGlow(active bool, _ [3]uint8, top [3]uint8) {
+func (a *App) SetAmbientGlow(active bool, left [3]uint8, top [3]uint8) {
 	a.mu.Lock()
 	a.ambientActive = active
 	if active {
+		a.ambientLeft = ui.RGB(left[0], left[1], left[2])
 		a.ambientTop = ui.RGB(top[0], top[1], top[2])
+	} else {
+		a.ambientLeft, a.ambientTop = ui.Transparent, ui.Transparent
 	}
 	invalidate := a.invalidateFn
 	a.mu.Unlock()
@@ -907,17 +912,25 @@ func (a *App) PlaybackChanged() {
 	a.mu.Unlock()
 	if host != nil {
 		s := host.Snapshot()
-		top := [3]uint8{}
-		active := s.Mode != "idle" && s.Status.Ready && len(s.Status.AmbientTop) == 3
+		left, top := [3]uint8{}, [3]uint8{}
+		active := s.Mode != playback.Idle && s.Status.Ready && s.Status.Displayed &&
+			!s.Status.PictureInPicture && s.Error == "" && len(s.Status.AmbientTop) == 3
 		if active {
 			for i := range 3 {
-				top[i] = uint8(s.Status.AmbientTop[i])
+				top[i] = uint8(max(0, min(255, s.Status.AmbientTop[i])))
+				left[i] = top[i]
+				if len(s.Status.AmbientLeft) == 3 {
+					left[i] = uint8(max(0, min(255, s.Status.AmbientLeft[i])))
+				}
 			}
 		}
 		a.mu.Lock()
 		a.ambientActive = active
 		if active {
+			a.ambientLeft = ui.RGB(left[0], left[1], left[2])
 			a.ambientTop = ui.RGB(top[0], top[1], top[2])
+		} else {
+			a.ambientLeft, a.ambientTop = ui.Transparent, ui.Transparent
 		}
 		a.mu.Unlock()
 	}

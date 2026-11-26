@@ -140,7 +140,9 @@ func hongguoTheme(c *ui.Context) ui.Theme {
 }
 func (a *App) renderSidebar(c *ui.Context) {
 	top := sidebarTopInset(c.TitleBar())
-	ui.Box(c.Key("sidebar-container")).Fill().Children(func() {
+	sidebar := ui.Box(c.Key("sidebar-container")).Fill()
+	a.renderPlayerSidebarAmbient(c, sidebar)
+	sidebar.Children(func() {
 		ui.Scroll(c.Key("sidebar")).Scrollbars(false).Fill().Padding(0, 10, 16, 10).Gap(2).Children(func() {
 			// Draggable room for the window controls (no brand text): the
 			// traffic lights on macOS, and nothing above the sidebar content
