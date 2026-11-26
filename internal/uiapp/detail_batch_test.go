@@ -15,8 +15,7 @@ func TestDetailResumeSurvivesPlayerCloseAndIgnoresOtherSeries(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = Detail{ID: "123456", Title: "续播详情"}
-	shell := NativeShell{App: app}
-	shell.ResumeProgress(ResumeProgress{SeriesID: "123456", EpisodeNum: 8, Position: 725, Session: 0, Sequence: 1})
+	app.UpdateResumeProgress(ResumeProgress{SeriesID: "123456", EpisodeNum: 8, Position: 725, Session: 0, Sequence: 1})
 	if state := app.DetailState(); app.resume.ResumeEpisode != 8 || app.resume.ResumePosition != 725 {
 		t.Fatalf("resume not retained: %+v", state)
 	}
@@ -28,7 +27,7 @@ func TestDetailResumeSurvivesPlayerCloseAndIgnoresOtherSeries(t *testing.T) {
 	if app.resume.ResumeEpisode != 0 || app.resume.ID == "123456" {
 		t.Fatalf("old series resume polluted new detail: %+v", app.resume)
 	}
-	shell.ResumeProgress(ResumeProgress{SeriesID: "123456", EpisodeNum: 9, Position: 10, Session: 0, Sequence: 1})
+	app.UpdateResumeProgress(ResumeProgress{SeriesID: "123456", EpisodeNum: 9, Position: 10, Session: 0, Sequence: 1})
 	if app.resume.ResumeEpisode != 0 {
 		t.Fatalf("stale sequence accepted: %+v", app.resume)
 	}
@@ -238,16 +237,6 @@ func (p *countingFeatureProvider) GetActorWorks(context.Context, string, string)
 }
 func (p *countingFeatureProvider) GetSuggestions(context.Context, string) ([]string, error) {
 	return nil, nil
-}
-func (p *countingFeatureProvider) waitSeasonStarted(t *testing.T) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && p.seasonCalls.Load() == 0 {
-		time.Sleep(time.Millisecond)
-	}
-	if p.seasonCalls.Load() == 0 {
-		t.Fatal("season request not started")
-	}
 }
 
 type instantFavorite struct{ favorite bool }

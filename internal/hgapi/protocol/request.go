@@ -3,72 +3,11 @@
 package protocol
 
 import (
-	"net/url"
 	"strconv"
 	"strings"
 
 	"myguo/internal/hgapi/model"
 )
-
-// CommonQuery is the anonymous device query shared by catalog reads.
-func CommonQuery(deviceID, installID string, ticketMillis int64) url.Values {
-	return url.Values{
-		"device_id":       {deviceID},
-		"iid":             {installID},
-		"aid":             {AID},
-		"app_name":        {AppName},
-		"version_code":    {VersionCode},
-		"version_name":    {VersionName},
-		"channel":         {model.DefaultDevice.Channel},
-		"device_platform": {DevicePlatform},
-		"_rticket":        {strconv.FormatInt(ticketMillis, 10)},
-	}
-}
-
-// DiscoverQuery is the bookmall tab request.
-// Fields follow the anonymous discovery call: bottom tab 7 (short drama) and tab_type -1.
-func DiscoverQuery(deviceID, installID string, ticketMillis int64) url.Values {
-	q := CommonQuery(deviceID, installID, ticketMillis)
-	// bottom_tab_type 7 is BottomTabBarItemType.VideoSeriesFeedTab, which
-	// StaggeredFeedTab.fi returns for the series mall. client_req_type 3 is
-	// ClientReqType.Open. offset 0 is the first page copied from request args.
-	q.Set("bottom_tab_type_list", "7,0,1,2,3,4")
-	q.Set("tab_type", "-1")
-	q.Set("bottom_tab_type", "7")
-	q.Set("offset", "0")
-	q.Set("client_req_type", "3")
-	return q
-}
-
-// SearchQuery is the anonymous first-page short-play search.
-// user_is_login=0. Account headers are not part of this query.
-func SearchQuery(keyword, deviceID, installID string, ticketMillis int64, count int) url.Values {
-	if count <= 0 {
-		count = 20
-	}
-	q := CommonQuery(deviceID, installID, ticketMillis)
-	q.Set("query", keyword)
-	q.Set("offset", "0")
-	q.Set("count", strconv.Itoa(count))
-	q.Set("tab_type", SearchTabShortPlay)
-	q.Set("search_source", SearchSourceHome)
-	q.Set("tab_name", SearchTabName)
-	q.Set("bookstore_tab", "16")
-	q.Set("bookshelf_search_plan", "4")
-	q.Set("user_is_login", "0")
-	return q
-}
-
-// SearchHeaders are the anonymous headers that do not depend on the signature.
-// The signed search request adds the portable signature headers separately.
-func SearchHeaders(ticketMillis int64, randomInt int32) map[string]string {
-	return map[string]string{
-		"Accept":                    "application/json; charset=utf-8",
-		"x-reading-request":         ReadingRequestID(ticketMillis, randomInt),
-		"X-Xs-From-Web":             "0",
-		"x-vc-bdturing-sdk-version": "4.0.3.cn",
-	}
-}
 
 // ReadingRequestID reproduces the client pattern millis + "-" + abs(randomInt).
 func ReadingRequestID(unixMillis int64, randomInt int32) string {
@@ -77,19 +16,6 @@ func ReadingRequestID(unixMillis int64, randomInt int32) string {
 		n = -n
 	}
 	return strconv.FormatInt(unixMillis, 10) + "-" + strconv.FormatInt(n, 10)
-}
-
-// SignedDiscoverPairs is the ordered bookmall query for the 推荐 open.
-// Business fields match DiscoverQuery. ts and _rticket are appended by the signer.
-func SignedDiscoverPairs(id SearchIdentity) [][2]string {
-	return SignedDiscoverPairsFor(id, "-1")
-}
-
-// SignedDiscoverPairsFor is SignedDiscoverPairs with the bookmall tab_type.
-// An empty tab type keeps the 推荐 open, BookstoreTabType.unknown_tab_type (-1).
-// bottom_tab_type stays VideoSeriesFeedTab (7).
-func SignedDiscoverPairsFor(id SearchIdentity, tabType string) [][2]string {
-	return SignedDiscoverPairsIn(id, tabType, "7")
 }
 
 // SignedDiscoverPairsIn is SignedDiscoverPairsFor with an explicit bottom_tab_type.
@@ -197,13 +123,6 @@ func DeviceQueryPairs(id SearchIdentity) [][2]string {
 		{"is_android_pad_screen", pad},
 		{"openudid", id.OpenUDID},
 	}
-}
-
-// SignedSearchPairs is the ordered search query. Order is part of the signature.
-// Business fields match SearchQuery. The extra device fields are the portable
-// fingerprint a live anonymous search accepts. ts and _rticket are appended later.
-func SignedSearchPairs(id SearchIdentity, keyword string, count int) [][2]string {
-	return SignedSearchPairsFor(id, keyword, count, 0, SearchTabShortPlay)
 }
 
 // SignedSearchPairsFor is the ordered search query for one tab and offset.
@@ -447,16 +366,6 @@ func UserWorksBody(userID, cursor string) ([]byte, error) {
 	})
 }
 
-// SignedCategoryPairs is the ordered category-page query.
-func SignedCategoryPairs(id SearchIdentity, categoryID string, offset, count int) [][2]string {
-	return append(DeviceQueryPairs(id),
-		[2]string{"category_id", categoryID},
-		[2]string{"count", strconv.Itoa(count)},
-		[2]string{"offset", strconv.Itoa(offset)},
-		[2]string{"user_is_login", "0"},
-	)
-}
-
 // LandingFilterParams maps each filter group of the landing page's rule to
 // the query parameter GetNewCategoryLandingPageRequest sends it under, in
 // sending order. Observed 2026-10-24: each changes the rows, and sending the
@@ -466,36 +375,6 @@ var LandingFilterParams = [][2]string{
 	{"sort_by", "sort_by"},
 	{"sub_category", "sub_category_id"},
 	{"word_type", "word_number"},
-}
-
-// SignedCategoryLandingPairs is the ordered category-landing query. gender is
-// query_gender (1 男生, 0 女生) and is omitted for 全部. filters is keyed by
-// rule key; groups without a value are omitted.
-func SignedCategoryLandingPairs(id SearchIdentity, categoryID, gender string, filters map[string]string, offset, count int) [][2]string {
-	pairs := append(DeviceQueryPairs(id), [2]string{"category_id", categoryID})
-	if gender != "" {
-		pairs = append(pairs, [2]string{"query_gender", gender})
-	}
-	for _, kv := range LandingFilterParams {
-		if v := filters[kv[0]]; v != "" {
-			pairs = append(pairs, [2]string{kv[1], v})
-		}
-	}
-	return append(pairs,
-		[2]string{"count", strconv.Itoa(count)},
-		[2]string{"offset", strconv.Itoa(offset)},
-		[2]string{"user_is_login", "0"},
-	)
-}
-
-// SignedRankPairs is the ordered ranking query.
-func SignedRankPairs(id SearchIdentity, rankID string, offset, count int) [][2]string {
-	return append(DeviceQueryPairs(id),
-		[2]string{"rank_id", rankID},
-		[2]string{"count", strconv.Itoa(count)},
-		[2]string{"offset", strconv.Itoa(offset)},
-		[2]string{"user_is_login", "0"},
-	)
 }
 
 // SeriesBody is the JSON body for video_detail. series_id is the public series id.
@@ -541,16 +420,5 @@ func AlbumBody(albumID string) ([]byte, error) {
 		"biz_param":              map[string]any{"video_platform": 3},
 		"need_video_detail_info": true,
 		"series_ids":             []int64{},
-	})
-}
-
-func PlaybackBody(episodeID string) ([]byte, error) {
-	return jsonMarshal(map[string]any{
-		"video_id": episodeID,
-		"biz_param": map[string]any{
-			"video_id_type":             0,
-			"need_all_video_definition": true,
-			"video_platform":            3,
-		},
 	})
 }

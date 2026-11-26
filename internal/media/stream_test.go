@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -123,7 +122,6 @@ func TestServeProgressiveVideoCompletedRange(t *testing.T) {
 		written:  int64(len(data)),
 		done:     true,
 	}
-	stream.cond = sync.NewCond(&stream.mu)
 	stream.key = PrefetchTaskKey(PrefetchTask{EpisodeID: "episode1", Quality: "720p"})
 	server := &MediaServer{progressiveStreams: map[string]*progressiveStream{stream.key: stream}}
 	response := httptest.NewRecorder()
@@ -204,7 +202,6 @@ func growingRangeFixture(t *testing.T) (*MediaServer, *progressiveStream, string
 	id := "710000000000001"
 	key := PrefetchTaskKey(PrefetchTask{EpisodeID: id, Quality: "720p"})
 	stream := &progressiveStream{key: key, episodeID: id, tempPath: path, file: file, readers: 1}
-	stream.cond = sync.NewCond(&stream.mu)
 	if err := stream.append(bytes.Repeat([]byte{0x61}, 2048)); err != nil {
 		t.Fatal(err)
 	}

@@ -295,10 +295,6 @@ func (a *App) settingsItemRow(c *ui.Context, key, title, description, value, act
 	})
 }
 
-func settingsMeta(label, value string) (string, float32) {
-	return label + ":" + value, 76
-}
-
 // The profile and its actions stack when the sidebar leaves little content
 // width. Badge supplies an unbroken status label; Toolbar owns action overflow.
 func (a *App) renderSettingsProfile(c *ui.Context, state Settings) {

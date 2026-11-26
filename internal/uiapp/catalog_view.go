@@ -121,15 +121,6 @@ func (a *App) updateDiscoverFiltersOnScroll(y float32) {
 	}
 }
 
-func (a *App) toggleCatalogFilters() {
-	if a.discoverFilterState == discoverExpanded {
-		a.discoverFilterState = discoverCollapsed
-	} else {
-		a.discoverFilterState = discoverExpanded
-	}
-	a.invalidate()
-}
-
 func (a *App) renderCatalogControls(c *ui.Context, catalog Catalog) ui.Element {
 	open := a.discoverFilterState != discoverCollapsed
 	card := contentSurface(ui.Column(c.Key("catalog-filter-card")).Padding(10, 14).Radius(14))

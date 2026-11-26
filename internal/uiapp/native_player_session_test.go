@@ -51,12 +51,12 @@ func TestFeedEpisodeChoiceStartsSeriesSessionAndBackRestoresFeed(t *testing.T) {
 			if _, ok := tt.AccessByRole(ui.RoleButton, "暂停视频"); !ok {
 				t.Fatal("series playback did not get its center play/pause button")
 			}
-			wantResume := any(nil)
+			wantResume := float64(-1)
 			if number == 1 {
 				wantResume = float64(48)
 			}
-			if host.desired["seriesId"] != "123456" || host.desired["resumeAt"] != wantResume {
-				t.Fatalf("episode selection lost the series or resume intent: %+v", host.desired)
+			if host.Snapshot().Book.ID != "123456" || host.Snapshot().Playback.LastPosition != wantResume {
+				t.Fatalf("episode selection lost the series or resume intent: %+v", host.Snapshot())
 			}
 			a.ClosePlayer(s.Session - 1)
 			if !a.PlayerVisible() {
@@ -65,8 +65,8 @@ func TestFeedEpisodeChoiceStartsSeriesSessionAndBackRestoresFeed(t *testing.T) {
 			a.ClosePlayer(s.Session)
 			tt.Frame()
 			tt.Advance(300 * time.Millisecond)
-			if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.desired["event"] != "recommend" || host.desired["channel"] != "漫剧" || !tt.HasText("推荐频道") {
-				t.Fatalf("back did not restore the original feed channel: visible=%v state=%+v scene=%+v", a.PlayerVisible(), p.Snapshot(), host.desired)
+			if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.Snapshot().Mode != playback.Feed || host.Snapshot().Channel != "漫剧" || !tt.HasText("推荐频道") {
+				t.Fatalf("back did not restore the original feed channel: visible=%v state=%+v scene=%+v", a.PlayerVisible(), p.Snapshot(), host.Snapshot())
 			}
 		})
 	}
@@ -85,7 +85,7 @@ func TestFeedSeriesSessionReturnsThroughHistoryAndSidebar(t *testing.T) {
 			} else {
 				a.OpenView("recommend")
 			}
-			if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.desired["event"] != "recommend" {
+			if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.Snapshot().Mode != playback.Feed {
 				t.Fatalf("%s left an idle or series player on the recommendation page", route)
 			}
 		})
@@ -126,7 +126,7 @@ func TestAutomaticFeedContinuationHidesChannelsAndBackRestoresFeed(t *testing.T)
 	a.ClosePlayer(s.Session)
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond)
-	if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.desired["channel"] != "漫剧" || !tt.HasText("推荐频道") {
+	if a.PlayerVisible() || p.Snapshot().Mode != playback.Feed || host.Snapshot().Channel != "漫剧" || !tt.HasText("推荐频道") {
 		t.Fatal("back did not return to original feed channel")
 	}
 }

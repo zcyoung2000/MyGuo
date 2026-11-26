@@ -511,34 +511,6 @@ func (a *App) renderActor(c *ui.Context) {
 	}).Grow(1).Gap(cardGridVerticalGap).TrackScroll(&a.actorScroll).Scrollbars(false)
 
 }
-func (a *App) renderCollection(c *ui.Context, label string, value DetailCollection, retry func()) {
-	if value.Title != "" {
-		label = value.Title
-	}
-	if !value.Loading && value.Error == "" && len(value.Items) == 0 {
-		return
-	}
-	section := ui.Column(c.Key("detail-collection:" + label)).Gap(8)
-	section.Children(func() {
-		ui.Text(c, label).Bold().FontSize(15).TextColor(ui.Hex("#ffffff"))
-		if value.Loading && len(value.Items) == 0 {
-			return
-		}
-		if value.Error != "" {
-			inlineError(c, value.Error, retry)
-			if len(value.Items) == 0 {
-				return
-			}
-		}
-		ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Scrollbars(false).Height(catalogRowHeight(value.Items)).Children(func() {
-			ui.Row(c.Key("collection-" + label)).Gap(c.Theme().Space(3)).Children(func() {
-				for _, item := range value.Items {
-					a.catalogCard(c, item)
-				}
-			})
-		})
-	})
-}
 
 func calendarWeekday(value string) string {
 	date, ok := parseCalendarDate(value)

@@ -741,7 +741,7 @@ func newMediaServer(client *hgapi.Client, cacheDir string) (*MediaServer, error)
 		port:               port,
 		pbCache:            make(map[string]playbackCacheItem),
 		pbLoads:            make(map[string]*playbackLoad),
-		multiModel:         NewMultiVideoModelBatcher(client, nil),
+		multiModel:         NewMultiVideoModelBatcher(client),
 		prefetchQ:          make(chan PrefetchTask, 64),
 		prefetchQueued:     make(map[string]PrefetchTask),
 		prefetchActive:     make(map[string]*PrefetchExecution),

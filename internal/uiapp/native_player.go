@@ -87,10 +87,6 @@ func (a *App) renderNativePlayerState(c *ui.Context, s playback.State) {
 		}
 		a.renderNativePlayerFeedback(c, s, available, command)
 	})
-	if s.Mode == playback.Feed {
-		a.feedChrome = FeedChrome{Visible: !clear}
-		a.feedChromeKnown = true
-	}
 	if s.Panel == "" {
 		for _, binding := range []struct {
 			key     ui.Key

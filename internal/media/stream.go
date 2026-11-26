@@ -38,7 +38,6 @@ type progressiveStream struct {
 	rendererOwned bool
 
 	mu        sync.Mutex
-	cond      *sync.Cond
 	written   int64
 	done      bool
 	err       error
@@ -85,11 +84,9 @@ func (stream *progressiveStream) append(chunk []byte) error {
 	if _, err := stream.file.Write(chunk); err != nil {
 		stream.done = true
 		stream.err = err
-		stream.cond.Broadcast()
 		return err
 	}
 	stream.written += int64(len(chunk))
-	stream.cond.Broadcast()
 	stream.notifyWaitersLocked()
 	return nil
 }
@@ -97,16 +94,6 @@ func (stream *progressiveStream) append(chunk []byte) error {
 func (stream *progressiveStream) snapshot() (written int64, done bool, err error) {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
-	return stream.written, stream.done, stream.err
-}
-
-func (stream *progressiveStream) waitUntil(offset int64) (int64, bool, error) {
-	stream.mu.Lock()
-	defer stream.mu.Unlock()
-
-	for stream.written <= offset && !stream.done {
-		stream.cond.Wait()
-	}
 	return stream.written, stream.done, stream.err
 }
 
@@ -254,7 +241,6 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 		// This path is reached only from a renderer media request.
 		rendererOwned: true,
 	}
-	stream.cond = sync.NewCond(&stream.mu)
 	stream.retainReader()
 	ms.progressiveStreams[key] = stream
 	ms.progressiveMu.Unlock()
@@ -332,7 +318,6 @@ func (stream *progressiveStream) finish(commandErr error) {
 	stream.mu.Lock()
 	stream.done = true
 	stream.err = finalErr
-	stream.cond.Broadcast()
 	stream.notifyWaitersLocked()
 	stream.mu.Unlock()
 	_ = stream.file.Close()

@@ -205,23 +205,6 @@ func TestRecommendFeedContinuesPastRepeatedPages(t *testing.T) {
 	}
 }
 
-func TestWarmupWindowLimitsAdaptToNetworkProfile(t *testing.T) {
-	tests := map[string]struct {
-		next     int
-		previous int
-	}{
-		"weak":   {next: 1, previous: 0},
-		"medium": {next: 2, previous: 1},
-		"strong": {next: 3, previous: 2},
-	}
-	for profile, want := range tests {
-		next, previous := warmupWindowLimits(profile)
-		if next != want.next || previous != want.previous {
-			t.Errorf("%s limits = (%d, %d), want (%d, %d)", profile, next, previous, want.next, want.previous)
-		}
-	}
-}
-
 func TestRecordFeedMetricsWritesSQLite(t *testing.T) {
 	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
 	dir := t.TempDir()

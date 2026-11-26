@@ -53,7 +53,6 @@ type (
 	QualitySelection     = media.QualitySelection
 	MediaServer          = media.MediaServer
 	MediaDiagnosticsDTO  = media.MediaDiagnosticsDTO
-	PrefetchTask         = media.PrefetchTask
 	PrefetchExecution    = media.PrefetchExecution
 	UpdateNowPlayingArgs = native.UpdateNowPlayingArgs
 	ConfirmDialogArgs    = native.ConfirmDialogArgs
@@ -84,15 +83,11 @@ func NewStore(dir string) (*Store, error) { return userstore.NewStore(dir) }
 
 func NewMediaServer(client *hgapi.Client) (*MediaServer, error) { return media.NewMediaServer(client) }
 
-func ffmpegCommand() (string, error) { return media.FFmpegCommand() }
-
 func normalizeVideoQuality(quality string) string { return mediautil.NormalizeVideoQuality(quality) }
 
 func videoQualities() []string { return media.VideoQualities() }
 
 func qualityLabel(quality string) string { return media.QualityLabel(quality) }
-
-func normalizeImageURL(raw string) string { return mediautil.NormalizeImageURL(raw) }
 
 func sanitizeIPC[T any](value T) T { return sanitize.Sanitize(value) }
 
@@ -154,8 +149,6 @@ type HongguoService struct {
 	httpClient            *http.Client
 	cache                 *resourcecache.LRU
 	feedMu                sync.Mutex
-	feedWarmupMu          sync.Mutex
-	feedWarmupGeneration  uint64
 	fullPrefetchMu        sync.Mutex
 	fullPrefetchSignature string
 	episodeMu             sync.Mutex
@@ -840,17 +833,6 @@ func (s *HongguoService) listEpisodes(ctx context.Context, seriesID string) (*hg
 
 func pageItems[T any](page *hgapi.Page[T]) []T {
 	return mediautil.PageItems(page)
-}
-
-func pageCursor[T any](page *hgapi.Page[T]) string {
-	if page == nil {
-		return ""
-	}
-	return page.Cursor
-}
-
-func pageHasMore[T any](page *hgapi.Page[T]) bool {
-	return page != nil && page.HasMore
 }
 
 func shortFilterItems(page *model.ShortFilterPage) []model.SeriesSummary {

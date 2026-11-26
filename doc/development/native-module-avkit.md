@@ -2,28 +2,22 @@
 
 Scope: `internal/avkit/`. Source paths below are relative to that directory.
 
-avkit is a native module of MyGo: Go interfaces implemented in Swift, Rust or
-Zig. Read https://mygo.dev/docs/native-modules (docs/native-modules.md)
-before changing it.
+avkit is this app's macOS MyGo native module, implemented in Swift.
+Windows playback uses `internal/playerengine` and MyGo `ui/video` instead.
+Read MyGo's `docs/native-modules.md` before changing the module contract.
 
-- `avkit.go` declares the interfaces, the types they use and the errors
-  (`native.NewError`): it is the contract. `//mygo:native` marks an entry point,
-  which gets a constructor, `NewT`.
-- `avkit_native.go` and each language's generated file
-  (`swift/Sources/Avkit/Avkit.mygo.swift`, `rust/src/mygo.rs`,
-  `zig/src/mygo.zig`) are generated: never edit them; `mygo dev`
+- `avkit.go` declares the `Player` interface and `Status` snapshot: it is
+  the contract. `//mygo:native` marks `Player` as an entry point and
+  generates its `NewPlayer` constructor.
+- `avkit_native.go` and `swift/Sources/Avkit/Avkit.mygo.swift`
+  are generated: never edit them; `mygo dev`
   regenerates them when the interfaces change.
-- `swift/` is a Swift package, which macOS uses when it is there, for
-  Apple's frameworks: a factory `makeT()` per entry point and classes
-  conforming to the generated protocols. Add Swift packages and frameworks
-  in `swift/Package.swift`.
-- `rust/` is a Rust crate and `zig/` a Zig package, for every platform: a
-  factory per entry point (`make_t` in Rust, `makeT` in Zig) and types
-  implementing the generated traits or declarations.
+- `swift/` is the macOS Swift package for Apple's media frameworks:
+  `makePlayer()` implements the `Player` entry point.
+  Add Swift packages and frameworks in `swift/Package.swift`.
 
-Check the module without opening the app:
+Check the module from the repository root without opening the app:
 
 ```sh
-mygo native check            # generate, build and vet: every problem as file:line
-mygo native call Greeter.Greet '{"name": "Ada"}'   # call a method, print its result
+go run github.com/egoist/mygo/cmd/mygo native check ./internal/avkit
 ```

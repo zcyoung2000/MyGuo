@@ -1,7 +1,6 @@
 package ipc
 
 import (
-	"context"
 	"myguo/internal/hgapi/model"
 	"time"
 )
@@ -12,36 +11,6 @@ const (
 	seriesBatchSize    = 10
 	seriesBatchTimeout = 8 * time.Second
 )
-
-func (s *HongguoService) enrichSeriesCards(ctx context.Context, cards []SeriesCard) []SeriesCard {
-	if len(cards) == 0 || (s.client == nil && s.seriesBatch == nil) {
-		return cards
-	}
-	batchCtx, cancel := context.WithTimeout(ctx, seriesBatchTimeout)
-	defer cancel()
-	batch := s.client.GetSeriesBatch
-	if s.seriesBatch != nil {
-		batch = s.seriesBatch
-	}
-	details, err := batch(batchCtx, seriesBatchIDs(cards, seriesBatchSize))
-	if err != nil || len(details) == 0 {
-		return cards
-	}
-	byID := make(map[string]*model.Series, len(details))
-	for i := range details {
-		if details[i].Series != nil {
-			byID[details[i].Series.ID] = details[i].Series
-		}
-	}
-	for i := range cards {
-		detail := byID[cards[i].ID]
-		if detail == nil {
-			continue
-		}
-		cards[i] = seriesCardFromDetail(cards[i], detail, s.imageURL)
-	}
-	return cards
-}
 
 func seriesBatchIDs(cards []SeriesCard, limit int) []string {
 	ids := make([]string, 0, limit)

@@ -80,7 +80,7 @@ func TestDetailEpisodesStayCompleteAfterEpisodeSelection(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.seriesID = "123456"
-	app.SetMediaHost(&MediaHost{})
+	app.SetMediaHost(newTestMediaHost())
 	app.detail = Detail{ID: "123456", Title: "长剧选集", Episodes: []CatalogItem{
 		{ID: "123456", EpisodeCount: 1}, {ID: "123456", EpisodeCount: 2},
 	}}

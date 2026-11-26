@@ -588,37 +588,6 @@ func (s *HongguoService) fetchSeriesBatchMap(ctx context.Context, ids []string) 
 	return res
 }
 
-func (s *HongguoService) seriesCards(items []model.SeriesSummary) []SeriesCard {
-	cards := make([]SeriesCard, 0, len(items))
-	for _, it := range items {
-		if it.ID == "" {
-			continue
-		}
-		upcoming := it.EpisodeCount == 0
-		heat := "热播"
-		status := "finished"
-		if upcoming {
-			heat = "待上线"
-			status = "upcoming"
-		}
-		cards = append(cards, SeriesCard{
-			ID:           it.ID,
-			Title:        it.Title,
-			Description:  it.Description,
-			CoverURL:     s.media.ImageURL(it.CoverURL),
-			EpisodeCount: it.EpisodeCount,
-			Category:     firstNonEmpty(it.Category, "短剧"),
-			Author:       it.Author,
-			Status:       status,
-			Heat:         heat,
-			Tags:         seriesSummaryTags(it),
-			Upcoming:     upcoming,
-			Reserved:     s.store.HasReservation(it.ID),
-		})
-	}
-	return cards
-}
-
 func (s *HongguoService) seasonsToCards(album *model.Album, details ...map[string]*model.Series) []SeriesCard {
 	if album == nil {
 		return nil
@@ -732,10 +701,6 @@ func seasonDisplayTitle(title string, number int) string {
 	return fmt.Sprintf("%s 第%d季", title, number)
 }
 
-func hasUsableCover(coverURL string, expiresAt time.Time) bool {
-	return coverURL != "" && (expiresAt.IsZero() || time.Now().Before(expiresAt))
-}
-
 func seriesContentTypeLabel(contentType int) string {
 	switch model.ContentType(contentType) {
 	case model.ContentMotionComic:
@@ -815,12 +780,6 @@ func excludeSeriesCard(cards []SeriesCard, id string) []SeriesCard {
 		}
 	}
 	return out
-}
-
-func normalizeTitle(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.NewReplacer("：", ":", "，", ",", "！", "!", "？", "?").Replace(value)
-	return strings.ToLower(value)
 }
 
 func firstNonEmpty(values ...string) string {

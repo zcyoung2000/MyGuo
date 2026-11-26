@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
+	"myguo/internal/playback"
 )
 
 type settingsTestProvider struct {
@@ -157,23 +157,23 @@ func TestAnonymousSettingsShowsLegacyImportAndLogin(t *testing.T) {
 }
 
 func TestSettingsMediaRoutingKeepsRecommendAndDetail(t *testing.T) {
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app := NewTestApp()
 	app.SetMediaHost(host)
 	app.view = "recommend"
 	app.mediaOn = true
-	host.Recommend()
+	host.RecommendChannel("")
 	app.OpenView("recommend")
-	if host.desired["event"] != "recommend" {
+	if host.Snapshot().Mode != playback.Feed {
 		t.Fatal("recommend host changed")
 	}
 	app.OpenView("settings")
-	if host.desired["event"] != "stop" || app.hostedScene() || app.mediaOn {
+	if host.Snapshot().Mode != playback.Idle || app.hostedScene() || app.mediaOn {
 		t.Fatal("settings must stop recommendation media and use the native body")
 	}
 	app.OpenView("detail")
 	app.PlayDetail()
-	if host.desired["event"] != "stop" {
+	if host.Snapshot().Mode != playback.Idle {
 		t.Fatal("navigation stop changed")
 	}
 }
@@ -193,17 +193,6 @@ func TestSettingsLoadAggregatesIPCError(t *testing.T) {
 		t.Fatal("aggregated settings load error missing")
 	}
 }
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-var _ = mygo.WebView{}
 
 func TestOpeningAndCancellingAccountSwitchDoesNotMutateSessionOrHistory(t *testing.T) {
 	a, fake, tt := settingsFixture()

@@ -3,7 +3,6 @@ package uiapp
 import (
 	"fmt"
 	"math"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -442,24 +441,6 @@ func TestCompletionAuditHardRules(t *testing.T) {
 	}
 	if !containsRegexp(readme, `CGO_ENABLED=0`) {
 		t.Fatal("CGO-free build guidance missing")
-	}
-	frontendApp := readFile(t, "../../frontend/app.js")
-	playerChrome := readFile(t, "../../frontend/player-chrome.js")
-	for _, source := range []string{frontendApp, playerChrome} {
-		for _, match := range regexp.MustCompile(`(?s)<svg[^>]*>(.*?)</svg>`).FindAllString(source, -1) {
-			if !containsRegexp(match, `currentColor`) {
-				t.Fatalf("inline SVG lacks currentColor: %.160s", match)
-			}
-		}
-	}
-	for _, path := range []string{"frontend/app.js", "frontend/index.html"} {
-		source := readFile(t, "../../"+path)
-		for _, match := range regexp.MustCompile(`emoji|🎉|🚀`).FindAllString(source, -1) {
-			t.Fatalf("emoji found in %s: %s", path, match)
-		}
-	}
-	if !containsRegexp(frontendApp, `OpenHongguo|openhongguo|apiCall\(`) {
-		t.Fatal("frontend does not use the exported apiCall/OpenHongguo boundary")
 	}
 	if !containsRegexp(readFile(t, "../../internal/store/store.go"), `WAL`) {
 		t.Fatal("SQLite WAL mode invariant missing")

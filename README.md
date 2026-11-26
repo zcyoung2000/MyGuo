@@ -115,8 +115,8 @@ MyGuo can run with an anonymous device profile. To sync personal data:
 
 1. Open **Settings**.
 2. Choose **Sign in**.
-3. Paste the account Cookie.
-4. Optionally add `x-tt-token` for a longer-lived session.
+3. Scan the QR code with the Hongguo mobile app and confirm sign-in.
+4. The current account stays active until the new session is validated and saved.
 
 The app can also detect credentials from a compatible local installation and offer a one-click import. Treat Cookies and tokens like passwords: keep them private and never commit or share them.
 
@@ -144,9 +144,7 @@ See [API architecture](doc/architecture/api-architecture.md) for request boundar
 go mod tidy
 go test ./...
 CGO_ENABLED=0 go build -o /dev/null .
-node frontend/ui-regression.test.js
 go test -race ./internal/uiapp
-node --test e2e/*.test.cjs
 ```
 
 When changing the UI, keep list views in responsive card grids, use inline SVG rather than emoji or bitmap glyphs, and preserve native window drag behavior.

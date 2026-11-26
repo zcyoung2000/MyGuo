@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -600,8 +599,4 @@ func GzipBody(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-func sortedStreams(streams []model.Stream) {
-	sort.SliceStable(streams, func(i, j int) bool { return streams[i].Bitrate > streams[j].Bitrate })
 }

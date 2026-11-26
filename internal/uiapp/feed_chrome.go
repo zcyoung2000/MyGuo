@@ -1,17 +1,10 @@
 package uiapp
 
 import (
-	"math"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 )
-
-// FeedChrome describes the native player channel overlay and open drawer.
-type FeedChrome struct {
-	Visible    bool    `json:"visible"`
-	RightInset float32 `json:"rightInset"`
-}
 
 var feedChannels = [...]struct{ value, label string }{
 	{"关注", "关注"}, {"", "推荐"}, {"漫剧", "漫剧"}, {"真人剧", "真人剧"},
@@ -39,27 +32,7 @@ func (a *App) SelectFeedChannel(channel string) {
 	a.invalidate()
 }
 
-func (s *NativeShell) FeedChromeChanged(value FeedChrome) {
-	if math.IsNaN(float64(value.RightInset)) || math.IsInf(float64(value.RightInset), 0) {
-		return
-	}
-	value.RightInset = max(0, min(value.RightInset, 2000))
-	a := s.App
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.feedChromeKnown && a.feedChrome == value {
-		return
-	}
-	a.feedChrome, a.feedChromeKnown = value, true
-	a.invalidate()
-}
-
-func (a *App) focusMediaAfterPointer() {}
-
 func (a *App) renderFeedChannels(c *ui.Context) {
-	if a.feedChromeKnown && !a.feedChrome.Visible {
-		return
-	}
 	selected := 1
 	for index, channel := range feedChannels {
 		if channel.value == a.feedChannel {
@@ -68,7 +41,7 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 	}
 	// The transparent row places channels above the native player. Only the
 	// segmented control intercepts input.
-	ui.Row(c.Key("feed-channel-overlay")).Absolute().Top(14).Left(0).Right(a.feedChrome.RightInset).Justify(ui.Center).PassThrough().Transition(playerChromeTransition).Children(func() {
+	ui.Row(c.Key("feed-channel-overlay")).Absolute().Top(14).Left(0).Right(0).Justify(ui.Center).PassThrough().Transition(playerChromeTransition).Children(func() {
 		parts := ui.SegmentedBase(c.Key("feed-channels"), &selected, len(feedChannels))
 		track := parts.Track.Label("推荐频道").Padding(4, 6).Gap(4).Radius(24).
 			Material(a.playerChromeMaterial()).
@@ -95,14 +68,6 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 				} else {
 					segment.Background(ui.Transparent)
 				}
-
-				segment.OnClick(func() {
-					// Mouse users retain video shortcuts after choosing a channel;
-					// keyboard users keep focus in the native radio group.
-					if !segment.FocusVisible() {
-						go a.focusMediaAfterPointer()
-					}
-				})
 
 				segment.Children(func() {
 					// 1. In-flow sizer: guarantees segment width is stable and never collapses

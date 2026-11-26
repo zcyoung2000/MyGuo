@@ -27,7 +27,7 @@ func TestCatalogValuesUsesSelectedFiltersAndDefaultsToGenre(t *testing.T) {
 func TestSelectGenreResetsCursorAndPreservesResultsUntilReplacement(t *testing.T) {
 	app := NewTestApp()
 	app.SetInvalidator(func() {})
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app.SetMediaHost(host)
 	app.catalog.Items = []CatalogItem{{ID: "old"}}
 	app.catalog.Cursor = "cursor"
@@ -45,7 +45,7 @@ func TestSelectGenreResetsCursorAndPreservesResultsUntilReplacement(t *testing.T
 func TestOpenDetailShowsLoadingWithoutPlayer(t *testing.T) {
 	app := NewTestApp()
 	app.SetInvalidator(func() {})
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app.SetMediaHost(host)
 	app.OpenDetail("123456")
 	if app.View() != "detail" || app.PlayerVisible() || !app.DetailState().Loading {
@@ -90,7 +90,7 @@ func TestDetailProviderIsInvokedDirectly(t *testing.T) {
 func TestDetailProgressReconcileFeedsResume(t *testing.T) {
 	app := NewTestApp()
 	app.SetInvalidator(func() {})
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app.SetMediaHost(host)
 	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{
 		SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "详情"},
@@ -103,8 +103,8 @@ func TestDetailProgressReconcileFeedsResume(t *testing.T) {
 	}
 	app.detail = Detail{ID: "123456", EpisodeCount: 10}
 	app.PlayDetail()
-	if host.desired["resumeAt"] != 72.5 || host.desired["episodeNum"] != 8 {
-		t.Fatalf("play scene = %#v, want reconciled resume", host.desired)
+	if host.Snapshot().Playback.LastPosition != 72.5 || host.Snapshot().Playback.EpisodeNum != 8 {
+		t.Fatalf("play scene = %#v, want reconciled resume", host.Snapshot())
 	}
 }
 

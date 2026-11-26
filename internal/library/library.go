@@ -22,6 +22,13 @@ func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, 
 	return s.saveProgress(ctx, session, seriesID, episodeID, title, coverURL, episodeNum, totalEpisodes, positionSec, durationSec)
 }
 
+// FlushPendingProgress drains durable sync intent after playback has saved its
+// final clock. Local progress is committed by saveProgress before it returns.
+func (s *Service) FlushPendingProgress() {
+	_, _ = s.syncPendingHistoryMutations()
+	s.WaitForBackgroundSync()
+}
+
 // PlaybackScope is an opaque identity for delayed local progress writes. It
 // contains no credential. Store rechecks it under its transaction lock.
 func (s *Service) PlaybackScope() string { return s.currentSyncSession().scope }
@@ -464,12 +471,6 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		s.invalidateHistory()
 	}
 	return readErr
-}
-
-func historyMetadataNeedsEnrichment(item HistoryItem) bool {
-	coreMetadataMissing := historyTitleNeedsEnrichment(item.Title, item.EpisodeNum) || strings.TrimSpace(item.CoverURL) == "" || item.TotalEpisodes <= 0
-	finalDurationMissing := item.TotalEpisodes > 0 && item.EpisodeNum == item.TotalEpisodes && item.DurationSec <= 0
-	return coreMetadataMissing || finalDurationMissing
 }
 
 func historyMetadataComplete(item HistoryItem) bool {

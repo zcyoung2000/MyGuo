@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 	"myguo/internal/hgapi/adapters/memstore"
 	"myguo/internal/hgapi/model"
 )
+
+type multiVideoModelRequest struct {
+	MixedVideoIDMap map[string][]string `json:"mixed_video_id_map"`
+	DRScene         string              `json:"dr_scene"`
+	BizParam        map[string]any      `json:"biz_param"`
+}
 
 func TestNextEpisodesKeepsOrderedPlayableWindow(t *testing.T) {
 	episodes := []model.Episode{
@@ -34,40 +41,10 @@ func TestNextEpisodesKeepsOrderedPlayableWindow(t *testing.T) {
 	}
 }
 
-func TestMultiVideoModelBodyAndParser(t *testing.T) {
-	episodes := []model.Episode{{ID: "7100000000000201"}, {ID: "7100000000000202"}}
-	body, err := multiVideoModelBody(episodes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var request MultiVideoModelRequest
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatal(err)
-	}
-	if len(request.MixedVideoIDMap["1004"]) != 2 || request.MixedVideoIDMap["1004"][0] != episodes[0].ID || request.BizParam["video_platform"] != float64(1024) || request.BizParam["device_level"] != float64(4) {
-		t.Fatalf("request = %s", body)
-	}
-	if _, err := multiVideoModelBody(make([]model.Episode, 16)); err == nil {
-		t.Fatal("oversized batch accepted")
-	}
-
-	response := []byte(`{"code":0,"data":{"7100000000000201":{"video_model":{"video_list":[{"main_url":"https://media.invalid/e1","video_meta":{"codec_type":"h264"}}]}},"7100000000000202":{"video_model":{"video_list":[{"main_url":"https://media.invalid/e2","video_meta":{"codec_type":"h264"}}]}}}}`)
-	parsed, err := parseMultiVideoModels(response, episodes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(parsed) != 2 || parsed[episodes[0].ID].EpisodeID != episodes[0].ID || len(parsed[episodes[1].ID].Streams) != 1 {
-		t.Fatalf("parsed = %+v", parsed)
-	}
-	if _, err := parseMultiVideoModels([]byte(`{"code":100001}`), episodes); err == nil {
-		t.Fatal("API error accepted")
-	}
-}
-
 func TestMultiModelBatcherChunksDeduplicatesAndCancelsStaleWindow(t *testing.T) {
 	requests := make([][]string, 0, 3)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request MultiVideoModelRequest
+		var request multiVideoModelRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		requests = append(requests, request.MixedVideoIDMap["1004"])
 		data := map[string]any{}
@@ -84,8 +61,7 @@ func TestMultiModelBatcherChunksDeduplicatesAndCancelsStaleWindow(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	batcher := NewMultiVideoModelBatcher(client, &http.Client{})
-	batcher.multiVideoModelURL = ts.URL
+	batcher := NewMultiVideoModelBatcher(client)
 	episodes := make([]model.Episode, 16)
 	for i := range episodes {
 		episodes[i].ID = strconv.Itoa(7100000000000201 + i)
@@ -126,24 +102,27 @@ func TestMultiModelBatcherChunksDeduplicatesAndCancelsStaleWindow(t *testing.T) 
 }
 
 func TestMultiModelBatcherFailureDoesNotRememberModels(t *testing.T) {
+	var requests atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		_, _ = w.Write([]byte(`{"code":100001,"message":"rate limited"}`))
 	}))
 	defer ts.Close()
 
-	batcher := NewMultiVideoModelBatcher(&hgapi.Client{}, &http.Client{})
-	batcher.multiVideoModelURL = ts.URL
-	batcher.ReplaceWindow([]model.Episode{{ID: "e1"}})
-	remembered := make(chan string, 3)
-	go batcher.Run(context.Background(), func(id string, pb *model.Playback) {
-		if pb != nil {
-			remembered <- id
-		}
-	})
-	select {
-	case id := <-remembered:
-		t.Fatalf("failed request remembered %q", id)
-	default:
+	profiles := memstore.New()
+	if err := profiles.Save(context.Background(), &hgapi.DeviceProfile{DeviceID: "7100000000000001", InstallID: "7100000000000002"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := adapters.NewClient("", hgapi.Options{ProfileStore: profiles, APIOrigin: ts.URL, DeviceResets: hgapi.Int(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batcher := NewMultiVideoModelBatcher(client)
+	batcher.ReplaceWindow([]model.Episode{{ID: "7100000000000201"}})
+	remembered := false
+	batcher.Run(context.Background(), func(string, *model.Playback) { remembered = true })
+	if requests.Load() == 0 || remembered {
+		t.Fatalf("failed batch: requests=%d remembered=%t", requests.Load(), remembered)
 	}
 }
 

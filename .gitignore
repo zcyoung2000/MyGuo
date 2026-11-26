@@ -30,10 +30,10 @@ tmp_*
 test_*
 !/scripts/tests/test_*.py
 *.tmp
-!e2e/TEST_CASES.md
 
-# E2E test output
-e2e/screenshots/
+# Local UI fixture exports
+/ui-audit/
+/ui-review/
 
 # Local tool caches and generated visualization snapshots
 __pycache__/

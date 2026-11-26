@@ -141,18 +141,19 @@ func TestFeedPreloadWindowHLSAdmissionByPlatform(t *testing.T) {
 		t.Fatalf("statuses = %d, want 1", len(statuses))
 	}
 	key := PrefetchTaskKey(PrefetchTask{EpisodeID: neighbor.EpisodeID, Quality: neighbor.Quality})
-	_, streamStarted := ms.hlsStreams[key]
 	if runtime.GOOS == "windows" {
 		// Windows leaves neighbor lookahead to the full-file prefetch. No HLS
 		// stream may register, or runPrefetchTask would skip the MP4 download.
+		_, streamStarted := ms.hlsStreams[key]
 		if streamStarted || ms.hlsStarts.Load() != 0 {
 			t.Fatalf("Windows started a speculative HLS stream: registered=%t starts=%d", streamStarted, ms.hlsStarts.Load())
 		}
 		return
 	}
-	// macOS keeps its original behavior: still admit and start the HLS stream.
-	if !streamStarted || ms.hlsStarts.Load() != 1 {
-		t.Fatalf("macOS did not start the HLS preload: registered=%t starts=%d", streamStarted, ms.hlsStarts.Load())
+	// A nil-client stream can fail and retire before this assertion. Count
+	// admission instead of racing the worker's removal from hlsStreams.
+	if ms.hlsStarts.Load() != 1 {
+		t.Fatalf("macOS did not start the HLS preload: starts=%d", ms.hlsStarts.Load())
 	}
 }
 

@@ -105,14 +105,7 @@ func (a *App) ClosePlayer(session int64) {
 	}
 	a.closeMediaLocked()
 }
-func (a *App) CloseMediaSession(session int64) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !a.mediaOn || session != a.mediaSession {
-		return
-	}
-	a.closeMediaLocked()
-}
+
 func (a *App) closeMediaLocked() {
 	a.mediaOn = false
 	a.resetResumeLocked(a.detail.ID)
@@ -832,16 +825,6 @@ func (a *App) libraryItemVisible(tab LibraryTab, item CatalogItem) bool {
 	}
 }
 
-func (a *App) visibleLibraryFallback(tab LibraryTab) []CatalogItem {
-	library := a.libraryAt(tab)
-	items := make([]CatalogItem, 0, len(library.Items))
-	for _, it := range library.Items {
-		if a.libraryItemVisible(tab, it) {
-			items = append(items, it)
-		}
-	}
-	return items
-}
 func (a *App) ToggleItemReservation(item CatalogItem) {
 	a.mu.Lock()
 	key := "reservation:" + item.ID

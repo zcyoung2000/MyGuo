@@ -141,18 +141,17 @@ func TestReservationUpdatesEveryVisibleCatalogAndConfirmsCancellation(t *testing
 
 func TestAnOldMediaCloseCannotDismissANewerPlaybackSession(t *testing.T) {
 	app := NewTestApp()
-	app.SetMediaHost(&MediaHost{})
+	app.SetMediaHost(newTestMediaHost())
 	app.view = "detail"
 	app.detail = Detail{ID: "123456"}
 	app.PlayDetail()
 	old := app.mediaSession
 	app.PlayDetail()
-	shell := NativeShell{App: app}
-	shell.ClosePlayer(old)
+	app.ClosePlayer(old)
 	if !app.PlayerVisible() {
 		t.Fatal("old close dismissed a newer player")
 	}
-	shell.ClosePlayer(app.mediaSession)
+	app.ClosePlayer(app.mediaSession)
 	if app.PlayerVisible() {
 		t.Fatal("current close did not dismiss player")
 	}
@@ -272,26 +271,26 @@ func TestNewReleaseFeatureShowsDescriptionWithRoom(t *testing.T) {
 }
 
 func TestNativePlaybackDistinguishesSavedAndExplicitResumePositions(t *testing.T) {
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app := NewTestApp()
 	app.SetMediaHost(host)
 	app.detail = Detail{ID: "123456"}
 	app.PlayDetail()
-	if host.desired["resumeAt"] != nil {
+	if host.Snapshot().Playback.LastPosition != -1 {
 		t.Fatal("normal play suppressed the SDK's saved position")
 	}
 	app.resume = CatalogItem{ID: "123456", ResumeEpisode: 4, ResumePosition: 42}
 	app.PlayDetail()
-	if host.desired["resumeAt"] != float64(42) || host.desired["episodeNum"] != 4 {
+	if host.Snapshot().Playback.LastPosition != float64(42) || host.Snapshot().Playback.EpisodeNum != 4 {
 		t.Fatal("history position was not sent to the player")
 	}
 	app.resume.ResumePosition = 0
 	app.PlayDetail()
-	if host.desired["resumeAt"] != float64(0) {
+	if host.Snapshot().Playback.LastPosition != float64(0) {
 		t.Fatal("explicit zero position was lost")
 	}
 	app.ChooseEpisode(3)
-	if host.desired["resumeAt"] != nil || host.desired["episodeNum"] != 3 {
+	if host.Snapshot().Playback.LastPosition != -1 || host.Snapshot().Playback.EpisodeNum != 3 {
 		t.Fatal("episode selection suppressed saved progress")
 	}
 }

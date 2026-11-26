@@ -88,12 +88,6 @@ func VideoTabRequest(p *DeviceProfile, id, origin string, ticket int64) (*Reques
 		Headers: headers, SkipAuth: true, CredentialsManaged: true}, nil
 }
 
-// ParseVideoTab reads a complete response envelope. video_model is a JSON string;
-// data is keyed by episode ID, optionally inside video_model_data or 1004.
-func ParseVideoTab(raw []byte, id string) (*model.Playback, error) {
-	return parseVideoTabAt(raw, id, "", time.Now())
-}
-
 func parseVideoTabAt(raw []byte, id, date string, now time.Time) (*model.Playback, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, ErrAnonymousLimited

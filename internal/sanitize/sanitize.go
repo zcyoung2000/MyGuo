@@ -15,7 +15,7 @@ func Sanitize[T any](value T) T {
 }
 
 // Upstream APIs are treated as untrusted text. MyGo rejects malformed UTF-8
-// before it reaches the WebView, so remove invalid bytes at every IPC result
+// at native rendering boundaries, so remove invalid bytes at every service result
 // boundary rather than making each DTO field responsible for its own cleanup.
 func sanitizeReflectValue(value reflect.Value) {
 	switch value.Kind() {

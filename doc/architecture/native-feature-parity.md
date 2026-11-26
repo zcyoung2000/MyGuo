@@ -1,16 +1,15 @@
 # Native migration feature parity
 
-Baseline: `03a3d88`, the tip of `sc-superfluid-dewar-3975`, already an ancestor
-of the current branch. `main` has no commits missing from this branch.
-The comparison covers `frontend/index.html`, `app.js`, `player-chrome.js`,
-`progressive-media.js`, `danmaku.js`, `ambient-glow.js`, and `internal/native`.
+Current implementation: MyGo v0.9.1, checked against the repository on
+2026-11-26. Browsing, settings, recommendation playback and the full player
+use native MyGo UI. `internal/playback` owns playback state; macOS uses
+`internal/avkit`, while Windows uses the MyGo `ui/video` Media Foundation backend.
+`main.go` creates a native window and calls Go services directly.
 
-Browsing, settings, recommendation playback and the full player now use native
-MyGo UI (v0.9.0). `internal/playback` owns playback state; `internal/avkit`
-provides AVPlayerView/PiP through a generated Swift module. Main creates no
-WebView or playback document. MediaServer and Go library/sync services remain
-in use. Native acceptance evidence and its limits are in
-[native-player-progress.md](../playback/native-player-progress.md).
+The retired WebView shell and its Node fixture tests have been removed.
+Historical macOS migration measurements and their limits remain in
+[native-player-progress.md](../playback/native-player-progress.md); they are
+not a current cross-platform acceptance report.
 
 | Area | Preserved behavior | Implementation and verification evidence |
 | --- | --- | --- |
@@ -21,14 +20,14 @@ in use. Native acceptance evidence and its limits are in
 | New releases | Hot releases, calendar dates, upcoming/online state, reserve/cancel | `LoadReleases` uses the original distinct board/calendar services; calendar test checks date, upcoming state and reservation controls. Reservation changes propagate to discover/search/new-release snapshots |
 | Detail | Explicit play, metadata/tags/stats/publish date, actors, original novel and tags, all episodes, seasons, adaptations, related shows, favorite/reservation actions, loading/retry and stale-response protection | `renderDetail`, `loadDetailAt`, `loadSupplement`, `RetryRelated`; detail supplement, related retry, stale navigation and mutation/read regressions. Opening a normal detail does not start hidden playback |
 | Actor | Profile/avatar/tags/stats and paginated works | `renderActor`, `loadActor`; actor pagination and cursor-cycle tests. Only one request for the current actor runs at a time |
-| History | Authentic records, completed/incomplete/search filters, progress/badges/time, delete/confirmed clear, original episode and position on resume | Native library views and existing store/services; last-episode completion, episode metadata/progress, removal and confirmation tests; end-to-end JavaScript controller regression verifies that the history position is passed as seek position, while the selected quality remains unchanged |
+| History | Authentic records, completed/incomplete/search filters, progress/badges/time, delete/confirmed clear, original episode and position on resume | Native library views and existing store/services; last-episode completion, episode metadata/progress, removal and confirmation tests; native controller and media-host regressions verify explicit/saved resume positions and session ordering |
 | Favorites/likes | Authentic records and counts, independent errors, removal and the correct liked episode | Separate library state/generations and per-episode removal; library provider/error and liked-episode removal tests. Mutations invalidate older reads; repeated pending actions cannot invert a local toggle twice |
 | Reservations | Online/pending counts, date ordering, cancellation confirmation, online-show entry | `renderLibrary`, `visibleLibrary`, `reservationBefore`, existing reservation service; mutation/cancellation tests. One cancellation action is rendered per reservation card |
 | Playback | Quality, speed, seek/buffer/time, volume/mute, playlist/current highlight, previous/next/next season, close/escape, fullscreen, PiP, orientation/fit and progress persistence | Native renderer/controller/AVKit cover saved/explicit-zero resume, quality/rate/volume/fit, HLS-to-full-file seek, last-episode replay/next drama, stale sources, shutdown draining and account ownership. System PiP enter/restore and switching drama on the same surface were exercised with actual decoded video |
 | Media interactions | Existing favorite/like actions, comments/replies, danmaku and persisted appearance controls, ambient glow | Native comments/replies with cursor-cycle protection, native timed danmaku with hover like/+1 and appearance migration, GPU ambient sampling. Fixture send/replies/pagination and native layout/input tests cover the controls; no live cloud messages were sent |
 | Platform | Media keys/menu, Now Playing/artwork/rate, prevent display sleep, fullscreen/PiP events, notifications, confirmations and keyboard focus | Existing native implementations retained; scroll gestures, menus and media commands now target the Go controller directly; native callbacks route to the active scene. Sidebar/cards expose button roles and keyboard activation. System PiP handoff and graceful quit were exercised; broader live OS/account acceptance limits are recorded in native-player-progress.md |
-| Settings | Account profile/session management, credential login, legacy account import, cache statistics/clear and device reset; no about section | `view.go` routes settings to native `renderSettings`; `settings.go` implements the actions through the settings IPC provider. Native tests verify WebView is absent, rendered actions, legacy import visibility, login validation and that about content is gone |
-| Runtime | SDK/MediaServer integration, authentic SQLite/WAL data and CGO-free builds | Main service/store/media initialization retained; unit tests use isolated fixtures and never populate the user's library. Required Go checks, race tests, vet and JavaScript suites are recorded below |
+| Settings | Account profile/session management, QR sign-in, legacy account import, cache statistics/clear, device reset and software updates | `view.go` routes settings to native `renderSettings`; `settings.go` implements the actions through the settings IPC provider. Native tests verify WebView is absent, rendered actions, QR login, legacy import visibility, account-switch isolation and software-update actions |
+| Runtime | Local hgapi/MediaServer integration, authentic SQLite/WAL data and CGO-free builds | Main service/store/media initialization retained; unit tests use isolated fixtures and never populate the user's library. Go unit/race tests, vet and CGO-free builds cover the active implementation |
 
 User preference: no global Back/Forward buttons on any native page. Navigation
 history remains internal. `TestNoGlobalBackForwardControlsOnAnyNativePage`
@@ -42,50 +41,26 @@ screenshots of the running application or user-library records.
 
 ## Verification and remaining acceptance
 
-The playback migration supersedes the historical November 6 results below. See
-[native-player-progress.md](../playback/native-player-progress.md) for the current commands,
-native runtime evidence and unverified live-account scenarios.
-
 Run from the repository root:
 
 ```sh
-go mod tidy
 go test ./...
-go test -race ./...
+go test -race ./internal/playback ./internal/library ./internal/store ./internal/uiapp
 go vet ./...
 CGO_ENABLED=0 go build -o /dev/null .
-node --test e2e/*.test.cjs
 git diff --check
 ```
 
-Latest results (2026-11-06): all required Go checks passed, including race
-checks (270 test/subtest passes across 15 packages); all 127 JavaScript tests
-passed. Vet, the CGO-disabled build and whitespace checks also passed. Six minimum-window fixture renders were exported and inspected; all collection
-actions remain visible, including rank playback, history deletion, favorites
-and likes removal, and the single reservation-cancellation action.
+Native page layouts and loading states are audited through MyGo headless
+`ui.Tester` tests. To export current fixture renders on demand:
 
-The legacy document-shell runner has been removed. The retained Node suite is
-the JavaScript/controller regression suite; it does not replace native
-navigation acceptance with a live rendered application.
+```sh
+MYGUO_NATIVE_SCREENSHOT_DIR=/tmp/myguo-native-screens go test ./internal/uiapp -run TestNativePageScreens -count=1
+```
 
-Native page layouts and loading states are additionally audited through
-`TestSkeletonsMatchOriginalPageShapes` and the optional
-`MYGUO_NATIVE_SCREENSHOT_DIR=... go test ./internal/uiapp -run TestNativePageScreens`
-fixture export. The exported states cover discover, rank, new releases, search,
-history, favorites, likes, reservations, detail, actor and settings in both
-loading and ready form (or the single settings form), with rank/list rows,
-calendar cards, native section layouts, grid skeletons and the detail hero
-skeleton checked as dark renders.
-
-This session previously displayed the native recommendation and ranking pages.
-A rebuilt application also starts and resolves real recommendation playback
-through the local media service. However, desktop automation subsequently
-returned `cgWindowNotFound` consistently, including for the running application.
-The latest changes therefore have source, controller, race and headless native
-rendering coverage; A live attempt to open `/Applications/myguo.app` beside the rebuilt bundle
-exposed both CGWindows, but neither app activated reliably; the desktop
-automation host then reported `cgWindowNotFound`, while `screencapture` showed
-inactive/blank web views. Therefore final live side-by-side checks of every
-route, media-key/menu behavior, fullscreen/PiP and settings interactions remain
-unverified. The full
-feature-parity goal must not be marked complete until that acceptance is done.
+These images use deterministic test data. They do not establish real-account
+API success or native video composition. The running-app probes, AVKit capture
+limitations and historical macOS runtime evidence are described in
+[native-player-progress.md](../playback/native-player-progress.md).
+Windows playback and PiP still require acceptance on a Windows machine, as
+recorded in the project README.

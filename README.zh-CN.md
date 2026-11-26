@@ -112,8 +112,8 @@ MyGuo 可以使用匿名设备配置运行。如需同步个人数据：
 
 1. 打开 **设置**。
 2. 选择 **立即登录**。
-3. 粘贴账号 Cookie。
-4. 可选填写 `x-tt-token`，用于获得更长效的会话。
+3. 使用红果手机 App 扫描二维码并确认登录。
+4. 新登录校验并保存成功后才会切换账号；此前保留当前账号。
 
 如果本机存在兼容的旧安装登录凭据，应用也会提供一键导入。Cookie 和 Token 应按密码同等对待：请勿提交、分享或泄露。
 
@@ -141,9 +141,7 @@ SQLite 保存登录凭据、设备身份、个人资料、历史、收藏、点�
 go mod tidy
 go test ./...
 CGO_ENABLED=0 go build -o /dev/null .
-node frontend/ui-regression.test.js
 go test -race ./internal/uiapp
-node --test e2e/*.test.cjs
 ```
 
 修改界面时，保持列表页使用响应式卡片网格；图标使用内联 SVG，不要使用 Emoji 或位图符号；保留标题栏和侧边栏的原生窗口拖拽行为。

@@ -13,6 +13,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/hgapi/model"
 	"myguo/internal/ipc"
+	"myguo/internal/playback"
 )
 
 type parityProvider struct {
@@ -71,29 +72,29 @@ func (p *parityProvider) GetSeriesAdaptations(_ context.Context, id, source, tit
 }
 
 func TestNativeMediaRoutesUseFullMediaHostAndExplicitPlayback(t *testing.T) {
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app := NewTestApp()
 	app.SetMediaHost(host)
 	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "剧名", EpisodeCount: 12}}}
 	app.OpenView("recommend")
-	if host.desired["event"] != "recommend" {
+	if host.Snapshot().Mode != playback.Feed {
 		t.Fatal("recommend scene not reachable")
 	}
 	app.OpenView("settings")
-	if host.desired["event"] == "settings" {
+	if host.Snapshot().Mode != playback.Idle {
 		t.Fatal("settings must not enter the WebView host path")
 	}
 	app.OpenDetail("123456")
 	app.loadDetail("123456")
-	if app.PlayerVisible() || host.desired["event"] != "stop" {
+	if app.PlayerVisible() || host.Snapshot().Mode != playback.Idle {
 		t.Fatal("detail started playback before a user action")
 	}
 	app.PlayDetail()
-	if !app.PlayerVisible() || host.desired["event"] != "play" || host.desired["seriesId"] != "123456" {
+	if !app.PlayerVisible() || host.Snapshot().Mode != playback.Series || host.Snapshot().Book.ID != "123456" {
 		t.Fatal("explicit playback not routed")
 	}
 	app.ExitMedia()
-	if app.PlayerVisible() || app.View() != "detail" || host.desired["event"] != "stop" {
+	if app.PlayerVisible() || app.View() != "detail" || host.Snapshot().Mode != playback.Idle {
 		t.Fatal("return to detail did not stop playback")
 	}
 	app.NavigateHistory(-1)
@@ -328,7 +329,7 @@ func TestRankUsesTheOriginalDefaultHotBoard(t *testing.T) {
 
 func TestNonMediaRoutesDoNotShowTheEmbeddedWebView(t *testing.T) {
 	app := NewTestApp()
-	app.SetMediaHost(&MediaHost{})
+	app.SetMediaHost(newTestMediaHost())
 	for _, view := range []string{"rank", "history", "discover"} {
 		app.view = view
 		tt := ui.NewTester(app.Render, 1200, 800)

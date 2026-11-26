@@ -2304,8 +2304,3 @@ func (s *Store) UpdateProfile(p UserProfile) error {
 	`, p.UserID, p.Nickname, p.Avatar, p.DeviceID, loggedIn)
 	return err
 }
-
-// saveLocked is maintained as a no-op for backward compatibility
-func (s *Store) saveLocked() error {
-	return nil
-}

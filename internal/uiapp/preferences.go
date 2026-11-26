@@ -16,11 +16,10 @@ func (a *App) LoadPreferences(path string) {
 	value := uiPreferences{SidebarWidth: defaultSidebarWidth}
 	data, err := os.ReadFile(path)
 	if err == nil {
-		err = json.Unmarshal(data, &value)
+		_ = json.Unmarshal(data, &value)
 	}
 	a.mu.Lock()
 	a.preferencesPath = path
-	a.preferencesLoaded = err == nil
 	a.sidebarWidth = clampSidebar(value.SidebarWidth)
 	a.mu.Unlock()
 }
@@ -36,7 +35,6 @@ func clampSidebar(value float32) float32 {
 func (a *App) SetSidebarWidth(value float32) {
 	a.mu.Lock()
 	a.sidebarWidth = clampSidebar(value)
-	a.preferencesLoaded = true
 	a.invalidate()
 	a.preferencesPending.Add(1)
 	a.mu.Unlock()
@@ -67,14 +65,6 @@ func (a *App) savePreferences() {
 	}
 	if file.Close() == nil {
 		_ = os.Rename(name, path)
-	}
-}
-func (s *NativeShell) ImportSidebarWidth(value float32) {
-	s.App.mu.Lock()
-	loaded := s.App.preferencesLoaded
-	s.App.mu.Unlock()
-	if !loaded && value >= 160 && value <= 420 {
-		s.App.SetSidebarWidth(value)
 	}
 }
 

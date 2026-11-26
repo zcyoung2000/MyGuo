@@ -134,10 +134,6 @@ func playbackSwitchable(err error) bool {
 	return errors.Is(err, hgapi.ErrAnonymousLimited) || hgapi.Retryable(err)
 }
 
-func newNativePlaybackResolver(client *hgapi.Client) *nativePlaybackResolver {
-	return &nativePlaybackResolver{client: client}
-}
-
 type nativePlaybackResolver struct {
 	client *hgapi.Client
 	http   *http.Client

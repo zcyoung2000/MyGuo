@@ -1,5 +1,10 @@
 # Native player implementation and verification
 
+This is a historical macOS migration record, beginning 2026-11-13. Versions,
+SDK references, local build paths and runtime measurements below describe those
+runs. The current architecture and verification commands are maintained in
+[native-feature-parity.md](../architecture/native-feature-parity.md).
+
 The subsequent recommendation/episode preload review is recorded in
 [`preloading-2026-11-14.md`](preloading-2026-11-14.md).
 
@@ -9,11 +14,9 @@ The updated picture/title click behavior is recorded in
 The subsequent browsing palette, loading and motion review is recorded in
 [`ui-polish-2026-11-14.md`](../ui/ui-polish-2026-11-14.md).
 
-The application uses MyGo v0.9.0 and native UI/AVKit for both recommendation
+The migration used MyGo v0.9.0 and native UI/AVKit for both recommendation
 and series playback. Main no longer embeds or creates a playback WebView,
 binds a playback JavaScript service, or relies on a web playback clock.
-The installed /Applications application has not been replaced. No branch,
-worktree, workspace or commit was created. Existing audit fixes were preserved.
 
 ## Implementation
 
@@ -196,7 +199,6 @@ go run ./cmd/playback-diagnose -episode 7694371347610209304
 go test -race ./internal/playback ./internal/library ./internal/store ./internal/uiapp
 go vet ./...
 go run github.com/egoist/mygo/cmd/mygo native check ./internal/avkit
-node --test e2e/*.test.cjs
 CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -platform darwin/arm64 -skip-dmg
 git diff --check
 ```
@@ -213,7 +215,8 @@ own-window macOS capture when checking the composed video image.
 ## Validation boundaries
 
 The checks above cover implementation and isolated native runtime behavior.
-Legacy JavaScript tests remain behavioral references, not native rendering tests.
+The retired WebView code and its JavaScript fixture tests are no longer maintained;
+current playback regressions run in Go.
 
 The original migration run's empty upstream playback models were fixed by the
 SDK update above. Actual anonymous cold playback and a read-only account-backed

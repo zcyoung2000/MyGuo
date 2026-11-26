@@ -34,8 +34,7 @@ func TestModelLookaheadSharesFailedFlightCacheAndCooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms := &MediaServer{multiModel: NewMultiVideoModelBatcher(client, nil)}
-	ms.multiModel.multiVideoModelURL = upstream.URL
+	ms := &MediaServer{multiModel: NewMultiVideoModelBatcher(client)}
 	ms.multiModel.loadModels = ms.loadPlaybackModels
 	var foregroundCalls atomic.Int32
 	ms.playbackResolver = fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {

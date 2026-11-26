@@ -136,14 +136,14 @@ func TestDetailRefreshPreservesLiveResume(t *testing.T) {
 
 func TestDetailResumeAfterRealNavigation(t *testing.T) {
 	app := NewTestApp()
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app.SetMediaHost(host)
 	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "Resume", EpisodeCount: 10}, ResumeEpisode: 8, ResumePosition: 72.5}}
 	app.OpenDetail("123456")
 	app.loadDetail("123456")
 	app.PlayDetail()
-	if host.desired["episodeNum"] != 8 || host.desired["resumeAt"] != 72.5 {
-		t.Fatalf("actual navigation ignored saved progress: episode=%v position=%v resume=%+v", host.desired["episodeNum"], host.desired["resumeAt"], app.resume)
+	if host.Snapshot().Playback.EpisodeNum != 8 || host.Snapshot().Playback.LastPosition != 72.5 {
+		t.Fatalf("actual navigation ignored saved progress: episode=%v position=%v resume=%+v", host.Snapshot().Playback.EpisodeNum, host.Snapshot().Playback.LastPosition, app.resume)
 	}
 }
 

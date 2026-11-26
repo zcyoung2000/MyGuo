@@ -7,22 +7,7 @@ import (
 	"testing"
 )
 
-func TestChineseReadmeAndSettingsParityDocsStayCurrent(t *testing.T) {
-	readme, err := os.ReadFile("../../README.zh-CN.md")
-	if err != nil {
-		t.Fatalf("read Chinese README: %v", err)
-	}
-	nodeTests := regexp.MustCompile(`(?m)^node\s+(\S+\.test\.(?:js|cjs))\s*$`)
-	matches := nodeTests.FindAllStringSubmatch(string(readme), -1)
-	if len(matches) == 0 {
-		t.Fatal("Chinese README does not list a Node test script")
-	}
-	for _, match := range matches {
-		if _, err := os.Stat("../../" + match[1]); err != nil {
-			t.Fatalf("Chinese README references missing test script %s: %v", match[1], err)
-		}
-	}
-
+func TestSettingsParityDocsStayCurrent(t *testing.T) {
 	parity, err := os.ReadFile("../../doc/architecture/native-feature-parity.md")
 	if err != nil {
 		t.Fatalf("read native feature parity document: %v", err)

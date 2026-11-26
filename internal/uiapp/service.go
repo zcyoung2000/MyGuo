@@ -172,8 +172,6 @@ type App struct {
 	ambientActive               bool
 	ambientTop                  ui.Color
 	feedChannel                 string
-	feedChrome                  FeedChrome
-	feedChromeKnown             bool
 	discoverPageScroll          ui.ScrollState
 	catalogScroll               ui.ScrollState
 	rankScroll                  ui.ScrollState
@@ -189,7 +187,6 @@ type App struct {
 	catalogScrollReset          bool
 	sidebarWidth                float32
 	preferencesPath             string
-	preferencesLoaded           bool
 	preferencesPending          sync.WaitGroup
 	preferencesMu               sync.Mutex
 	media                       *MediaHost
@@ -754,7 +751,7 @@ func (a *App) fail(prefix string, err error) {
 	a.error = prefix + featureError("", err)
 	a.invalidate()
 }
-func (a *App) setNotice(message string) { a.notice = message; a.invalidate() }
+
 func (a *App) invalidate() {
 	if a.invalidateFn != nil {
 		a.invalidateFn()

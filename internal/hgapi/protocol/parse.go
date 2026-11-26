@@ -241,11 +241,6 @@ func (p *postList) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-// ParseDiscover reads the 推荐 tab (video_feed, 16) from a bookmall response.
-func ParseDiscover(raw []byte) (*CatalogPage, error) {
-	return ParseDiscoverTab(raw, 16)
-}
-
 // ParseDiscoverTab reads one bookmall tab_type into public series ids and titles.
 func ParseDiscoverTab(raw []byte, tabType int) (*CatalogPage, error) {
 	var env struct {
@@ -342,12 +337,6 @@ func appendBook(page *CatalogPage, book catalogBook) {
 	})
 }
 
-// DiscoverContinuation reads the unlimited-feed handle from a bookmall tab response.
-// The 推荐 tab (type 16) names that container and returns only its first cards.
-func DiscoverContinuation(raw []byte) (FeedContinuation, bool) {
-	return DiscoverContinuationTab(raw, 16)
-}
-
 // DiscoverContinuationTab reads the unlimited-feed handle for one bookmall tab.
 func DiscoverContinuationTab(raw []byte, tabType int) (FeedContinuation, bool) {
 	var env struct {
@@ -396,11 +385,6 @@ func DiscoverContinuationTab(raw []byte, tabType int) (FeedContinuation, bool) {
 	return fallback, haveFallback
 }
 
-// ParseCellChange reads the unlimited page from bookmall cell/change.
-func ParseCellChange(raw []byte) (*CatalogPage, error) {
-	return ParseCellChangeForTab(raw, 0)
-}
-
 // Video tabs may also contain source-novel promotions. Their book IDs are not
 // playable series IDs and must never enter the player's recommendation queue.
 func ParseCellChangeForTab(raw []byte, tabType int) (*CatalogPage, error) {
@@ -426,11 +410,6 @@ func ParseCellChangeForTab(raw []byte, tabType int) (*CatalogPage, error) {
 	}
 	appendCatalogCell(page, env.Data.View, !videoCatalogTab(tabType))
 	return page, nil
-}
-
-// ParseSearch reads short-play search results (SearchTabType.ShortPlay, 11).
-func ParseSearch(raw []byte) (*CatalogPage, error) {
-	return ParseSearchTab(raw, 11)
 }
 
 // ParseSearchTab reads one search tab_type. Video search tabs keep only series
@@ -1145,19 +1124,6 @@ func BusinessCode(raw []byte) (code string, message string, ok bool) {
 		return asNumber.String(), env.Message, true
 	}
 	return strings.Trim(string(env.Code), `"`), env.Message, true
-}
-
-// AuthCode reports whether a business code is an account-required failure.
-func AuthCode(code, message string) bool {
-	switch code {
-	case "auth_required", "401", "403":
-		return true
-	}
-	if n, err := strconv.Atoi(code); err == nil && (n == 401 || n == 403) {
-		return true
-	}
-	lower := strings.ToLower(message)
-	return strings.Contains(message, "登录") || strings.Contains(lower, "login required") || strings.Contains(lower, "authentication required")
 }
 
 // trimAll trims every string and drops the empty ones, keeping order.
@@ -2046,85 +2012,6 @@ func ParseShortRank(raw []byte) (*ShortRankResult, error) {
 	return out, nil
 }
 
-// ParseCategoryLanding reads a category landing page: its filter options and
-// the book rows for the current filter.
-func ParseCategoryLanding(raw []byte) (*model.CategoryPage, error) {
-	var env struct {
-		Code flexString `json:"code"`
-		Data struct {
-			Offset  int             `json:"offset"`
-			HasMore bool            `json:"has_more"`
-			Rule    json.RawMessage `json:"rule"`
-			Books   []struct {
-				ID       flexString `json:"book_id"`
-				Title    string     `json:"book_name"`
-				Author   string     `json:"author"`
-				Abstract string     `json:"abstract"`
-				Cover    string     `json:"thumb_url"`
-				Category string     `json:"category"`
-				Words    flexInt64  `json:"word_number"`
-				Score    flexString `json:"score"`
-			} `json:"book_info"`
-			Category struct {
-				ID    flexInt `json:"id"`
-				Name  string  `json:"name"`
-				Desc  string  `json:"description"`
-				Books flexInt `json:"book_num"`
-			} `json:"category"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
-	}
-	if env.Code.String() != "" && env.Code.String() != "0" {
-		return nil, fmt.Errorf("category code %s", env.Code.String())
-	}
-	out := &model.CategoryPage{
-		CategoryID:   strconv.Itoa(int(env.Data.Category.ID)),
-		CategoryName: env.Data.Category.Name,
-		Description:  env.Data.Category.Desc,
-		HasMore:      env.Data.HasMore,
-		NextOffset:   env.Data.Offset,
-	}
-	if raw := nonEmptyJSON(env.Data.Rule); len(raw) > 0 && raw[0] == '{' {
-		var rule map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &rule); err == nil {
-			for _, key := range []string{"book_status", "sort_by", "sub_category", "word_type"} {
-				body, ok := rule[key]
-				if !ok {
-					continue
-				}
-				var opts []struct {
-					Name  string `json:"name"`
-					Value string `json:"value"`
-				}
-				if err := json.Unmarshal(body, &opts); err != nil {
-					continue
-				}
-				group := model.FilterGroup{Key: key}
-				for _, o := range opts {
-					group.Options = append(group.Options, model.FilterOption{Name: o.Name, Value: o.Value})
-				}
-				out.Filters = append(out.Filters, group)
-			}
-		}
-	}
-	items := make([]model.SeriesSummary, 0, len(env.Data.Books))
-	for _, b := range env.Data.Books {
-		id := b.ID.String()
-		if id == "" || strings.TrimSpace(b.Title) == "" {
-			continue
-		}
-		items = append(items, model.SeriesSummary{
-			ID: id, Title: b.Title, Description: oneLineText(b.Abstract),
-			CoverURL: b.Cover, CoverExpiresAt: URLLifetime(b.Cover),
-			Author: b.Author, Category: b.Category, Words: int64(b.Words),
-		})
-	}
-	out.Items = items
-	return out, nil
-}
-
 // oneLineText keeps the first sentence of a long abstract.
 func oneLineText(s string) string {
 	s = strings.TrimSpace(s)
@@ -2205,37 +2092,6 @@ func isDigits(s string) bool {
 		}
 	}
 	return s != ""
-}
-
-// ParseCategoryFront reads the category shell: its tab list. The item lists
-// come from ParseCategoryLanding per tab.
-func ParseCategoryFront(raw []byte) (*model.CategoryPage, error) {
-	var env struct {
-		Code flexString `json:"code"`
-		Data struct {
-			Config struct {
-				DefaultTab flexInt   `json:"default_tab"`
-				Names      []string  `json:"tab_name_list"`
-				Tabs       []flexInt `json:"tab_type_list"`
-			} `json:"category_tab_config"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
-	}
-	if env.Code.String() != "" && env.Code.String() != "0" {
-		return nil, fmt.Errorf("category code %s", env.Code.String())
-	}
-	out := &model.CategoryPage{DefaultTab: int(env.Data.Config.DefaultTab), Items: []model.SeriesSummary{}}
-	names := env.Data.Config.Names
-	for i, tab := range env.Data.Config.Tabs {
-		name := ""
-		if i < len(names) {
-			name = names[i]
-		}
-		out.Tabs = append(out.Tabs, model.FilterOption{Name: name, Value: strconv.Itoa(int(tab))})
-	}
-	return out, nil
 }
 
 // ParseRankGroups reads the ranking channels a bookmall tab advertises.

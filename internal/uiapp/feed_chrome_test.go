@@ -10,7 +10,7 @@ import (
 
 func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
 	app := NewTestApp()
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	app.SetMediaHost(host)
 	app.OpenView("recommend")
 	tt := ui.NewTester(app.Render, 1200, 800)
@@ -21,17 +21,17 @@ func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
 	app.mu.Lock()
 	selected := app.feedChannel
 	app.mu.Unlock()
-	if selected != "漫剧" || host.desired["channel"] != "漫剧" {
-		t.Fatalf("native selection didn't reach the existing feed: %q %+v", selected, host.desired)
+	if selected != "漫剧" || host.Snapshot().Channel != "漫剧" {
+		t.Fatalf("native selection didn't reach the existing feed: %q %+v", selected, host.Snapshot())
 	}
 	app.OpenView("discover")
 	app.SelectFeedChannel("真人剧")
 	app.OpenView("recommend")
-	if host.desired["channel"] != "漫剧" {
+	if host.Snapshot().Channel != "漫剧" {
 		t.Fatal("returning to recommend lost the selected channel")
 	}
 	app.SelectFeedChannel("invalid")
-	if host.desired["channel"] != "漫剧" {
+	if host.Snapshot().Channel != "漫剧" {
 		t.Fatal("invalid channel changed the recommendation source")
 	}
 	if host.Snapshot().Mode != playback.Feed {
@@ -80,7 +80,6 @@ func TestNativeFeedChannelsOverlayKeepsMediaAndHidesWithItsScene(t *testing.T) {
 
 func TestAmbientGlowUpdatesFeedChrome(t *testing.T) {
 	app := NewTestApp()
-	shell := NativeShell{App: app}
 	app.OpenView("recommend")
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
@@ -91,11 +90,7 @@ func TestAmbientGlowUpdatesFeedChrome(t *testing.T) {
 	}
 	app.mu.Unlock()
 
-	shell.AmbientGlow(AmbientGlowPayload{
-		Active: true,
-		Left:   [3]uint8{200, 50, 60},
-		Top:    [3]uint8{100, 150, 220},
-	})
+	app.SetAmbientGlow(true, [3]uint8{200, 50, 60}, [3]uint8{100, 150, 220})
 
 	app.mu.Lock()
 	if !app.ambientActive {
@@ -105,7 +100,7 @@ func TestAmbientGlowUpdatesFeedChrome(t *testing.T) {
 
 	tt.Frame()
 
-	shell.AmbientGlow(AmbientGlowPayload{Active: false})
+	app.SetAmbientGlow(false, [3]uint8{}, [3]uint8{})
 	app.mu.Lock()
 	if app.ambientActive {
 		t.Fatal("ambientActive should be false after deactivating")

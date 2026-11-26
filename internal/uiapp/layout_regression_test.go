@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
+	"myguo/internal/playback"
 )
 
 func TestPageFadeIsVisibleAndRapidNavigationDropsThePreviousPage(t *testing.T) {
@@ -241,13 +242,13 @@ func TestCollectionGlassSamplesArtworkAndKeepsDarkContrast(t *testing.T) {
 
 func TestSettingsUsesNativeBodyInsteadOfWebViewHost(t *testing.T) {
 	a := NewTestApp()
-	host := &MediaHost{}
+	host := newTestMediaHost()
 	a.SetMediaHost(host)
 	a.OpenView("settings")
 	if a.hostedScene() {
 		t.Fatal("settings command sent but its interactive document is hidden")
 	}
-	if host.desired["event"] == "settings" {
+	if host.Snapshot().Mode != playback.Idle {
 		t.Fatal("settings routed to the WebView media host")
 	}
 	a.OpenView("discover")
@@ -256,17 +257,17 @@ func TestSettingsUsesNativeBodyInsteadOfWebViewHost(t *testing.T) {
 	}
 }
 
-func TestNavigationCanStopMediaBeforeDocumentReady(t *testing.T) {
-	host := &MediaHost{}
-	host.Recommend()
+func TestNavigationCanStopNativeMedia(t *testing.T) {
+	host := newTestMediaHost()
+	host.RecommendChannel("")
 	done := make(chan struct{})
-	go func() { host.StopNow(); close(done) }()
+	go func() { host.Stop(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("early navigation deadlocked before the media document was ready")
+		t.Fatal("navigation deadlocked while stopping native media")
 	}
-	if host.desired["event"] != "stop" {
+	if host.Snapshot().Mode != playback.Idle {
 		t.Fatal("early navigation did not cancel the recommendation scene")
 	}
 }

@@ -2,7 +2,8 @@
 
 文档按主题组织。首次参与开发先读 [开发与协作约定](development/README.md)，
 发布版本先读 [发布与自动更新](release/releases.md)。带日期的记录反映当时的
-实现、验证结果和限制，不能直接当作当前状态。
+实现、验证结果和限制，不能直接当作当前状态。当前原生功能与验证入口见
+[原生功能对齐情况](architecture/native-feature-parity.md)。
 
 ## 开发与协作 `development/`
 
@@ -13,7 +14,6 @@
 
 - [上游 API 分层与扩展](architecture/api-architecture.md)
 - [原生功能对齐情况](architecture/native-feature-parity.md)
-- [原生播放器迁移可行性](architecture/native-player-feasibility.md)
 
 ## 账号与历史同步 `accounts/`
 
@@ -32,12 +32,10 @@
 
 ## 界面与交互 `ui/`
 
-- [原生 UI/UX 修复](ui/native-uiux-fixes.md)
 - [浏览界面与动效检查](ui/ui-polish-2026-11-14.md)
 - [找剧页与筛选条件](ui/catalog-filters-2026-11-14.md)
 - [剧集详情页与关联内容](ui/detail-redesign-2026-11-14.md)
 - [静默分页与滚动稳定性](ui/quiet-pagination-2026-11-15.md)
-- [界面设计参考页面](ui/ui-redesign.html)
 
 ## 发布、构建与更新 `release/`
 
@@ -46,7 +44,9 @@
 
 ## 历史审查 `audits/`
 
-记录中的绝对路径与临时证据属于当时的工作环境，可能已失效；保留它们用于理解历史结论。
+这些记录保留缺陷原因、修复依据与验证边界。旧 WebView 实现、Node 夹具测试、
+`ui-audit/` 和 `ui-review/` 截图已移除；记录中的历史源码和证据需按所列提交从
+Git 历史查看。当前截图可通过 `MYGUO_NATIVE_SCREENSHOT_DIR` 按需导出。
 
 - [2026-11-09 全量审查](audits/AUDIT-2026-11-09.md)
 - [2026-11-09 补充审查](audits/AUDIT-SUPPLEMENT-2026-11-09.md)

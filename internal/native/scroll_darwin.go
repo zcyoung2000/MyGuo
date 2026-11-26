@@ -38,7 +38,7 @@ func StartScrollGestureMonitor() {
 		blk := objc.NewBlock(func(_ objc.Block, event objc.ID) objc.ID {
 			if objc.Send[uint64](event, selType) == 10 { // NSEventTypeKeyDown
 				// Observe only feed navigation keys; leave the native event intact.
-				// This distinguishes AppKit receipt from WebView/JS handling.
+				// Keep AppKit receipt visible in playback input diagnostics.
 				code := objc.Send[uint16](event, selKeyCode)
 				if feedScrollCapture.Load() && (code == 125 || code == 126) && !objc.Send[bool](event, selRepeat) {
 					log.Printf("[feed-input] native-key keyCode=%d repeat=false", code)

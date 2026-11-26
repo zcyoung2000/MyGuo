@@ -95,25 +95,6 @@ func (a *App) Render(c *ui.Context) {
 	})
 }
 
-func (a *App) renderWindowDragRegions(c *ui.Context, sidebarWidth float32) {
-	bar := c.TitleBar()
-	// Paint these transparent hit regions after the content. Padding alone
-	// does not generate a native titlebar hit, and WebView CSS cannot make
-	// the native sidebar draggable. Leave the system window controls clear.
-	ui.Box(c.Key("sidebar-titlebar-drag")).Absolute().Top(0).Left(bar.Left).
-		Width(max(0, sidebarWidth-bar.Left)).Height(44).DragWindow()
-	ui.Box(c.Key("sidebar-brand-drag")).Absolute().Top(44).Left(0).
-		Width(sidebarWidth).Height(40).DragWindow()
-	if !a.hostedScene() && !a.mediaOn {
-		ui.Box(c.Key("content-titlebar-drag")).Absolute().Top(0).Left(sidebarWidth + 1).Right(bar.Right).
-			Height(32).DragWindow()
-	}
-	if a.mediaOn && !a.playerFixture {
-		ui.Box(c.Key("media-titlebar-drag")).Absolute().Top(0).Left(sidebarWidth).Right(0).
-			Height(32).PassThrough().DragWindow()
-	}
-}
-
 // sidebarTopInset is the room the sidebar keeps above its content for the
 // window controls, when they sit over the sidebar: the band macOS draws its
 // traffic lights in, which ends at their bottom edge. Windows and Linux draw
@@ -127,7 +108,7 @@ func sidebarTopInset(bar ui.TitleBar) float32 {
 	return bar.Bottom
 }
 
-// hongguoTheme aligns native chrome with the established frontend palette:
+// hongguoTheme defines the app's shared native palette:
 // near-black surfaces, the Hongguo red accent and compact control spacing.
 func hongguoTheme(c *ui.Context) ui.Theme {
 	t := *c.Theme()
@@ -365,13 +346,6 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 	})
 }
 
-func (a *App) catalogSectionHeight(c *ui.Context, items []CatalogItem, width float32) float32 {
-	columns := dramaColumns(width)
-	cardWidth := dramaCardWidth(width)
-	rowHeight := a.collectionRowHeight(c, cardWidth, items) + cardWidth*posterAspectRatio
-	return max(1, float32((len(items)+columns-1)/columns)*rowHeight+catalogFooterHeight)
-}
-
 func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, after func(CatalogItem)) ui.Element {
 	return a.sharedCardGrid(c, key, state, scroll, items, extra, after)
 }
@@ -395,10 +369,6 @@ func formatRelativeTime(ts int64) string {
 		return fmt.Sprintf("%d天前", diff/86400)
 	}
 	return time.Unix(ts, 0).Format("01月02日")
-}
-
-func (a *App) catalogCard(c *ui.Context, item CatalogItem) {
-	a.catalogCardSized(c, item, 150)
 }
 
 func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
@@ -908,10 +878,6 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 	})
 }
 
-func formatEpisode(number int) string {
-	return fmt.Sprintf("第%d集", number)
-}
-
 func historyEpisodeBadge(item CatalogItem) string {
 	if item.Completed {
 		return "已看完"
@@ -939,37 +905,4 @@ func formatPublishDate(value string) string {
 		return date.Format("2006-01-02")
 	}
 	return value
-}
-
-// Collection shelves show fixed-width cards. Size the shelf from the tallest
-// card's poster, one title row and its visible metadata/actions so the fixed
-// horizontal scroll does not add phantom bottom space.
-func catalogRowHeight(items []CatalogItem) float32 {
-	const posterHeight float32 = 200
-	const titleHeight float32 = 16
-	const cardGap float32 = 6
-	const metadataHeight float32 = 16
-	const buttonHeight float32 = 28
-	var tallest float32
-	for _, item := range items {
-		height := posterHeight + cardGap + titleHeight
-		if item.Upcoming && item.PublishAt != "" {
-			height += metadataHeight + cardGap
-		} else {
-			if !item.Upcoming && item.BadgeText != "" {
-				height += metadataHeight + cardGap
-			}
-			if !item.Upcoming && item.Category != "" {
-				height += metadataHeight + cardGap
-			}
-			if !item.Upcoming && (item.Heat != "" || item.EpisodeCount > 0) {
-				height += metadataHeight + cardGap
-			}
-		}
-		if item.Upcoming {
-			height += buttonHeight
-		}
-		tallest = max(tallest, height)
-	}
-	return tallest
 }

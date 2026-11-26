@@ -2,9 +2,6 @@ package media
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -20,24 +17,8 @@ const (
 	// multiVideoModelWindow is the i+1/i+2 lookahead requested while an episode
 	// plays. It deliberately matches the conservative batch above.
 	multiVideoModelWindow      = 2
-	multiVideoModelPath        = hgapi.PlaybackPath
-	multiVideoModelOrigin      = "https://api5-normal-lq.fqnovel.com"
 	multiVideoModelHTTPTimeout = 8 * time.Second
-	maxPlaybackResponseBytes   = int64(8 * 1024 * 1024)
-	sdkVersionName             = "7.3.9.32"
 )
-
-type MultiVideoModelRequest struct {
-	MixedVideoIDMap map[string][]string `json:"mixed_video_id_map"`
-	DRScene         string              `json:"dr_scene"`
-	BizParam        map[string]any      `json:"biz_param"`
-}
-
-type multiVideoModelResponse struct {
-	Code    json.RawMessage            `json:"code"`
-	Message string                     `json:"message"`
-	Data    map[string]json.RawMessage `json:"data"`
-}
 
 type multiModelTask struct {
 	episodes []model.Episode
@@ -56,10 +37,8 @@ type multiModelWindow struct {
 // only fills the existing playback-model cache, so normal playback and model
 // prefetch share deduplication and expiry instead of creating a second cache.
 type MultiVideoModelBatcher struct {
-	client             *hgapi.Client
-	httpClient         *http.Client
-	multiVideoModelURL string
-	deviceIdentity     func() (deviceID, installID, cdid, openudid string)
+	client         *hgapi.Client
+	deviceIdentity func() (deviceID, installID, cdid, openudid string)
 	// When attached to MediaServer, cache/flight admission and publication
 	// belong to that server; standalone batchers keep their callback API.
 	loadModels func(context.Context, []model.Episode)
@@ -70,13 +49,10 @@ type MultiVideoModelBatcher struct {
 	windowID uint64
 }
 
-func NewMultiVideoModelBatcher(client *hgapi.Client, httpClient *http.Client) *MultiVideoModelBatcher {
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: multiVideoModelHTTPTimeout}
-	}
+func NewMultiVideoModelBatcher(client *hgapi.Client) *MultiVideoModelBatcher {
 	return &MultiVideoModelBatcher{
-		client: client, httpClient: httpClient, multiVideoModelURL: multiVideoModelOrigin,
-		loads: make(map[string]*multiModelLoad),
+		client: client,
+		loads:  make(map[string]*multiModelLoad),
 	}
 }
 
@@ -104,37 +80,6 @@ func NextEpisodes(episodes []model.Episode, currentNumber int) []model.Episode {
 		}
 	}
 	return out
-}
-
-func multiVideoModelBody(episodes []model.Episode) ([]byte, error) {
-	if len(episodes) == 0 || len(episodes) > multiVideoModelBatchSize {
-		return nil, fmt.Errorf("multi video model batch must contain 1..%d episodes", multiVideoModelBatchSize)
-	}
-	ids := make([]string, 0, len(episodes))
-	for _, episode := range episodes {
-		ids = append(ids, episode.ID)
-	}
-	return hgapi.PlaybackBody(ids, 1004)
-}
-
-func decodeMultiVideoModel(body []byte, episodeID string) (*model.Playback, error) {
-	var decoded model.Playback
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return nil, fmt.Errorf("multi video model %s is not JSON: %w", episodeID, err)
-	}
-	decoded.EpisodeID = episodeID
-	if len(decoded.Streams) == 0 {
-		return nil, fmt.Errorf("multi video model %s has no stream", episodeID)
-	}
-	return &decoded, nil
-}
-
-func parseMultiVideoModels(body []byte, episodes []model.Episode) (map[string]*model.Playback, error) {
-	ids := make([]string, 0, len(episodes))
-	for _, ep := range episodes {
-		ids = append(ids, ep.ID)
-	}
-	return hgapi.ParseVideoModels(body, ids)
 }
 
 func (b *MultiVideoModelBatcher) setDeviceIdentity(identity func() (deviceID, installID, cdid, openudid string)) {
@@ -323,9 +268,6 @@ func (b *MultiVideoModelBatcher) fetch(ctx context.Context, episodes []model.Epi
 		ids = append(ids, ep.ID)
 	}
 	options := hgapi.PlaybackOptions{}
-	if b.multiVideoModelURL != "" && b.multiVideoModelURL != multiVideoModelOrigin {
-		options.Origin = b.multiVideoModelURL
-	}
 	if deviceID != "" && installID != "" {
 		options.Profile = &hgapi.DeviceProfile{DeviceID: deviceID, InstallID: installID, CDID: cdid, OpenUDID: openudid}
 	}

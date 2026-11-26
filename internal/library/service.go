@@ -79,7 +79,6 @@ type Service struct {
 	historyMetadataSyncing bool
 	historyMetadataWake    bool
 	historyMetadataTimer   *time.Timer
-	progressScheduler      *progressScheduler
 
 	favMu           sync.Mutex
 	favRemoteMu     sync.Mutex
@@ -171,7 +170,6 @@ func NewService(deps Dependencies) *Service {
 		invalidateCaches:  deps.InvalidateCaches,
 		invalidateHistory: deps.InvalidateHistory,
 		notify:            deps.Notify,
-		progressScheduler: newProgressScheduler(progressSchedulerConfig{}),
 	}
 	if service.store != nil {
 		service.store.SetSyncScope(service.currentSyncSession().scope)
@@ -239,12 +237,6 @@ func (s *Service) touchHistoryMutation() {
 	s.historyMu.Lock()
 	s.historyMutationAt = time.Now()
 	s.historyMu.Unlock()
-}
-
-func (s *Service) historyMutationSyncBusy() bool {
-	s.historyMutationMu.Lock()
-	defer s.historyMutationMu.Unlock()
-	return s.historyMutationSyncing
 }
 
 func (s *Service) historySnapshotSettled() bool {

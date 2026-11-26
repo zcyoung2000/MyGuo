@@ -11,20 +11,6 @@ import (
 	"myguo/internal/store"
 )
 
-type playbackClient struct {
-	client *hgapi.Client
-	calls  int
-	err    error
-}
-
-func (c *playbackClient) ResolvePlayback(context.Context, string, hgapi.PlaybackOptions) (*model.Playback, error) {
-	c.calls++
-	if c.err != nil {
-		return nil, c.err
-	}
-	return &model.Playback{EpisodeID: "episode"}, nil
-}
-
 func TestSparePoolDisabledKeepsExistingPlaybackBehavior(t *testing.T) {
 	server, err := newMediaServer(nil, t.TempDir())
 	if err != nil {

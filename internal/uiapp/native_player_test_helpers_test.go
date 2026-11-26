@@ -20,6 +20,12 @@ type nativeUIPlayer struct {
 func newNativeUIPlayer() *nativeUIPlayer {
 	return &nativeUIPlayer{state: playback.State{Mode: playback.Feed, Book: ipc.SeriesCard{ID: "123456", Title: "原生播放测试", EpisodeCount: 812}, Playback: &ipc.PlaybackDTO{SeriesID: "123456", EpisodeID: "223456", EpisodeNum: 22, Quality: "1080p", Qualities: []ipc.QualityOptionDTO{{ID: "720p", Label: "720p", Available: true}, {ID: "1080p", Label: "1080p", Available: true}}}, Status: avkit.Status{Ready: true, Displayed: true, Playing: true, Width: 360, Height: 640, Position: 48, Duration: 200, Buffered: 80}, Preferences: playback.DefaultPreferences()}}
 }
+
+func newTestMediaHost() *MediaHost {
+	p := &nativeUIPlayer{state: playback.State{Preferences: playback.DefaultPreferences()}}
+	return &MediaHost{controller: p}
+}
+
 func (p *nativeUIPlayer) Snapshot() playback.State { p.mu.Lock(); defer p.mu.Unlock(); return p.state }
 func (p *nativeUIPlayer) ShowFeed(channel string) {
 	p.mu.Lock()
@@ -37,9 +43,13 @@ func (p *nativeUIPlayer) Play(id string, number int, position float64, session i
 	p.state.Paused = false
 	p.state.Preferences.Clear = false
 	p.state.Status.Playing = true
-	d := *p.state.Playback
+	d := ipc.PlaybackDTO{}
+	if p.state.Playback != nil {
+		d = *p.state.Playback
+	}
 	d.SeriesID = id
 	d.EpisodeNum = number
+	d.LastPosition = position
 	p.state.Playback = &d
 }
 func (p *nativeUIPlayer) Stop() { p.mu.Lock(); defer p.mu.Unlock(); p.state.Mode = playback.Idle }

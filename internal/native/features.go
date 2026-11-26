@@ -55,14 +55,10 @@ type NotificationArgs struct {
 
 var (
 	window             *mygo.Window
-	scrollPage         *mygo.Page
 	scrollHandlerMu    sync.RWMutex
 	scrollHandler      func(ScrollGesturePayload)
 	feedScrollCapture  atomic.Bool
 	scrollMonitorReady atomic.Bool
-	mediaCommandEvent  = mygo.NewEvent[MediaCommandPayload]("mediaCommand")
-	navigateEvent      = mygo.NewEvent[NavigatePayload]("navigate")
-	scrollGestureEvent = mygo.NewEvent[ScrollGesturePayload]("scrollGesture")
 
 	powerMu      sync.Mutex
 	powerRelease func()
@@ -117,10 +113,6 @@ func initNowPlaying() {
 			})
 			return
 		}
-		_ = mediaCommandEvent.Emit(window, MediaCommandPayload{
-			Command:  action,
-			Position: pos.Seconds(),
-		})
 	})
 }
 
@@ -264,10 +256,6 @@ func emitMediaCommand(cmd string, pos float64) {
 		mediaCommandHandler(MediaCommandPayload{Command: cmd, Position: pos})
 		return
 	}
-	_ = mediaCommandEvent.Emit(window, MediaCommandPayload{
-		Command:  cmd,
-		Position: pos,
-	})
 }
 
 func emitNavigate(view, seriesID string) {
@@ -280,10 +268,6 @@ func emitNavigate(view, seriesID string) {
 		navigateHandler(NavigatePayload{View: view, SeriesID: seriesID})
 		return
 	}
-	_ = navigateEvent.Emit(window, NavigatePayload{
-		View:     view,
-		SeriesID: seriesID,
-	})
 }
 
 func cachedArtwork(cacheDir, coverURL string) []byte {
@@ -427,14 +411,10 @@ func TogglePictureInPicture() {
 		pictureInPictureHandler()
 		return
 	}
-	if window != nil && window.Page() != nil {
-		window.Page().TogglePictureInPicture()
-	}
 }
 
 func SetPictureInPictureHandler(fn func()) { pictureInPictureHandler = fn }
 
-func SetScrollPage(page *mygo.Page) { scrollPage = page }
 func SetScrollGestureHandler(handler func(ScrollGesturePayload)) {
 	scrollHandlerMu.Lock()
 	scrollHandler = handler
@@ -448,19 +428,10 @@ func emitScrollGesture(payload ScrollGesturePayload) {
 		handler(payload)
 		return
 	}
-	if scrollPage != nil {
-		_ = scrollGestureEvent.EmitPage(scrollPage, payload)
-	} else if window != nil {
-		_ = scrollGestureEvent.Emit(window, payload)
-	}
 }
 
 func SetWindow(win *mygo.Window) {
 	window = win
-}
-
-func Window() *mygo.Window {
-	return window
 }
 
 func ToggleWindowFullscreen() {
