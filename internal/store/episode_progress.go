@@ -9,11 +9,23 @@ import (
 // one-row-per-series history summary. Watched status is monotonic locally;
 // rewinding or replaying an episode must not make it appear unwatched.
 func saveEpisodeProgressTx(tx *sql.Tx, item EpisodeProgress, scope string) error {
-	if item.SeriesID == "" || item.EpisodeNum <= 0 || item.PositionSec <= 0 {
+	if item.SeriesID == "" || item.EpisodeNum <= 0 {
 		return nil
 	}
 	if item.UpdatedAt <= 0 {
 		item.UpdatedAt = time.Now().Unix()
+	}
+	if item.PositionSec <= 0 {
+		_, err := tx.Exec(`
+			UPDATE episode_progress SET
+				episode_id = CASE WHEN ? != '' THEN ? ELSE episode_id END,
+				duration_sec = MAX(duration_sec, ?),
+				updated_at = MAX(updated_at, ?),
+				position_sec = 0
+			WHERE scope = ? AND series_id = ? AND episode_num = ? AND updated_at <= ?
+		`, item.EpisodeID, item.EpisodeID, item.DurationSec, item.UpdatedAt,
+			scope, item.SeriesID, item.EpisodeNum, item.UpdatedAt)
+		return err
 	}
 	_, err := tx.Exec(`
 		INSERT INTO episode_progress (

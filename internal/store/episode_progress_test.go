@@ -86,3 +86,45 @@ func TestZeroProgressDoesNotMarkAnEpisodeWatched(t *testing.T) {
 		t.Fatalf("unplayed episode was marked watched: %+v, %v", progress, err)
 	}
 }
+
+func TestRewindToZeroResetsEpisodePositionButKeepsWatchedState(t *testing.T) {
+	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetSyncScope("user:test")
+	const seriesID = "710000000000001"
+	if _, err := s.SavePlaybackProgress(HistoryItem{SeriesID: seriesID, EpisodeNum: 1, PositionSec: 42, DurationSec: 100, UpdatedAt: 100}, "episode-1", "user:test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SavePlaybackProgress(HistoryItem{SeriesID: seriesID, EpisodeNum: 1, PositionSec: 0, DurationSec: 100, UpdatedAt: 101}, "episode-1", "user:test"); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := s.EpisodeProgress(seriesID, "user:test")
+	if err != nil || len(progress) != 1 || progress[0].PositionSec != 0 || !progress[0].Watched || progress[0].UpdatedAt != 101 {
+		t.Fatalf("rewind was not persisted while retaining watched state: %+v, %v", progress, err)
+	}
+}
+
+func TestOlderZeroProgressDoesNotOverwriteNewerEpisodePosition(t *testing.T) {
+	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetSyncScope("user:test")
+	const seriesID = "710000000000001"
+	if _, err := s.SavePlaybackProgress(HistoryItem{SeriesID: seriesID, EpisodeNum: 1, PositionSec: 42, DurationSec: 100, UpdatedAt: 101}, "episode-1", "user:test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveEpisodeProgressBatchIfCurrentScope([]EpisodeProgress{{SeriesID: seriesID, EpisodeNum: 1, PositionSec: 0, UpdatedAt: 100}}, "user:test"); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := s.EpisodeProgress(seriesID, "user:test")
+	if err != nil || len(progress) != 1 || progress[0].PositionSec != 42 || progress[0].UpdatedAt != 101 {
+		t.Fatalf("older zero-progress snapshot overwrote newer position: %+v, %v", progress, err)
+	}
+}
