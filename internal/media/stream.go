@@ -354,12 +354,17 @@ func (stream *progressiveStream) finalize() {
 
 func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string, transcodeHEVC bool) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
+	videoInput := true
 	input := func(mediaURL string) {
 		args = append(args, "-probesize", "131072", "-analyzeduration", "1000000", "-rw_timeout", "15000000")
 		if keyHex != "" {
 			args = append(args, "-decryption_key", keyHex)
 		}
+		if transcodeHEVC && videoInput {
+			args = append(args, "-hwaccel", "auto")
+		}
 		args = append(args, "-i", mediaURL)
+		videoInput = false
 	}
 	input(streamURL)
 	if audioURL = strings.TrimSpace(audioURL); audioURL != "" {

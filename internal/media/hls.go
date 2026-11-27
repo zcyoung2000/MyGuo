@@ -535,6 +535,7 @@ func evictHLSCache(root string, maxBytes, targetBytes int64, pinnedPaths map[str
 
 func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string, transcodeHEVC bool) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
+	videoInput := true
 	input := func(mediaURL string) {
 		// MP4/DASH already carries stream metadata. Bound probing so a slow
 		// source does not consume several megabytes before publishing segment 1.
@@ -542,7 +543,11 @@ func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string, transcodeHEVC 
 		if keyHex != "" {
 			args = append(args, "-decryption_key", keyHex)
 		}
+		if transcodeHEVC && videoInput {
+			args = append(args, "-hwaccel", "auto")
+		}
 		args = append(args, "-i", mediaURL)
+		videoInput = false
 	}
 	input(streamURL)
 	if audioURL = strings.TrimSpace(audioURL); audioURL != "" {

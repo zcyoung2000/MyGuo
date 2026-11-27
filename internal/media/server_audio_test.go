@@ -39,10 +39,13 @@ func TestFFmpegDownloadArgsKeepsSingleTrack(t *testing.T) {
 
 func TestFFmpegDownloadArgsTranscodesHEVCToFullResolutionH264(t *testing.T) {
 	joined := strings.Join(ffmpegDownloadArgs("https://media.invalid/video", "", "", 0, true), " ")
-	for _, required := range []string{"-pix_fmt yuv420p", "-c:v h264_mf", "-profile:v high", "-b:v 5M", "-g 60", "-c:a copy", "-f mp4"} {
+	for _, required := range []string{"-hwaccel auto", "-pix_fmt yuv420p", "-c:v h264_mf", "-profile:v high", "-b:v 5M", "-g 60", "-c:a copy", "-f mp4"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("transcode args missing %q: %s", required, joined)
 		}
+	}
+	if strings.Index(joined, "-hwaccel auto") > strings.Index(joined, "-i https://media.invalid/video") {
+		t.Fatalf("hardware acceleration must be selected before the video input: %s", joined)
 	}
 	if strings.Contains(joined, "scale=") {
 		t.Fatalf("transcode args unexpectedly reduce resolution: %s", joined)

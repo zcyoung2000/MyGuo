@@ -828,12 +828,17 @@ func (ms *MediaServer) serveEpisodeFile(w http.ResponseWriter, r *http.Request, 
 
 func ffmpegDownloadArgs(streamURL, audioURL, keyHex string, maxSeconds int, transcodeHEVC bool) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
+	videoInput := true
 
 	input := func(mediaURL string) {
 		if keyHex != "" {
 			args = append(args, "-decryption_key", keyHex)
 		}
+		if transcodeHEVC && videoInput {
+			args = append(args, "-hwaccel", "auto")
+		}
 		args = append(args, "-i", mediaURL)
+		videoInput = false
 	}
 	input(streamURL)
 	if audioURL = strings.TrimSpace(audioURL); audioURL != "" {
