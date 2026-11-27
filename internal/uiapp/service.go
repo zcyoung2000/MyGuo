@@ -925,11 +925,17 @@ func (a *App) PlaybackChanged() {
 			}
 		}
 		a.mu.Lock()
-		a.ambientActive = active
 		if active {
-			a.ambientLeft = ui.RGB(left[0], left[1], left[2])
-			a.ambientTop = ui.RGB(top[0], top[1], top[2])
+			leftColor, topColor := ui.RGB(left[0], left[1], left[2]), ui.RGB(top[0], top[1], top[2])
+			if a.ambientActive {
+				leftColor = smoothPlayerAmbient(a.ambientLeft, leftColor)
+				topColor = smoothPlayerAmbient(a.ambientTop, topColor)
+			}
+			a.ambientActive = true
+			a.ambientLeft = leftColor
+			a.ambientTop = topColor
 		} else {
+			a.ambientActive = false
 			a.ambientLeft, a.ambientTop = ui.Transparent, ui.Transparent
 		}
 		a.mu.Unlock()

@@ -8,12 +8,36 @@ import (
 )
 
 const (
-	playerAmbientWidth float32 = 180
-	playerAmbientAlpha float32 = .32
-	playerAmbientPeak  float32 = 184
+	playerAmbientWidth     float32 = 180
+	playerAmbientAlpha     float32 = .32
+	playerAmbientPeak      float32 = 184
+	playerAmbientSmoothing         = float32(.18)
+	playerAmbientDeadband          = 3
 )
 
-var playerAmbientTransition = ui.Animation{Duration: 650 * time.Millisecond, Ease: ui.EaseOut}
+var playerAmbientTransition = ui.Animation{Duration: 1100 * time.Millisecond, Ease: ui.EaseInOut}
+
+func smoothPlayerAmbient(current, sample ui.Color) ui.Color {
+	if current.A == 0 {
+		return sample
+	}
+	smooth := func(previous, next uint8) uint8 {
+		delta := int(next) - int(previous)
+		if delta >= -playerAmbientDeadband && delta <= playerAmbientDeadband {
+			return previous
+		}
+		step := int(float32(delta) * playerAmbientSmoothing)
+		if step == 0 {
+			if delta < 0 {
+				step = -1
+			} else {
+				step = 1
+			}
+		}
+		return uint8(int(previous) + step)
+	}
+	return ui.RGB(smooth(current.R, sample.R), smooth(current.G, sample.G), smooth(current.B, sample.B))
+}
 
 // Tier-4 drawing, MyGo v0.9.1: Box/NativeView retain layout and input. Their
 // backgrounds cannot restrict a wash to the changing video gutters, so the

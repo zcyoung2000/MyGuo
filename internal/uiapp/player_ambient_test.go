@@ -60,8 +60,17 @@ func TestPlayerAmbientFollowsVideoWithoutRecoloringPicture(t *testing.T) {
 	player.mu.Unlock()
 	app.PlaybackChanged()
 	tt.Frame()
+	first := tt.Image().RGBAAt(int(defaultSidebarWidth)-4, 400)
+	if first.B >= first.R {
+		t.Fatalf("a single changed sample replaced the existing wash too quickly: %+v", first)
+	}
+	for range 24 {
+		app.PlaybackChanged()
+		tt.Frame()
+	}
+	tt.Advance(playerAmbientTransition.Duration)
 	if pixel := tt.Image().RGBAAt(int(defaultSidebarWidth)-4, 400); pixel.B <= pixel.R+2 {
-		t.Fatalf("sidebar did not follow the new video sample: %+v", pixel)
+		t.Fatalf("sidebar did not gradually follow the new video sample: %+v", pixel)
 	}
 	app.SetSidebarWidth(320)
 	tt.SetScale(2)
@@ -80,6 +89,24 @@ func TestPlayerAmbientFollowsVideoWithoutRecoloringPicture(t *testing.T) {
 	tt.Frame()
 	if pixel := tt.Image().RGBAAt(320-4, 400); pixel.A != 0 {
 		t.Fatalf("video color leaked into a browsing page: %+v", pixel)
+	}
+}
+
+func TestPlayerAmbientSmoothingSuppressesSmallFrameNoise(t *testing.T) {
+	base := ui.RGB(120, 100, 80)
+	filtered := base
+	for _, sample := range []ui.Color{
+		ui.RGB(122, 98, 82), ui.RGB(118, 102, 78),
+		ui.RGB(121, 99, 81), ui.RGB(119, 101, 79),
+	} {
+		filtered = smoothPlayerAmbient(filtered, sample)
+	}
+	if filtered != base {
+		t.Fatalf("small sample noise changed the ambient color: base=%+v filtered=%+v", base, filtered)
+	}
+	cut := smoothPlayerAmbient(base, ui.RGB(20, 40, 230))
+	if cut == base || cut.B <= base.B || cut.B >= 230 {
+		t.Fatalf("a scene change should move smoothly toward its new color: base=%+v next=%+v", base, cut)
 	}
 }
 
@@ -194,6 +221,9 @@ func TestPlayerAmbientStatusAndGutterBounds(t *testing.T) {
 	app, player := ambientPlayerFixture()
 	player.state.Status.AmbientTop = []int{300, -2, 80}
 	player.state.Status.AmbientLeft = nil
+	app.mu.Lock()
+	app.ambientActive = false
+	app.mu.Unlock()
 	app.PlaybackChanged()
 	if app.ambientTop != ui.RGB(255, 0, 80) || app.ambientLeft != app.ambientTop {
 		t.Fatal("ambient samples must be clamped and support a missing left sample")
