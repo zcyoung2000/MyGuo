@@ -98,6 +98,22 @@ func TestPreferredQualityCanBeSelectedAfterLowerQualityCacheBootstrap(t *testing
 		return s.Playback != nil && s.Playback.Quality == "1080p" && s.Status.Ready
 	})
 }
+
+func TestH264CompatibilityModeShowsPlayerNotice(t *testing.T) {
+	b := &testBackend{}
+	b.resolve = func(_ context.Context, id string, n int, quality string) (*ipc.PlaybackDTO, error) {
+		dto := source(id, n, quality)
+		dto.H264CompatibilityMode = true
+		return dto, nil
+	}
+	c, _ := newControllerTest(t, b)
+	c.Play("book", 1, 0, 1)
+	state := waitSource(t, c, "book", 1)
+	if !strings.Contains(state.Notice, "HEVC") || !strings.Contains(state.Notice, "H.264") {
+		t.Fatalf("compatibility notice = %q, want HEVC and H.264 guidance", state.Notice)
+	}
+}
+
 func source(id string, num int, quality string) *ipc.PlaybackDTO {
 	return &ipc.PlaybackDTO{SeriesID: id, EpisodeID: fmt.Sprintf("%s-%d", id, num), EpisodeNum: num, StreamURL: fmt.Sprintf("%s/%d/%s.mp4", id, num, quality), HLSStreamURL: fmt.Sprintf("%s/%d/%s.m3u8", id, num, quality), FullStreamURL: "full:" + id, Quality: quality, LastPosition: 42, DurationSec: 200, Qualities: []ipc.QualityOptionDTO{{ID: "720p", Available: true}, {ID: "1080p", Available: true}}}
 }

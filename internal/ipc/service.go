@@ -60,23 +60,24 @@ type (
 )
 
 type PlaybackDTO struct {
-	SeriesID             string             `json:"seriesId"`
-	EpisodeID            string             `json:"episodeId"`
-	EpisodeNum           int                `json:"episodeNum"`
-	Title                string             `json:"title"`
-	StreamURL            string             `json:"streamUrl"`
-	FullStreamURL        string             `json:"fullStreamUrl,omitempty"`
-	ProgressiveStreamURL string             `json:"progressiveStreamUrl,omitempty"`
-	HLSStreamURL         string             `json:"hlsStreamUrl,omitempty"`
-	PosterURL            string             `json:"posterUrl,omitempty"`
-	DurationSec          int                `json:"durationSec"`
-	LastPosition         float64            `json:"lastPosition"`
-	IsLiked              bool               `json:"isLiked"`
-	CommentCount         int64              `json:"commentCount"`
-	Quality              string             `json:"quality,omitempty"`
-	Qualities            []QualityOptionDTO `json:"qualities,omitempty"`
-	IsFullCached         bool               `json:"isFullCached"`
-	IsHLSCached          bool               `json:"isHlsCached"`
+	SeriesID              string             `json:"seriesId"`
+	EpisodeID             string             `json:"episodeId"`
+	EpisodeNum            int                `json:"episodeNum"`
+	Title                 string             `json:"title"`
+	StreamURL             string             `json:"streamUrl"`
+	FullStreamURL         string             `json:"fullStreamUrl,omitempty"`
+	ProgressiveStreamURL  string             `json:"progressiveStreamUrl,omitempty"`
+	HLSStreamURL          string             `json:"hlsStreamUrl,omitempty"`
+	PosterURL             string             `json:"posterUrl,omitempty"`
+	DurationSec           int                `json:"durationSec"`
+	LastPosition          float64            `json:"lastPosition"`
+	IsLiked               bool               `json:"isLiked"`
+	CommentCount          int64              `json:"commentCount"`
+	Quality               string             `json:"quality,omitempty"`
+	Qualities             []QualityOptionDTO `json:"qualities,omitempty"`
+	IsFullCached          bool               `json:"isFullCached"`
+	IsHLSCached           bool               `json:"isHlsCached"`
+	H264CompatibilityMode bool               `json:"h264CompatibilityMode,omitempty"`
 }
 
 func NewStore(dir string) (*Store, error) { return userstore.NewStore(dir) }

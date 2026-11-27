@@ -59,7 +59,7 @@ CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -skip-dmg
 CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -platform darwin/arm64
 ```
 
-MyGo 会生成 `dist/darwin-arm64/myguo-0.1.13-arm64.dmg`，内含 `MyGuo.app` 和 Applications 快捷方式，拖入即可安装。已发布的版本可以从 [Releases](https://github.com/zcyoung2000/MyGuo/releases) 下载。
+MyGo 会生成 `dist/darwin-arm64/myguo-0.1.14-arm64.dmg`，内含 `MyGuo.app` 和 Applications 快捷方式，拖入即可安装。已发布的版本可以从 [Releases](https://github.com/zcyoung2000/MyGuo/releases) 下载。
 
 编译精简应用并直接安装到 `/Applications`：
 
@@ -77,7 +77,7 @@ MyGo 会生成 `dist/darwin-arm64/myguo-0.1.13-arm64.dmg`，内含 `MyGuo.app` �
 go run ./scripts/build-windows.go
 ```
 
-如果 `resources/windows-amd64` 已有精简 FFmpeg 和构建清单，脚本会校验并复用它；否则下载校验固定版本的 Gyan FFmpeg 9.0.2。打包前需安装 NSIS（macOS 执行 `brew install makensis`，Linux 执行 `sudo apt-get install nsis`）。脚本生成 `dist/windows-amd64/myguo-setup-0.1.13-amd64.exe`，运行 EXE 即可安装，支持开始菜单快捷方式和系统设置中的卸载入口。FFmpeg 和许可说明随程序一起安装，无需额外安装。也可以通过 `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip` 显式使用完整版 FFmpeg，脚本仍会验证校验值。
+如果 `resources/windows-amd64` 已有精简 FFmpeg 和构建清单，脚本会校验并复用它；否则下载校验固定版本的 Gyan FFmpeg 9.0.2。打包前需安装 NSIS（macOS 执行 `brew install makensis`，Linux 执行 `sudo apt-get install nsis`）。脚本生成 `dist/windows-amd64/myguo-setup-0.1.14-amd64.exe`，运行 EXE 即可安装，支持开始菜单快捷方式和系统设置中的卸载入口。FFmpeg 和许可说明随程序一起安装，无需额外安装。也可以通过 `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip` 显式使用完整版 FFmpeg，脚本仍会验证校验值。
 
 在 macOS/Linux 上重新构建 Windows 精简工具，需要 Zig 0.15.2、Bash、curl、tar、shasum、make 和 Python 3：
 

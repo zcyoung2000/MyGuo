@@ -107,6 +107,28 @@ func TestWindowsQualitySelectionPrefersH264Streams(t *testing.T) {
 	}
 }
 
+func TestWindowsQualitySelectionKeepsHEVCWhenDecoderIsAvailable(t *testing.T) {
+	pb := &model.Playback{Streams: []model.Stream{
+		{Definition: "1080p", URL: "https://media.invalid/1080-hevc", Codec: "hvc1.2.4.L153.B0", Bitrate: 8_000_000},
+		{Definition: "720p", URL: "https://media.invalid/720-h264", Codec: "avc1.640028", Bitrate: 2_500_000},
+	}}
+
+	selection := qualitySelectionFromPlaybackWithH264Preference(pb, "1080p", false)
+	if selection.Options[0].Codec != "hvc1.2.4.L153.B0" {
+		t.Fatalf("1080p option = %+v, want original HEVC stream", selection.Options[0])
+	}
+	if selection.Selected != "1080p" {
+		t.Fatalf("selected quality = %q, want 1080p when HEVC decoding is available", selection.Selected)
+	}
+	stream, err := selectVideoStreamWithH264Preference(pb, "1080p", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.URL != "https://media.invalid/1080-hevc" {
+		t.Fatalf("selected stream = %q, want HEVC rendition", stream.URL)
+	}
+}
+
 func TestWindowsQualitySelectionDowngradesToAvailableH264(t *testing.T) {
 	pb := &model.Playback{Streams: []model.Stream{
 		{Definition: "1080p", URL: "https://media.invalid/1080-hevc", Codec: "hevc", Bitrate: 8_000_000},
@@ -159,6 +181,25 @@ func TestWindowsPlaybackUsesSeparateCodecCompatibleCache(t *testing.T) {
 	windowsHLS := hlsCacheDirForPlatform("/tmp", episodeID, DefaultVideoQuality, true)
 	if legacyHLS == windowsHLS || !strings.Contains(windowsHLS, "windows_compat") {
 		t.Fatalf("Windows HLS cache = %q, legacy cache = %q", windowsHLS, legacyHLS)
+	}
+}
+
+func TestWindowsH264PreferenceRequiresMissingHEVCDecoder(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		windows bool
+		hevc    bool
+		want    bool
+	}{
+		{name: "Windows without HEVC decoder", windows: true, hevc: false, want: true},
+		{name: "Windows with HEVC decoder", windows: true, hevc: true, want: false},
+		{name: "other platform without HEVC decoder", windows: false, hevc: false, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldUseWindowsH264Preference(tt.windows, tt.hevc); got != tt.want {
+				t.Fatalf("shouldUseWindowsH264Preference(%t, %t) = %t, want %t", tt.windows, tt.hevc, got, tt.want)
+			}
+		})
 	}
 }
 

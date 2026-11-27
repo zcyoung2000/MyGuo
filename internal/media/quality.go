@@ -25,7 +25,7 @@ func qualityLabel(quality string) string {
 }
 
 func EpisodeCachePath(cacheDir, episodeID, quality string) string {
-	return episodeCachePathForPlatform(cacheDir, episodeID, quality, runtime.GOOS == "windows")
+	return episodeCachePathForPlatform(cacheDir, episodeID, quality, usesWindowsH264Preference())
 }
 
 func episodeCachePathForPlatform(cacheDir, episodeID, quality string, windows bool) string {
@@ -43,15 +43,24 @@ func episodeCachePathForPlatform(cacheDir, episodeID, quality string, windows bo
 
 func playbackCacheSuffix(windows bool) string {
 	if windows {
-		// Older Windows caches may contain HEVC files that this build's
-		// Media Foundation player cannot open. Keep the compatibility-selected
-		// rendition in a separate namespace so playback re-resolves its source.
+		// A compatibility-selected rendition can differ from the user's normal
+		// HEVC selection. Keep it separate so mode changes re-resolve the source.
 		return "_windows_compat"
 	}
 	return ""
 }
 
-func usesWindowsH264Preference() bool { return runtime.GOOS == "windows" }
+func usesWindowsH264Preference() bool {
+	return shouldUseWindowsH264Preference(runtime.GOOS == "windows", hasHEVCDecoder())
+}
+
+// UsesWindowsH264Preference reports whether this process should select H.264
+// streams to avoid asking Media Foundation to decode HEVC without a decoder.
+func UsesWindowsH264Preference() bool { return usesWindowsH264Preference() }
+
+func shouldUseWindowsH264Preference(windows, hevcDecoderAvailable bool) bool {
+	return windows && !hevcDecoderAvailable
+}
 
 func definitionNumber(definition string) int {
 	number := 0

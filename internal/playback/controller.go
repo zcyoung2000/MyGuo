@@ -208,6 +208,7 @@ type Controller struct {
 	preloadVersion                    int64
 	preloadLoading                    bool
 	preloadAdmitted                   bool
+	compatibilityNoticeShown          bool
 	lastPreloadTrace                  string
 	uiSelection                       uint64
 	commentCursors                    map[string]bool
@@ -573,6 +574,10 @@ func (c *Controller) resolveSource(s *slot) {
 			s.err = ""
 			s.dto = dto
 			s.number = dto.EpisodeNum
+			if dto.H264CompatibilityMode && !c.compatibilityNoticeShown {
+				c.state.Notice = "未检测到 HEVC 解码支持，已优先选择 H.264 视频流；仅提供 HEVC 的剧集可能无法播放。可在 Microsoft Store 搜索“HEVC Video Extensions”安装，安装后重启应用即可重新检测。"
+				c.compatibilityNoticeShown = true
+			}
 			if c.desired == key {
 				c.state.Error = ""
 				c.applySlot(s)
