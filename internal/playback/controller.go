@@ -575,7 +575,7 @@ func (c *Controller) resolveSource(s *slot) {
 			s.dto = dto
 			s.number = dto.EpisodeNum
 			if dto.H264CompatibilityMode && !c.compatibilityNoticeShown {
-				c.state.Notice = "未检测到系统 HEVC 解码器，已优先选择 H.264 视频流；仅提供 HEVC 时会在本机转为 H.264，保留原视频分辨率，首次播放可能较慢且画质略有损失。"
+				c.state.Notice = "未检测到系统 HEVC 解码器，已优先选择 H.264 视频流；仅提供 HEVC 时会在本机转为兼容格式（最高 720×576），首次播放可能较慢且画质会降低。"
 				c.compatibilityNoticeShown = true
 			}
 			if c.desired == key {

@@ -221,7 +221,7 @@ class HelperCacheTests(unittest.TestCase):
         root.mkdir(parents=True, exist_ok=True)
         binary = "ffmpeg.exe" if target.startswith("windows/") else "ffmpeg"
         for name in (binary, "ffmpeg-LICENSE.txt", "ffmpeg-README.txt"):
-            (root / name).write_bytes(b"fixture h264_mf " + name.encode())
+            (root / name).write_bytes(b"fixture " + name.encode())
         (root / binary).chmod(0o755)
         info = {
             "Format": "myguo-ffmpeg-minimal-v1", "Version": "9.0.2", "Target": target,

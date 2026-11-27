@@ -32,9 +32,6 @@ def verify(directory, target):
     for name in names:
         if hashlib.sha256((root / name).read_bytes()).hexdigest() != info["Files"][name]:
             raise ValueError(f"checksum mismatch: {name}")
-    if target.startswith("windows/"):
-        if b"h264_mf" not in (root / binary).read_bytes():
-            raise ValueError("Windows helper has no Media Foundation H.264 encoder")
     if target.startswith("darwin/") and not os.access(root / binary, os.X_OK):
         raise ValueError("ffmpeg is not executable")
 

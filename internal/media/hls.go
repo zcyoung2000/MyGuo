@@ -652,10 +652,11 @@ func (ms *MediaServer) serveHLSMasterWithH264Preference(w http.ResponseWriter, r
 			resolution := ""
 			codec := stream.Codec
 			if transcodeHEVCForCurrentPlatform(stream.Codec) {
-				if stream.Width > 0 && stream.Height > 0 {
-					resolution = fmt.Sprintf(",RESOLUTION=%d:%d", stream.Width, stream.Height)
+				width, height := hevcCompatibilityDimensions(stream.Width, stream.Height)
+				if width > 0 && height > 0 {
+					resolution = fmt.Sprintf(",RESOLUTION=%d:%d", width, height)
 				}
-				codec = "h264"
+				codec = "mpeg4"
 			} else if stream.Width > 0 && stream.Height > 0 {
 				resolution = fmt.Sprintf(",RESOLUTION=%d:%d", stream.Width, stream.Height)
 			}
