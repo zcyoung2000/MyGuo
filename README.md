@@ -59,7 +59,7 @@ To create the macOS release DMG, omit `-skip-dmg`:
 CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -platform darwin/arm64
 ```
 
-MyGo creates `dist/darwin-arm64/myguo-0.1.12-arm64.dmg`, containing `MyGuo.app` and a link to Applications for installation. Download published builds from [Releases](https://github.com/zcyoung2000/MyGuo/releases).
+MyGo creates `dist/darwin-arm64/myguo-0.1.13-arm64.dmg`, containing `MyGuo.app` and a link to Applications for installation. Download published builds from [Releases](https://github.com/zcyoung2000/MyGuo/releases).
 
 To build and install the minimal bundle in `/Applications`, run:
 
@@ -77,7 +77,7 @@ Run from the repository root on Windows, macOS or Linux:
 go run ./scripts/build-windows.go
 ```
 
-This reuses a verified minimal FFmpeg when its build manifest exists in `resources/windows-amd64`; otherwise it fetches the checksum-verified Gyan FFmpeg 9.0.2 archive. Install NSIS first (`brew install makensis` on macOS, `sudo apt-get install nsis` on Linux). The script creates `dist/windows-amd64/myguo-setup-0.1.12-amd64.exe`. Run the EXE to install MyGuo for your user, with a Start menu shortcut and an entry in Windows Settings for uninstalling. FFmpeg and its notices are included; no separate FFmpeg installation is needed. A full release archive can be supplied explicitly with `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip`.
+This reuses a verified minimal FFmpeg when its build manifest exists in `resources/windows-amd64`; otherwise it fetches the checksum-verified Gyan FFmpeg 9.0.2 archive. Install NSIS first (`brew install makensis` on macOS, `sudo apt-get install nsis` on Linux). The script creates `dist/windows-amd64/myguo-setup-0.1.13-amd64.exe`. Run the EXE to install MyGuo for your user, with a Start menu shortcut and an entry in Windows Settings for uninstalling. FFmpeg and its notices are included; no separate FFmpeg installation is needed. A full release archive can be supplied explicitly with `-ffmpeg-archive /path/to/ffmpeg-9.0.2-essentials_build.zip`.
 
 To rebuild the minimal Windows helper on macOS/Linux, install Zig 0.15.2 and use Bash, curl, tar, shasum, make and Python 3:
 
@@ -88,7 +88,7 @@ go run ./scripts/build-windows.go -ffmpeg-dir ./tmp_ffmpeg_minimal/output
 
 The minimal build keeps CENC decryption, MP4/HLS remuxing, HTTP/HTTPS, H.264/HEVC/AAC decoding and JPEG/HEIC poster conversion. It omits unrelated encoders, external codec libraries, filters and debug symbols. Subsequent packaging commands verify and reuse the installed helper. The script pins the FFmpeg source checksum and records the target, compiler, license and binary checksums in `ffmpeg-build-info.json`.
 
-Windows PiP uses a resizable always-on-top window. Feed transitions show the next poster instead of capturing the outgoing GPU frame. Background media preloading is conservative because MyGo exposes no Windows buffered ranges; resume and seeks use the complete local MP4. H.264/AAC use system codecs; HEVC needs the Windows HEVC codec, and Windows N editions need the Media Feature Pack. Real Windows playback and PiP still require validation on a Windows machine.
+Windows PiP uses a resizable always-on-top window. Feed transitions show the next poster instead of capturing the outgoing GPU frame. Background media preloading is conservative because MyGo exposes no Windows buffered ranges; resume and seeks use the complete local MP4. On Windows, playback prefers an H.264 rendition when the service offers one, choosing a lower resolution if needed. HEVC-only videos still need the Windows HEVC codec, and Windows N editions need the Media Feature Pack. Real Windows playback and PiP still require validation on a Windows machine.
 
 ## App Updates
 

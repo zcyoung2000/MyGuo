@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"myguo/internal/hgapi/model"
@@ -24,6 +25,10 @@ func qualityLabel(quality string) string {
 }
 
 func EpisodeCachePath(cacheDir, episodeID, quality string) string {
+	return episodeCachePathForPlatform(cacheDir, episodeID, quality, runtime.GOOS == "windows")
+}
+
+func episodeCachePathForPlatform(cacheDir, episodeID, quality string, windows bool) string {
 	if !validContentID(episodeID) {
 		return ""
 	}
@@ -31,9 +36,22 @@ func EpisodeCachePath(cacheDir, episodeID, quality string) string {
 	if quality != DefaultVideoQuality {
 		name += "_" + quality
 	}
+	name += playbackCacheSuffix(windows)
 	name += "_v2"
 	return filepath.Join(cacheDir, "episodes", name+".mp4")
 }
+
+func playbackCacheSuffix(windows bool) string {
+	if windows {
+		// Older Windows caches may contain HEVC files that this build's
+		// Media Foundation player cannot open. Keep the compatibility-selected
+		// rendition in a separate namespace so playback re-resolves its source.
+		return "_windows_compat"
+	}
+	return ""
+}
+
+func usesWindowsH264Preference() bool { return runtime.GOOS == "windows" }
 
 func definitionNumber(definition string) int {
 	number := 0
@@ -82,11 +100,15 @@ func abs(value int) int {
 }
 
 func qualitySelectionFromPlayback(pb *model.Playback, requested string) QualitySelection {
+	return qualitySelectionFromPlaybackWithH264Preference(pb, requested, usesWindowsH264Preference())
+}
+
+func qualitySelectionFromPlaybackWithH264Preference(pb *model.Playback, requested string, preferH264 bool) QualitySelection {
 	requested = normalizeVideoQuality(requested)
 	available := make(map[string]bool)
 	streamDetails := make(map[string]model.Stream)
 	if pb != nil {
-		for _, stream := range pb.Streams {
+		for _, stream := range preferredVideoStreams(pb.Streams, preferH264) {
 			if strings.TrimSpace(stream.URL) == "" {
 				continue
 			}
@@ -147,11 +169,18 @@ func qualityForStreamRank(rank int) string {
 }
 
 func selectVideoStream(pb *model.Playback, requested string) (model.Stream, error) {
+	return selectVideoStreamWithH264Preference(pb, requested, usesWindowsH264Preference())
+}
+
+func selectVideoStreamWithH264Preference(pb *model.Playback, requested string, preferH264 bool) (model.Stream, error) {
 	if pb == nil {
 		return model.Stream{}, fmt.Errorf("playback is unavailable")
 	}
 	quality := normalizeVideoQuality(requested)
-	stream, err := pb.Select(quality)
+	streams := preferredVideoStreams(pb.Streams, preferH264)
+	preferred := *pb
+	preferred.Streams = streams
+	stream, err := preferred.Select(quality)
 	if err == nil {
 		return stream, nil
 	}
@@ -160,8 +189,8 @@ func selectVideoStream(pb *model.Playback, requested string) (model.Stream, erro
 		rank   int
 		stream model.Stream
 	}
-	candidates := make([]rankedStream, 0, len(pb.Streams))
-	for _, candidate := range pb.Streams {
+	candidates := make([]rankedStream, 0, len(streams))
+	for _, candidate := range streams {
 		if strings.TrimSpace(candidate.URL) == "" {
 			continue
 		}
@@ -185,4 +214,25 @@ func selectVideoStream(pb *model.Playback, requested string) (model.Stream, erro
 		}
 	}
 	return selected.stream, nil
+}
+
+func preferredVideoStreams(streams []model.Stream, preferH264 bool) []model.Stream {
+	if !preferH264 {
+		return streams
+	}
+	h264 := make([]model.Stream, 0, len(streams))
+	for _, stream := range streams {
+		if strings.TrimSpace(stream.URL) != "" && isH264Codec(stream.Codec) {
+			h264 = append(h264, stream)
+		}
+	}
+	if len(h264) > 0 {
+		return h264
+	}
+	return streams
+}
+
+func isH264Codec(codec string) bool {
+	codec = strings.ToLower(strings.TrimSpace(codec))
+	return codec == "h264" || codec == "avc" || codec == "avc1" || strings.HasPrefix(codec, "avc1.")
 }

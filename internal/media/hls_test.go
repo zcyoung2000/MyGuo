@@ -111,6 +111,33 @@ func TestServeHLSMasterIncludesVariants(t *testing.T) {
 	}
 }
 
+func TestWindowsHLSMasterOnlyOffersH264WhenAvailable(t *testing.T) {
+	ms := &MediaServer{pbCache: map[string]playbackCacheItem{
+		"710000000000001": {
+			pb: &model.Playback{Streams: []model.Stream{
+				{Definition: "1080p", URL: "https://media.invalid/1080-hevc", Width: 1920, Height: 1080, Bitrate: 8_000_000, Codec: "hvc1.2.4.L153.B0"},
+				{Definition: "1080p", URL: "https://media.invalid/1080-h264", Width: 1920, Height: 1080, Bitrate: 5_000_000, Codec: "avc1.640028"},
+				{Definition: "720p", URL: "https://media.invalid/720-h264", Width: 1280, Height: 720, Bitrate: 2_500_000, Codec: "h264"},
+			}},
+			expiresAt: time.Now().Add(time.Minute),
+		},
+	}}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/hls/710000000000001/1080p/master.m3u8", nil)
+
+	ms.serveHLSMasterWithH264Preference(response, request, "series", 1, "710000000000001", "1080p", true)
+	body := response.Body.String()
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, body)
+	}
+	if strings.Contains(body, "hvc1") || !strings.Contains(body, `CODECS="avc1.640028"`) {
+		t.Fatalf("Windows master did not filter to H.264: %s", body)
+	}
+	if !strings.Contains(body, "1080p/index.m3u8") || !strings.Contains(body, "720p/index.m3u8") {
+		t.Fatalf("H.264 renditions are missing: %s", body)
+	}
+}
+
 func TestEstimatedHLSBandwidthIncludesSeparateAudio(t *testing.T) {
 	if got := estimatedHLSBandwidth(1_000_000, 720, true); got != 1_128_000 {
 		t.Fatalf("estimated bandwidth = %d, want 1128000", got)

@@ -283,10 +283,15 @@ func (ms *MediaServer) retireHLSStreamLocked(key string, stream *hlsStream) {
 }
 
 func (ms *MediaServer) hlsCacheDir(episodeID, quality string) string {
+	return hlsCacheDirForPlatform(ms.cacheDir, episodeID, quality, usesWindowsH264Preference())
+}
+
+func hlsCacheDirForPlatform(cacheDir, episodeID, quality string, windows bool) string {
 	if !validContentID(episodeID) {
 		return ""
 	}
-	return filepath.Join(ms.cacheDir, "episodes", "hls", episodeID+"_"+normalizeVideoQuality(quality))
+	name := episodeID + "_" + normalizeVideoQuality(quality) + playbackCacheSuffix(windows)
+	return filepath.Join(cacheDir, "episodes", "hls", name)
 }
 
 func hlsPlaylistReady(path string) bool {
@@ -613,13 +618,17 @@ func parseHLSPath(path string) (episodeID, quality, resource string, ok bool) {
 }
 
 func (ms *MediaServer) serveHLSMaster(w http.ResponseWriter, r *http.Request, seriesID string, number int, episodeID, requestedQuality string) {
+	ms.serveHLSMasterWithH264Preference(w, r, seriesID, number, episodeID, requestedQuality, usesWindowsH264Preference())
+}
+
+func (ms *MediaServer) serveHLSMasterWithH264Preference(w http.ResponseWriter, r *http.Request, seriesID string, number int, episodeID, requestedQuality string, preferH264 bool) {
 	pb, resolveErr := ms.resolvePlayback(r.Context(), episodeID)
 	lines := []string{"#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"}
 	seen := make(map[string]bool)
 	variantValues := urlValuesForEpisode(seriesID, number)
 	requestedDefinition := definitionNumber(normalizeVideoQuality(requestedQuality))
 	if resolveErr == nil && pb != nil {
-		streams := append([]model.Stream(nil), pb.Streams...)
+		streams := append([]model.Stream(nil), preferredVideoStreams(pb.Streams, preferH264)...)
 		sort.SliceStable(streams, func(i, j int) bool { return streamQualityRank(streams[i]) > streamQualityRank(streams[j]) })
 		for _, stream := range streams {
 			if strings.TrimSpace(stream.URL) == "" {

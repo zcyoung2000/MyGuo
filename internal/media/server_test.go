@@ -83,6 +83,85 @@ func TestQualitySelectionCarriesStreamDiagnostics(t *testing.T) {
 	}
 }
 
+func TestWindowsQualitySelectionPrefersH264Streams(t *testing.T) {
+	pb := &model.Playback{Streams: []model.Stream{
+		{Definition: "1080p", URL: "https://media.invalid/1080-hevc", Codec: "hvc1.2.4.L153.B0", Bitrate: 8_000_000},
+		{Definition: "1080p", URL: "https://media.invalid/1080-h264", Codec: "avc1.640028", Bitrate: 5_000_000},
+		{Definition: "720p", URL: "https://media.invalid/720-h264", Codec: "h264", Bitrate: 2_500_000},
+	}}
+
+	selection := qualitySelectionFromPlaybackWithH264Preference(pb, "1080p", true)
+	if selection.Selected != "1080p" {
+		t.Fatalf("selected quality = %q, want 1080p", selection.Selected)
+	}
+	if option := selection.Options[0]; !option.Available || option.Codec != "avc1.640028" {
+		t.Fatalf("1080p option = %+v, want the H.264 rendition", option)
+	}
+
+	stream, err := selectVideoStreamWithH264Preference(pb, selection.Selected, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.URL != "https://media.invalid/1080-h264" {
+		t.Fatalf("selected stream = %q, want H.264 rendition", stream.URL)
+	}
+}
+
+func TestWindowsQualitySelectionDowngradesToAvailableH264(t *testing.T) {
+	pb := &model.Playback{Streams: []model.Stream{
+		{Definition: "1080p", URL: "https://media.invalid/1080-hevc", Codec: "hevc", Bitrate: 8_000_000},
+		{Definition: "720p", URL: "https://media.invalid/720-h264", Codec: "h264", Bitrate: 2_500_000},
+	}}
+
+	selection := qualitySelectionFromPlaybackWithH264Preference(pb, "1080p", true)
+	if selection.Selected != "720p" {
+		t.Fatalf("selected quality = %q, want compatible 720p", selection.Selected)
+	}
+	if selection.Options[0].Available || !selection.Options[1].Available || selection.Options[1].Codec != "h264" {
+		t.Fatalf("quality options expose incompatible streams: %+v", selection.Options)
+	}
+	stream, err := selectVideoStreamWithH264Preference(pb, selection.Selected, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.URL != "https://media.invalid/720-h264" {
+		t.Fatalf("selected stream = %q, want 720p H.264 rendition", stream.URL)
+	}
+}
+
+func TestWindowsQualitySelectionKeepsExistingBehaviorWithoutH264(t *testing.T) {
+	pb := &model.Playback{Streams: []model.Stream{
+		{Definition: "1080p", URL: "https://media.invalid/1080-hevc", Codec: "hvc1", Bitrate: 8_000_000},
+		{Definition: "720p", URL: "https://media.invalid/720-hevc", Codec: "hevc", Bitrate: 3_000_000},
+	}}
+
+	selection := qualitySelectionFromPlaybackWithH264Preference(pb, "1080p", true)
+	if selection.Selected != "1080p" || selection.Options[0].Codec != "hvc1" {
+		t.Fatalf("selection without H.264 changed: %+v", selection)
+	}
+	stream, err := selectVideoStreamWithH264Preference(pb, selection.Selected, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.URL != "https://media.invalid/1080-hevc" {
+		t.Fatalf("fallback stream = %q, want existing HEVC selection", stream.URL)
+	}
+}
+
+func TestWindowsPlaybackUsesSeparateCodecCompatibleCache(t *testing.T) {
+	const episodeID = "710000000000001"
+	legacy := episodeCachePathForPlatform("/tmp", episodeID, DefaultVideoQuality, false)
+	windows := episodeCachePathForPlatform("/tmp", episodeID, DefaultVideoQuality, true)
+	if legacy == windows || !strings.Contains(windows, "windows_compat") {
+		t.Fatalf("Windows cache = %q, legacy cache = %q", windows, legacy)
+	}
+	legacyHLS := hlsCacheDirForPlatform("/tmp", episodeID, DefaultVideoQuality, false)
+	windowsHLS := hlsCacheDirForPlatform("/tmp", episodeID, DefaultVideoQuality, true)
+	if legacyHLS == windowsHLS || !strings.Contains(windowsHLS, "windows_compat") {
+		t.Fatalf("Windows HLS cache = %q, legacy cache = %q", windowsHLS, legacyHLS)
+	}
+}
+
 func TestSelectVideoStreamUsesNearestDefinition(t *testing.T) {
 	pb := &model.Playback{Streams: []model.Stream{
 		{Definition: "360p", URL: "https://media.invalid/360"},
