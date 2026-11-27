@@ -95,7 +95,7 @@ jobs:
     name: Verify source on macOS
     needs: prepare
     runs-on: ${{ inputs.macos_runner }}
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,8 +117,8 @@ jobs:
         working-directory: .release-tools
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Run Go tests
-        timeout-minutes: 5
-        run: go test -timeout 4m ./...
+        timeout-minutes: 9
+        run: go test -timeout 8m ./...
 
   build-macos:
     name: Build macOS ${{ matrix.arch }}

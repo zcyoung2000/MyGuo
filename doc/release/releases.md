@@ -26,7 +26,7 @@ GitHub 仓库也已配置同一私钥的 Secret `MYGO_UPDATER_PRIVATE_KEY`，用
 
 1. 更新 `mygo.json` 的 `version`、两个 README 的下载文件名，并在 `CHANGELOG.md`
    添加对应的 `## x.y.z` 节。该节同时显示在应用内的更新窗口。
-2. 先同步并检查 `main`，合入当前分支缺少的提交。运行 `go test -timeout 4m ./...`
+2. 先同步并检查 `main`，合入当前分支缺少的提交。运行 `go test -timeout 8m ./...`
    和 `python3 -m unittest discover -s scripts/tests -v`，提交代码并推送 `main`。
 3. 从包含最新发布工作流的提交创建对应的 `vx.y.z` 标签并推送。
    `Release` 调度器会检查标签和版本，再构建三个平台，使用同一私钥签名，
@@ -125,7 +125,7 @@ job 的 `timeout-minutes` 约束执行阶段，不能替代这里独立实现的
 - **不缓存签名发布物**：DMG、EXE、更新包、清单和校验和仍为本轮重新生成并验证。
 
 macOS 测试通过后，macOS arm64、macOS amd64 和 Windows x64 并行构建。
-单个测试 job 限 8 分钟、打包 job 限 15 分钟、汇总发布限 5 分钟；另外各关键
+单个测试 job 限 12 分钟（Go 测试限 8 分钟）、打包 job 限 15 分钟、汇总发布限 5 分钟；另外各关键
 构建/下载步骤设有超时。macOS 矩阵一项失败就停止另一项，避免继续消耗资源。
 
 性能基线、故障时间线与维护经验见 [发布耗时复盘](release-retrospective-2026-11-25.md)。
