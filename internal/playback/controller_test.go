@@ -109,8 +109,8 @@ func TestH264CompatibilityModeShowsPlayerNotice(t *testing.T) {
 	c, _ := newControllerTest(t, b)
 	c.Play("book", 1, 0, 1)
 	state := waitSource(t, c, "book", 1)
-	if !strings.Contains(state.Notice, "HEVC") || !strings.Contains(state.Notice, "H.264") {
-		t.Fatalf("compatibility notice = %q, want HEVC and H.264 guidance", state.Notice)
+	if !strings.Contains(state.Notice, "HEVC") || !strings.Contains(state.Notice, "H.264") || !strings.Contains(state.Notice, "保留原视频分辨率") {
+		t.Fatalf("compatibility notice = %q, want HEVC, H.264 and full-resolution guidance", state.Notice)
 	}
 }
 

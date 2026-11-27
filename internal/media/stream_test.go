@@ -103,12 +103,15 @@ func TestFFmpegProgressiveArgsUsesFragmentedMP4(t *testing.T) {
 	}
 }
 
-func TestFFmpegProgressiveArgsTranscodesHEVCCompatibilityOutput(t *testing.T) {
+func TestFFmpegProgressiveArgsTranscodesHEVCToFullResolutionH264(t *testing.T) {
 	joined := strings.Join(ffmpegProgressiveArgs("https://media.invalid/video", "", "", true), " ")
-	for _, required := range []string{"scale=720:576:force_original_aspect_ratio=decrease:force_divisible_by=2", "-pix_fmt yuv420p", "-c:v mpeg4", "-tag:v mp4v", "frag_keyframe+empty_moov+default_base_moof"} {
+	for _, required := range []string{"-pix_fmt yuv420p", "-c:v h264_mf", "-profile:v high", "-b:v 5M", "-g 60", "-c:a copy", "frag_keyframe+empty_moov+default_base_moof"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("transcode args missing %q: %s", required, joined)
 		}
+	}
+	if strings.Contains(joined, "scale=") {
+		t.Fatalf("transcode args unexpectedly reduce resolution: %s", joined)
 	}
 }
 

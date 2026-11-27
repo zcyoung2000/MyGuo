@@ -86,7 +86,8 @@ CC
   chmod +x "$work/zig-cc"
   "$src/configure" "${common[@]}" \
     --enable-cross-compile --target-os=mingw32 --arch=x86_64 \
-    --enable-schannel --enable-w32threads --disable-pthreads \
+    --enable-schannel --enable-w32threads --disable-pthreads --enable-mediafoundation --enable-d3d11va \
+    --enable-encoder=h264_mf \
     --cc="$work/zig-cc" --ld="$work/zig-cc" \
     --ar="$zig ar" --ranlib="$zig ranlib" --extra-ldflags=-Wl,-s
   # The linker strips the PE; avoid requiring host GNU objcopy.
@@ -125,7 +126,8 @@ Build recipe: scripts/build-ffmpeg-minimal.sh in the myguo source repository.
 Compiler: $compiler; size optimized, no external codec libraries.
 Includes CENC/MP4 processing, HLS, HTTP/HTTPS ($tls),
 H.264/HEVC/AAC decoding, MPEG-4 Part 2 compatibility encoding, JPEG posters and HEIC conversion.
-Video playback and audio output use the operating system's media framework.
+Windows HEVC compatibility uses the built-in Media Foundation H.264 encoder;
+video playback and audio output use the operating system's media framework.
 NOTICE
 python3 - "$out" "$source_sha" "$target" "$compiler" "$binary" "$recipe_sha" <<'PY'
 from pathlib import Path

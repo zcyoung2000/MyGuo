@@ -224,23 +224,6 @@ func TestWindowsHEVCTranscodeOnlyWhenSystemDecoderMissing(t *testing.T) {
 	}
 }
 
-func TestHEVCCompatibilityDimensionsFitMediaFoundationFallback(t *testing.T) {
-	for _, tt := range []struct {
-		width, height int
-		wantWidth     int
-		wantHeight    int
-	}{
-		{width: 1920, height: 1080, wantWidth: 720, wantHeight: 406},
-		{width: 1080, height: 1920, wantWidth: 324, wantHeight: 576},
-		{width: 640, height: 480, wantWidth: 640, wantHeight: 480},
-	} {
-		width, height := hevcCompatibilityDimensions(tt.width, tt.height)
-		if width != tt.wantWidth || height != tt.wantHeight {
-			t.Fatalf("hevcCompatibilityDimensions(%d, %d) = %d×%d, want %d×%d", tt.width, tt.height, width, height, tt.wantWidth, tt.wantHeight)
-		}
-	}
-}
-
 func TestSelectVideoStreamUsesNearestDefinition(t *testing.T) {
 	pb := &model.Playback{Streams: []model.Stream{
 		{Definition: "360p", URL: "https://media.invalid/360"},

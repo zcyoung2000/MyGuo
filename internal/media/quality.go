@@ -260,17 +260,7 @@ func transcodeHEVCForCurrentPlatform(codec string) bool {
 
 func appendHEVCCompatibilityTranscodeArgs(args []string) []string {
 	return append(args,
-		"-vf", "scale=720:576:force_original_aspect_ratio=decrease:force_divisible_by=2",
-		"-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-q:v", "4", "-tag:v", "mp4v", "-c:a", "copy",
+		"-pix_fmt", "yuv420p", "-c:v", "h264_mf", "-profile:v", "high",
+		"-b:v", "5M", "-g", "60", "-c:a", "copy",
 	)
-}
-
-func hevcCompatibilityDimensions(width, height int) (int, int) {
-	if width <= 0 || height <= 0 {
-		return 0, 0
-	}
-	scale := min(720/float64(width), 576/float64(height), 1)
-	outputWidth := (int(float64(width)*scale) + 1) / 2 * 2
-	outputHeight := (int(float64(height)*scale) + 1) / 2 * 2
-	return max(outputWidth, 2), max(outputHeight, 2)
 }
