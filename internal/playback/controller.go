@@ -575,7 +575,7 @@ func (c *Controller) resolveSource(s *slot) {
 			s.dto = dto
 			s.number = dto.EpisodeNum
 			if dto.H264CompatibilityMode && !c.compatibilityNoticeShown {
-				c.state.Notice = "未检测到 HEVC 解码支持，已优先选择 H.264 视频流；仅提供 HEVC 的剧集可能无法播放。可在 Microsoft Store 搜索“HEVC Video Extensions”安装，安装后重启应用即可重新检测。"
+				c.state.Notice = "未检测到系统 HEVC 解码器，已优先选择 H.264 视频流；仅提供 HEVC 时会在本机转为兼容格式（最高 720×576），首次播放可能较慢且画质会降低。"
 				c.compatibilityNoticeShown = true
 			}
 			if c.desired == key {

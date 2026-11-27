@@ -7,7 +7,7 @@ import (
 )
 
 func TestFFmpegDownloadArgsMuxesSeparateAudio(t *testing.T) {
-	args := ffmpegDownloadArgs("https://media.invalid/video", "https://media.invalid/audio", "0123456789abcdef0123456789abcdef", 12)
+	args := ffmpegDownloadArgs("https://media.invalid/video", "https://media.invalid/audio", "0123456789abcdef0123456789abcdef", 12, false)
 	joined := strings.Join(args, " ")
 
 	for _, want := range []string{
@@ -26,7 +26,7 @@ func TestFFmpegDownloadArgsMuxesSeparateAudio(t *testing.T) {
 }
 
 func TestFFmpegDownloadArgsKeepsSingleTrack(t *testing.T) {
-	args := ffmpegDownloadArgs("https://media.invalid/video", "", "", 0)
+	args := ffmpegDownloadArgs("https://media.invalid/video", "", "", 0, false)
 	joined := strings.Join(args, " ")
 
 	if strings.Contains(joined, "-map") {
@@ -34,6 +34,15 @@ func TestFFmpegDownloadArgsKeepsSingleTrack(t *testing.T) {
 	}
 	if strings.Contains(joined, "-t") {
 		t.Fatalf("full download unexpectedly time-limited: %q", joined)
+	}
+}
+
+func TestFFmpegDownloadArgsTranscodesHEVCCompatibilityOutput(t *testing.T) {
+	joined := strings.Join(ffmpegDownloadArgs("https://media.invalid/video", "", "", 0, true), " ")
+	for _, required := range []string{"scale=720:576:force_original_aspect_ratio=decrease:force_divisible_by=2", "-pix_fmt yuv420p", "-c:v mpeg4", "-tag:v mp4v", "-c:a copy", "-f mp4"} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("transcode args missing %q: %s", required, joined)
+		}
 	}
 }
 

@@ -63,7 +63,7 @@ common=(
   --enable-demuxer=mov,aac,hls,mpegts,image2,gif,jpeg_pipe,webp_pipe
   --enable-muxer=mp4,mov,hls,mpegts,image2,mjpeg,null
   --enable-decoder=h264,hevc,aac,mjpeg,webp,gif
-  --enable-encoder=mjpeg,wrapped_avframe,pcm_s16le
+  --enable-encoder=mjpeg,mpeg4,wrapped_avframe,pcm_s16le
   --enable-parser=h264,hevc,aac,mjpeg,webp
   --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb
   --enable-filter=scale,format,null,buffer,buffersink,aformat,anull,aresample,abuffer,abuffersink
@@ -124,7 +124,7 @@ Source SHA256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
 Build recipe: scripts/build-ffmpeg-minimal.sh in the myguo source repository.
 Compiler: $compiler; size optimized, no external codec libraries.
 Includes CENC/MP4 processing, HLS, HTTP/HTTPS ($tls),
-H.264/HEVC/AAC decoding, JPEG posters and HEIC conversion.
+H.264/HEVC/AAC decoding, MPEG-4 Part 2 compatibility encoding, JPEG posters and HEIC conversion.
 Video playback and audio output use the operating system's media framework.
 NOTICE
 python3 - "$out" "$source_sha" "$target" "$compiler" "$binary" "$recipe_sha" <<'PY'

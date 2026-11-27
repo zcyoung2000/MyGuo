@@ -419,7 +419,7 @@ func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seri
 		defer close(monitorExited)
 		ms.monitorHLSOutput(ctx, stream, monitorDone)
 	}()
-	command := mediaCommand(ctx, ffmpegPath, ffmpegHLSArgs(source.URL, pb.AudioURL, keyHex, stream.dir)...)
+	command := mediaCommand(ctx, ffmpegPath, ffmpegHLSArgs(source.URL, pb.AudioURL, keyHex, stream.dir, transcodeHEVCForCurrentPlatform(source.Codec))...)
 	runErr := command.Run()
 	close(monitorDone)
 	<-monitorExited
@@ -533,7 +533,7 @@ func evictHLSCache(root string, maxBytes, targetBytes int64, pinnedPaths map[str
 	}
 }
 
-func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string) []string {
+func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string, transcodeHEVC bool) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
 	input := func(mediaURL string) {
 		// MP4/DASH already carries stream metadata. Bound probing so a slow
@@ -549,8 +549,12 @@ func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string) []string {
 		input(audioURL)
 		args = append(args, "-map", "0:v:0", "-map", "1:a:0")
 	}
+	if transcodeHEVC {
+		args = appendHEVCCompatibilityTranscodeArgs(args)
+	} else {
+		args = append(args, "-c", "copy")
+	}
 	return append(args,
-		"-c", "copy",
 		"-max_interleave_delta", "1000000",
 		"-flush_packets", "1",
 		"-f", "hls",
@@ -646,10 +650,17 @@ func (ms *MediaServer) serveHLSMasterWithH264Preference(w http.ResponseWriter, r
 			seen[quality] = true
 			bandwidth := estimatedHLSBandwidth(stream.Bitrate, streamQualityRank(stream), pb.AudioURL != "")
 			resolution := ""
-			if stream.Width > 0 && stream.Height > 0 {
+			codec := stream.Codec
+			if transcodeHEVCForCurrentPlatform(stream.Codec) {
+				width, height := hevcCompatibilityDimensions(stream.Width, stream.Height)
+				if width > 0 && height > 0 {
+					resolution = fmt.Sprintf(",RESOLUTION=%d:%d", width, height)
+				}
+				codec = "mpeg4"
+			} else if stream.Width > 0 && stream.Height > 0 {
 				resolution = fmt.Sprintf(",RESOLUTION=%d:%d", stream.Width, stream.Height)
 			}
-			codecs := hlsCodecAttribute(stream.Codec, pb.AudioURL != "")
+			codecs := hlsCodecAttribute(codec, pb.AudioURL != "")
 			if codecs != "" {
 				resolution += ",CODECS=" + codecs
 			}
@@ -700,6 +711,9 @@ func hlsCodecAttribute(codec string, hasSeparateAudio bool) string {
 	// attribute instead of claiming a video-only rendition.
 	if hasSeparateAudio {
 		return ""
+	}
+	if codec == "mpeg4" || codec == "mp4v" {
+		return `"mp4v.20.9"`
 	}
 	if strings.HasPrefix(codec, "avc1.") || strings.HasPrefix(codec, "hvc1.") || strings.HasPrefix(codec, "hev1.") {
 		return `"` + codec + `"`

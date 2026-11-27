@@ -205,7 +205,7 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 		return nil, err
 	}
 
-	command := mediaCommand(ctx, ffmpegPath, ffmpegProgressiveArgs(source.URL, pb.AudioURL, keyHex)...)
+	command := mediaCommand(ctx, ffmpegPath, ffmpegProgressiveArgs(source.URL, pb.AudioURL, keyHex, transcodeHEVCForCurrentPlatform(source.Codec))...)
 	var stderrBuf bytes.Buffer
 	command.Stderr = &stderrBuf
 	stdout, err := command.StdoutPipe()
@@ -352,7 +352,7 @@ func (stream *progressiveStream) finalize() {
 	stream.finalized = true
 }
 
-func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string) []string {
+func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string, transcodeHEVC bool) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
 	input := func(mediaURL string) {
 		args = append(args, "-probesize", "131072", "-analyzeduration", "1000000", "-rw_timeout", "15000000")
@@ -366,8 +366,12 @@ func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string) []string {
 		input(audioURL)
 		args = append(args, "-map", "0:v:0", "-map", "1:a:0")
 	}
+	if transcodeHEVC {
+		args = appendHEVCCompatibilityTranscodeArgs(args)
+	} else {
+		args = append(args, "-c", "copy")
+	}
 	return append(args,
-		"-c", "copy",
 		"-max_interleave_delta", "1000000",
 		"-flush_packets", "1",
 		"-f", "mp4",

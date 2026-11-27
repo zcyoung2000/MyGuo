@@ -68,11 +68,20 @@ func TestParseHLSPath(t *testing.T) {
 }
 
 func TestFFmpegHLSArgsUseCMAFSegments(t *testing.T) {
-	args := ffmpegHLSArgs("https://media.invalid/video", "https://media.invalid/audio", "key", "/tmp/hls")
+	args := ffmpegHLSArgs("https://media.invalid/video", "https://media.invalid/audio", "key", "/tmp/hls", false)
 	joined := strings.Join(args, " ")
 	for _, required := range []string{"-f hls", "-hls_time 2", "-hls_segment_type fmp4", "independent_segments"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("HLS args missing %q: %v", required, args)
+		}
+	}
+}
+
+func TestFFmpegHLSArgsTranscodesHEVCCompatibilityOutput(t *testing.T) {
+	joined := strings.Join(ffmpegHLSArgs("https://media.invalid/video", "", "", "/tmp/hls", true), " ")
+	for _, required := range []string{"scale=720:576:force_original_aspect_ratio=decrease:force_divisible_by=2", "-pix_fmt yuv420p", "-c:v mpeg4", "-tag:v mp4v", "-f hls", "-hls_segment_type fmp4"} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("transcode args missing %q: %s", required, joined)
 		}
 	}
 }
@@ -153,6 +162,9 @@ func TestHLSCodecAttributeAvoidsGuesses(t *testing.T) {
 	}
 	if got := hlsCodecAttribute("h264", false); got != "" {
 		t.Fatalf("generic codec was guessed: %q", got)
+	}
+	if got := hlsCodecAttribute("mpeg4", false); got != `"mp4v.20.9"` {
+		t.Fatalf("MPEG-4 compatibility codec = %q", got)
 	}
 	if got := hlsCodecAttribute("avc1.640028", true); got != "" {
 		t.Fatalf("video-only codec was emitted for muxed audio: %q", got)

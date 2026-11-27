@@ -94,11 +94,20 @@ func TestParseHTTPByteRangeAllowsFutureRangeWhileGrowing(t *testing.T) {
 }
 
 func TestFFmpegProgressiveArgsUsesFragmentedMP4(t *testing.T) {
-	args := ffmpegProgressiveArgs("https://media.invalid/video", "https://media.invalid/audio", "key")
+	args := ffmpegProgressiveArgs("https://media.invalid/video", "https://media.invalid/audio", "key", false)
 	joined := strings.Join(args, " ")
 	for _, required := range []string{"-movflags frag_keyframe+empty_moov+default_base_moof", "pipe:1", "-map 1:a:0"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("progressive args missing %q: %v", required, args)
+		}
+	}
+}
+
+func TestFFmpegProgressiveArgsTranscodesHEVCCompatibilityOutput(t *testing.T) {
+	joined := strings.Join(ffmpegProgressiveArgs("https://media.invalid/video", "", "", true), " ")
+	for _, required := range []string{"scale=720:576:force_original_aspect_ratio=decrease:force_divisible_by=2", "-pix_fmt yuv420p", "-c:v mpeg4", "-tag:v mp4v", "frag_keyframe+empty_moov+default_base_moof"} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("transcode args missing %q: %s", required, joined)
 		}
 	}
 }

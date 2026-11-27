@@ -174,12 +174,12 @@ func TestWindowsPlaybackUsesSeparateCodecCompatibleCache(t *testing.T) {
 	const episodeID = "710000000000001"
 	legacy := episodeCachePathForPlatform("/tmp", episodeID, DefaultVideoQuality, false)
 	windows := episodeCachePathForPlatform("/tmp", episodeID, DefaultVideoQuality, true)
-	if legacy == windows || !strings.Contains(windows, "windows_compat") {
+	if legacy == windows || !strings.Contains(windows, "windows_compat_transcoded") {
 		t.Fatalf("Windows cache = %q, legacy cache = %q", windows, legacy)
 	}
 	legacyHLS := hlsCacheDirForPlatform("/tmp", episodeID, DefaultVideoQuality, false)
 	windowsHLS := hlsCacheDirForPlatform("/tmp", episodeID, DefaultVideoQuality, true)
-	if legacyHLS == windowsHLS || !strings.Contains(windowsHLS, "windows_compat") {
+	if legacyHLS == windowsHLS || !strings.Contains(windowsHLS, "windows_compat_transcoded") {
 		t.Fatalf("Windows HLS cache = %q, legacy cache = %q", windowsHLS, legacyHLS)
 	}
 }
@@ -200,6 +200,44 @@ func TestWindowsH264PreferenceRequiresMissingHEVCDecoder(t *testing.T) {
 				t.Fatalf("shouldUseWindowsH264Preference(%t, %t) = %t, want %t", tt.windows, tt.hevc, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWindowsHEVCTranscodeOnlyWhenSystemDecoderMissing(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		codec   string
+		windows bool
+		hevc    bool
+		want    bool
+	}{
+		{name: "HEVC without system decoder", codec: "hvc1.2.4.L153.B0", windows: true, want: true},
+		{name: "HEVC extension installed", codec: "hev1.1.6.L120.B0", windows: true, hevc: true},
+		{name: "H.264 stream", codec: "avc1.640028", windows: true, want: false},
+		{name: "other platform", codec: "hevc", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldTranscodeHEVCForWindows(tt.codec, tt.windows, tt.hevc); got != tt.want {
+				t.Fatalf("shouldTranscodeHEVCForWindows(%q, %t, %t) = %t, want %t", tt.codec, tt.windows, tt.hevc, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHEVCCompatibilityDimensionsFitMediaFoundationFallback(t *testing.T) {
+	for _, tt := range []struct {
+		width, height int
+		wantWidth     int
+		wantHeight    int
+	}{
+		{width: 1920, height: 1080, wantWidth: 720, wantHeight: 406},
+		{width: 1080, height: 1920, wantWidth: 324, wantHeight: 576},
+		{width: 640, height: 480, wantWidth: 640, wantHeight: 480},
+	} {
+		width, height := hevcCompatibilityDimensions(tt.width, tt.height)
+		if width != tt.wantWidth || height != tt.wantHeight {
+			t.Fatalf("hevcCompatibilityDimensions(%d, %d) = %d×%d, want %d×%d", tt.width, tt.height, width, height, tt.wantWidth, tt.wantHeight)
+		}
 	}
 }
 

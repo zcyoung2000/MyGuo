@@ -826,7 +826,7 @@ func (ms *MediaServer) serveEpisodeFile(w http.ResponseWriter, r *http.Request, 
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
-func ffmpegDownloadArgs(streamURL, audioURL, keyHex string, maxSeconds int) []string {
+func ffmpegDownloadArgs(streamURL, audioURL, keyHex string, maxSeconds int, transcodeHEVC bool) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
 
 	input := func(mediaURL string) {
@@ -844,7 +844,12 @@ func ffmpegDownloadArgs(streamURL, audioURL, keyHex string, maxSeconds int) []st
 	if maxSeconds > 0 {
 		args = append(args, "-t", strconv.Itoa(maxSeconds))
 	}
-	return append(args, "-c", "copy", "-f", "mp4", "-movflags", "+faststart")
+	if transcodeHEVC {
+		args = appendHEVCCompatibilityTranscodeArgs(args)
+	} else {
+		args = append(args, "-c", "copy")
+	}
+	return append(args, "-f", "mp4", "-movflags", "+faststart")
 }
 
 func extractFirstFrame(ctx context.Context, sourcePath, destPath string) error {
@@ -966,7 +971,7 @@ func (ms *MediaServer) downloadAndDecrypt(ctx context.Context, episodeID, qualit
 	}
 
 	// Build ffmpeg command with stream copy (CENC decryption without re-encoding).
-	args := append(ffmpegDownloadArgs(stream.URL, pb.AudioURL, keyHex, 0), tmpPath)
+	args := append(ffmpegDownloadArgs(stream.URL, pb.AudioURL, keyHex, 0, transcodeHEVCForCurrentPlatform(stream.Codec)), tmpPath)
 
 	ffmpegPath, err := ffmpegCommand()
 	if err != nil {
