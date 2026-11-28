@@ -88,16 +88,34 @@ func (a *App) Render(c *ui.Context) {
 	}
 	shell := ui.Box(c.Key("app-shell")).Fill()
 	shell.Children(func() {
-		if a.playerFullscreen && a.hostedScene() {
-			a.renderBody(c)
-			return
-		}
-		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().OnChange(func() { a.SetSidebarWidth(width) })
+		ui.Column(c.Key("app-shell-layout")).Fill().MinWidth(0).MinHeight(0).Children(func() {
+			if a.playerFullscreen && a.hostedScene() {
+				a.renderBody(c)
+				return
+			}
+			bar := c.TitleBar()
+			if height := windowDragRegionHeight(bar); height > 0 {
+				ui.Row(c.Key("window-drag-region")).Label("拖动窗口").FillWidth().Height(height).
+					Padding(0, bar.Right, 0, bar.Left).DragWindow()
+			}
+			ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).
+				Grow(1).FillWidth().MinHeight(0).OnChange(func() { a.SetSidebarWidth(width) })
+		})
 	})
 	prefs := c.Preferences()
 	if c.Vibrancy() && !prefs.ReduceTransparency && !prefs.HighContrast && !a.hostedScene() && !a.playerFixture {
 		shell.Effect(sidebarBleedEffect{width: width})
 	}
+}
+
+func windowDragRegionHeight(bar ui.TitleBar) float32 {
+	if bar.Left > 0 || bar.Right <= 0 {
+		return 0
+	}
+	if bar.Height > 32 {
+		return bar.Height
+	}
+	return 32
 }
 
 // sidebarTopInset is the room the sidebar keeps above its content for the
