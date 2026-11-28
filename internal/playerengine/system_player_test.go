@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/avkit"
@@ -18,6 +19,13 @@ type fakeSystemVideo struct {
 	muted        bool
 	closes       int
 }
+
+type fakePiPWindow struct{ invalidations int }
+
+func (w *fakePiPWindow) Close()                 {}
+func (w *fakePiPWindow) Invalidate()            { w.invalidations++ }
+func (w *fakePiPWindow) OnClosed(func()) func() { return func() {} }
+func (w *fakePiPWindow) Show()                  {}
 
 func (v *fakeSystemVideo) play()          { v.check(); v.s.Playing = true }
 func (v *fakeSystemVideo) pause()         { v.check(); v.s.Playing = false }
@@ -186,6 +194,41 @@ func TestSystemPlayerDefersStartupSeekUntilAFrameIsReady(t *testing.T) {
 	}
 }
 
+func TestSystemPlayerKeepsWakingPiPUntilFirstFrame(t *testing.T) {
+	v := &fakeSystemVideo{check: func() {}}
+	p := newSystemPlayer(func(string) (systemVideo, error) { return v, nil }, func(fn func()) { fn() })
+	window := &fakePiPWindow{}
+	p.pip = window
+
+	var scheduled []func()
+	p.after = func(delay time.Duration, fn func()) *time.Timer {
+		if delay != pipFrameWakeInterval {
+			t.Fatalf("PiP wake interval = %v", delay)
+		}
+		scheduled = append(scheduled, fn)
+		return nil
+	}
+	if err := p.Load("pip episode"); err != nil {
+		t.Fatal(err)
+	}
+	if window.invalidations != 1 || len(scheduled) != 1 {
+		t.Fatalf("initial PiP state: invalidations=%d scheduled=%d", window.invalidations, len(scheduled))
+	}
+
+	firstWake := scheduled[0]
+	firstWake()
+	if window.invalidations != 2 || len(scheduled) != 2 {
+		t.Fatalf("PiP stopped waking before the first frame: invalidations=%d scheduled=%d", window.invalidations, len(scheduled))
+	}
+
+	v.s.Ready = true
+	secondWake := scheduled[1]
+	secondWake()
+	if window.invalidations != 2 || len(scheduled) != 2 {
+		t.Fatalf("PiP kept waking after its first frame: invalidations=%d scheduled=%d", window.invalidations, len(scheduled))
+	}
+}
+
 func TestSystemPiPButtonsReportUserIntentWithoutWaitingForAPoll(t *testing.T) {
 	v := &fakeSystemVideo{check: func() {}, s: avkit.Status{Ready: true}}
 	p := newSystemPlayer(func(string) (systemVideo, error) { return v, nil }, func(fn func()) { fn() })
@@ -210,5 +253,54 @@ func TestSystemPiPButtonsReportUserIntentWithoutWaitingForAPoll(t *testing.T) {
 	p.togglePiPPlayback()
 	if len(intents) != 2 {
 		t.Fatal("closed PiP reported another user action")
+	}
+}
+
+func TestPiPControlsStayCompactAndExposePlaybackActions(t *testing.T) {
+	playing := false
+	playbackToggles := 0
+	returnedToMain := 0
+	view := func(c *ui.Context) {
+		ui.Box(c).Fill().Background(ui.RGB(0, 0, 0)).Children(func() {
+			renderPiPControls(c, playing, func() {
+				playing = !playing
+				playbackToggles++
+			}, func() { returnedToMain++ })
+		})
+	}
+	tt := ui.NewTester(view, pipWindowMinWidth, pipWindowMinHeight)
+
+	play, ok := tt.Find("继续播放")
+	if !ok {
+		t.Fatal("PiP is missing its accessible play action")
+	}
+	back, ok := tt.Find("返回主窗口")
+	if !ok {
+		t.Fatal("PiP is missing its accessible return action")
+	}
+	if play.X < 0 || play.Y < 0 || play.X+play.W > pipWindowMinWidth || play.Y+play.H > pipWindowMinHeight {
+		t.Fatalf("play control is outside the minimum PiP window: %+v", play)
+	}
+	if back.X < 0 || back.Y < 0 || back.X+back.W > pipWindowMinWidth || back.Y+back.H > pipWindowMinHeight {
+		t.Fatalf("return control is outside the minimum PiP window: %+v", back)
+	}
+	if back.X < play.X+play.W {
+		t.Fatalf("controls overlap: play=%+v return=%+v", play, back)
+	}
+	if err := tt.Click("继续播放"); err != nil {
+		t.Fatal(err)
+	}
+	if !playing || playbackToggles != 1 {
+		t.Fatal("play action did not toggle playback")
+	}
+	tt.Frame()
+	if _, ok := tt.Find("暂停播放"); !ok {
+		t.Fatal("playing state does not expose the pause action")
+	}
+	if err := tt.Click("返回主窗口"); err != nil {
+		t.Fatal(err)
+	}
+	if returnedToMain != 1 {
+		t.Fatal("return action did not activate")
 	}
 }

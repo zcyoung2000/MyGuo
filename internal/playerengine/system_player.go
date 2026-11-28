@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -21,14 +22,24 @@ type systemVideo interface {
 	close()
 }
 
+type pipWindow interface {
+	Close()
+	Invalidate()
+	OnClosed(func()) func()
+	Show()
+}
+
 // All mutable fields belong to the UI thread, including Load and Close. Never
 // hold an actor lock while waiting for it; application shutdown keeps the UI
 // loop running until the controller has saved its clock and closed its players.
 type systemPlayer struct {
 	open           func(string) (systemVideo, error)
 	dispatch       func(func())
+	after          func(time.Duration, func()) *time.Timer
 	video          systemVideo
-	pip            *mygo.Window
+	pip            pipWindow
+	pipWakeTimer   *time.Timer
+	pipWakeVersion uint64
 	closed         bool
 	rate           float64
 	volume         float64
@@ -38,8 +49,50 @@ type systemPlayer struct {
 	playbackIntent func(bool)
 }
 
+const (
+	pipFrameWakeInterval = 250 * time.Millisecond
+	pipWindowWidth       = 400
+	pipWindowHeight      = 225
+	pipWindowMinWidth    = 240
+	pipWindowMinHeight   = 160
+)
+
 func newSystemPlayer(open func(string) (systemVideo, error), dispatch func(func())) *systemPlayer {
-	return &systemPlayer{open: open, dispatch: dispatch, rate: 1, volume: 1}
+	return &systemPlayer{open: open, dispatch: dispatch, after: time.AfterFunc, rate: 1, volume: 1}
+}
+
+func (p *systemPlayer) stopPiPFrameWake() {
+	p.pipWakeVersion++
+	if p.pipWakeTimer != nil {
+		p.pipWakeTimer.Stop()
+		p.pipWakeTimer = nil
+	}
+}
+
+func (p *systemPlayer) wakePiPFrame(version uint64) {
+	if p.closed || p.pip == nil || p.video == nil || p.pipWakeVersion != version {
+		return
+	}
+	status := p.video.snapshot()
+	if status.Ready || status.Error != "" {
+		p.pipWakeTimer = nil
+		return
+	}
+	p.pip.Invalidate()
+	p.pipWakeTimer = p.after(pipFrameWakeInterval, func() {
+		p.dispatch(func() { p.wakePiPFrame(version) })
+	})
+}
+
+func (p *systemPlayer) beginPiPFrameWake() {
+	p.stopPiPFrameWake()
+	if p.pip == nil || p.video == nil || p.closed {
+		return
+	}
+	version := p.pipWakeVersion
+	p.pipWakeTimer = p.after(pipFrameWakeInterval, func() {
+		p.dispatch(func() { p.wakePiPFrame(version) })
+	})
 }
 
 func (p *systemPlayer) NativeView() uintptr { return 0 }
@@ -61,6 +114,7 @@ func (p *systemPlayer) Load(url string) (err error) {
 		if p.closed {
 			return
 		}
+		p.stopPiPFrameWake()
 		if p.video != nil {
 			p.video.close()
 			p.video = nil
@@ -75,6 +129,9 @@ func (p *systemPlayer) Load(url string) (err error) {
 		}
 		if p.pip != nil {
 			p.pip.Invalidate()
+			if err == nil {
+				p.beginPiPFrameWake()
+			}
 		}
 	})
 	return
@@ -126,6 +183,23 @@ func (p *systemPlayer) togglePiPPlayback() {
 		p.playbackIntent(paused)
 	}
 }
+
+func renderPiPControls(c *ui.Context, playing bool, togglePlayback, returnToMain func()) {
+	playbackLabel := "继续播放"
+	playbackGlyph := "▶"
+	if playing {
+		playbackLabel = "暂停播放"
+		playbackGlyph = "Ⅱ"
+	}
+	ui.Row(c.Key("pip-controls")).Absolute().Right(12).Bottom(12).Gap(6).
+		Padding(5).Radius(999).Background(ui.RGBA(18, 18, 18, .92)).Children(func() {
+		ui.Button(c, playbackGlyph).Label(playbackLabel).Tooltip(playbackLabel).
+			Size(40, 36).Radius(999).OnClick(togglePlayback)
+		ui.Button(c, "×").Label("返回主窗口").Tooltip("返回主窗口").
+			Size(40, 36).Radius(999).OnClick(returnToMain)
+	})
+}
+
 func (p *systemPlayer) Configure(rate, volume float64, muted bool, fit string) {
 	p.dispatch(func() {
 		p.rate, p.volume, p.muted = rate, volume, muted
@@ -176,25 +250,18 @@ func (p *systemPlayer) TogglePictureInPicture(ctx context.Context) (err error) {
 		// window hosts the same player, preserving its source and clock.
 		origin := mygo.FocusedWindow()
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: "myguo · 画中画", Width: 360, Height: 520,
-			MinWidth: 240, MinHeight: 180, AlwaysOnTop: true,
+			Title: "myguo · 画中画", Width: pipWindowWidth, Height: pipWindowHeight,
+			MinWidth: pipWindowMinWidth, MinHeight: pipWindowMinHeight, AlwaysOnTop: true,
 			SkipTaskbar: true, DisableMinimize: true, DisableMaximize: true,
 			BackgroundColor: "#000000", Hidden: true,
 			Content: ui.View(func(c *ui.Context) {
-				ui.Column(c).Fill().Background(ui.RGB(0, 0, 0)).Children(func() {
+				ui.Box(c).Fill().Background(ui.RGB(0, 0, 0)).Children(func() {
 					if p.video != nil && !p.closed {
-						ui.Video(c.Key("pip-video"), p.video.player()).Grow(1).FillWidth().Fit(ui.Contain)
-						ui.Row(c).FillWidth().Children(func() {
-							label := "播放"
-							if p.video.snapshot().Playing {
-								label = "暂停"
+						ui.Video(c.Key("pip-video"), p.video.player()).Fill().Fit(ui.Contain)
+						renderPiPControls(c, p.video.snapshot().Playing, p.togglePiPPlayback, func() {
+							if p.pip != nil {
+								p.pip.Close()
 							}
-							ui.Button(c, label).OnClick(p.togglePiPPlayback)
-							ui.Button(c, "返回主窗口").OnClick(func() {
-								if p.pip != nil {
-									p.pip.Close()
-								}
-							})
 						})
 					}
 				})
@@ -203,6 +270,7 @@ func (p *systemPlayer) TogglePictureInPicture(ctx context.Context) (err error) {
 		p.pip = win
 		win.OnClosed(func() {
 			if p.pip == win {
+				p.stopPiPFrameWake()
 				p.pip = nil
 			}
 			if !p.closed && origin != nil {
@@ -221,6 +289,7 @@ func (p *systemPlayer) Close() error {
 		if p.closed {
 			return
 		}
+		p.stopPiPFrameWake()
 		p.closed = true
 		p.playbackIntent = nil
 		if p.pip != nil {
