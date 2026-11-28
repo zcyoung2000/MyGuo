@@ -698,7 +698,10 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 							AlignItems(ui.Center).Justify(ui.Center).
 							Role(ui.RoleButton).Label("清空搜索")
 						if histClear.Clicked() {
-							a.SetHistoryQuery("")
+							// Render holds a.mu; commit this click under the existing lock.
+							a.historyQuery = ""
+							a.refreshVisibleLibraryLocked(libraryHistory)
+							a.invalidate()
 						}
 						histClear.Children(func() {
 							ui.Icon(c, closeIcon).Size(10, 10).TextColor(ui.RGBA(255, 255, 255, 0.85))

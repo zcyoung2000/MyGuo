@@ -1034,8 +1034,27 @@ func (s *Service) syncRemoteLikes(ctx context.Context, generation uint64) error 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	items, err := s.fetchAccountLikes(ctx)
-	if err != nil {
+	var incomplete *incompleteLikesError
+	if err != nil && !errors.As(err, &incomplete) {
 		return err
+	}
+	if incomplete != nil {
+		local, localErr := s.store.GetLikes()
+		if localErr != nil {
+			return errors.Join(err, localErr)
+		}
+		seen := make(map[string]bool, len(items))
+		for _, item := range items {
+			seen[item.SeriesID+"\x1f"+item.EpisodeID] = true
+		}
+		for _, item := range local {
+			key := item.SeriesID + "\x1f" + item.EpisodeID
+			if incomplete.seriesIDs[item.SeriesID] && !seen[key] {
+				items = append(items, item)
+				seen[key] = true
+			}
+		}
+		log.Printf("[likes] retained local entries for %d incomplete remote series rows", len(incomplete.seriesIDs))
 	}
 	s.likeMu.Lock()
 	defer s.likeMu.Unlock()
@@ -1057,6 +1076,12 @@ func (s *Service) syncRemoteLikes(ctx context.Context, generation uint64) error 
 	return nil
 }
 
+type incompleteLikesError struct{ seriesIDs map[string]bool }
+
+func (e *incompleteLikesError) Error() string {
+	return fmt.Sprintf("点赞接口有 %d 条记录缺少分集 ID", len(e.seriesIDs))
+}
+
 func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
@@ -1064,6 +1089,7 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 	}
 
 	var results []LikeItem
+	incompleteSeriesIDs := make(map[string]bool)
 	seen := make(map[string]bool)
 	offset := 0
 	for page := 0; page < 10; page++ {
@@ -1088,7 +1114,8 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 			}
 			key := seriesID + "\x1f" + episodeID
 			if seriesID != "" && episodeID == "" {
-				return nil, fmt.Errorf("点赞接口返回的分集缺少视频 ID")
+				incompleteSeriesIDs[seriesID] = true
+				continue
 			}
 			if seriesID == "" || title == "" || seen[key] {
 				continue
@@ -1111,6 +1138,9 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 			nextOffset = offset + len(res.Data.MixedDataList)
 		}
 		if !(res.HasMore || res.Data.HasMore) {
+			if len(incompleteSeriesIDs) > 0 {
+				return results, &incompleteLikesError{seriesIDs: incompleteSeriesIDs}
+			}
 			return results, nil
 		}
 		if len(res.Data.MixedDataList) == 0 || nextOffset <= offset {

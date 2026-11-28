@@ -55,6 +55,7 @@ type NotificationArgs struct {
 
 var (
 	window             *mygo.Window
+	nativeStateMu      sync.RWMutex
 	scrollHandlerMu    sync.RWMutex
 	scrollHandler      func(ScrollGesturePayload)
 	feedScrollCapture  atomic.Bool
@@ -76,6 +77,14 @@ func Init() {
 }
 
 func Cleanup() {
+	StopScrollGestureMonitor()
+	nativeStateMu.Lock()
+	window = nil
+	mediaCommandHandler = nil
+	navigateHandler = nil
+	pictureInPictureHandler = nil
+	nativeStateMu.Unlock()
+	SetScrollGestureHandler(nil)
 	powerMu.Lock()
 	if powerRelease != nil {
 		powerRelease()
@@ -86,9 +95,23 @@ func Cleanup() {
 	mygo.NowPlaying.Clear()
 }
 
+func currentNativeWindow() *mygo.Window {
+	nativeStateMu.RLock()
+	defer nativeStateMu.RUnlock()
+	return window
+}
+
+func nativeHandlers() (func(MediaCommandPayload), func(NavigatePayload), func()) {
+	nativeStateMu.RLock()
+	defer nativeStateMu.RUnlock()
+	return mediaCommandHandler, navigateHandler, pictureInPictureHandler
+}
+
 func initNowPlaying() {
 	mygo.NowPlaying.OnCommand(func(cmd mygo.MediaCommand, pos time.Duration) {
-		if window == nil {
+		win := currentNativeWindow()
+		mediaHandler, _, _ := nativeHandlers()
+		if win == nil {
 			return
 		}
 		var action string
@@ -106,8 +129,8 @@ func initNowPlaying() {
 		default:
 			action = "toggle"
 		}
-		if mediaCommandHandler != nil {
-			mediaCommandHandler(MediaCommandPayload{
+		if mediaHandler != nil {
+			mediaHandler(MediaCommandPayload{
 				Command:  action,
 				Position: pos.Seconds(),
 			})
@@ -172,12 +195,6 @@ func setupAppMenu() {
 						emitNavigate("reservations", "")
 					},
 				},
-				{
-					Label: "短剧详情",
-					Click: func(_ *mygo.MenuItem, _ *mygo.Window) {
-						emitNavigate("detail", "7699823871876156441")
-					},
-				},
 				mygo.Separator(),
 				{
 					Label:       "偏好设置",
@@ -228,13 +245,7 @@ func setupAppMenu() {
 		{
 			Label: "视图",
 			Submenu: []*mygo.MenuItem{
-				{Role: mygo.RoleReload},
-				{Role: mygo.RoleForceReload},
 				{Role: mygo.RoleToggleDevTools},
-				mygo.Separator(),
-				{Role: mygo.RoleResetZoom},
-				{Role: mygo.RoleZoomIn},
-				{Role: mygo.RoleZoomOut},
 			},
 		},
 		{Role: mygo.RoleWindowMenu},
@@ -249,21 +260,25 @@ func setupAppMenu() {
 }
 
 func emitMediaCommand(cmd string, pos float64) {
-	if window == nil {
+	win := currentNativeWindow()
+	mediaHandler, _, _ := nativeHandlers()
+	if win == nil {
 		return
 	}
-	if mediaCommandHandler != nil {
-		mediaCommandHandler(MediaCommandPayload{Command: cmd, Position: pos})
+	if mediaHandler != nil {
+		mediaHandler(MediaCommandPayload{Command: cmd, Position: pos})
 		return
 	}
 }
 
 func emitNavigate(view, seriesID string) {
 	log.Printf("[navigate] target=%s series=%s", view, seriesID)
-	if window == nil {
+	win := currentNativeWindow()
+	_, navigateHandler, _ := nativeHandlers()
+	if win == nil {
 		return
 	}
-	window.Focus()
+	win.Focus()
 	if navigateHandler != nil {
 		navigateHandler(NavigatePayload{View: view, SeriesID: seriesID})
 		return
@@ -366,7 +381,7 @@ func ShowConfirmDialog(args ConfirmDialogArgs) (bool, error) {
 	}
 
 	res, err := mygo.Dialog.Message(mygo.MessageOptions{
-		Parent:        window,
+		Parent:        currentNativeWindow(),
 		Type:          msgType,
 		Title:         args.Title,
 		Message:       args.Message,
@@ -390,8 +405,8 @@ func SendNotification(args NotificationArgs) (bool, error) {
 		Body:  args.Body,
 	})
 	n.OnClick(func() {
-		if window != nil {
-			window.Focus()
+		if win := currentNativeWindow(); win != nil {
+			win.Focus()
 			if args.SeriesID != "" {
 				emitNavigate("detail", args.SeriesID)
 			}
@@ -407,13 +422,18 @@ func TogglePictureInPicture() {
 	if !mygo.App.IsReady() {
 		return
 	}
-	if pictureInPictureHandler != nil {
-		pictureInPictureHandler()
+	_, _, handler := nativeHandlers()
+	if handler != nil {
+		handler()
 		return
 	}
 }
 
-func SetPictureInPictureHandler(fn func()) { pictureInPictureHandler = fn }
+func SetPictureInPictureHandler(fn func()) {
+	nativeStateMu.Lock()
+	pictureInPictureHandler = fn
+	nativeStateMu.Unlock()
+}
 
 func SetScrollGestureHandler(handler func(ScrollGesturePayload)) {
 	scrollHandlerMu.Lock()
@@ -431,18 +451,28 @@ func emitScrollGesture(payload ScrollGesturePayload) {
 }
 
 func SetWindow(win *mygo.Window) {
+	nativeStateMu.Lock()
+	defer nativeStateMu.Unlock()
 	window = win
 }
 
 func ToggleWindowFullscreen() {
-	if window != nil {
-		window.ToggleFullScreen()
+	if win := currentNativeWindow(); win != nil {
+		win.ToggleFullScreen()
 	}
 }
 
-func SetMediaCommandHandler(fn func(MediaCommandPayload)) { mediaCommandHandler = fn }
+func SetMediaCommandHandler(fn func(MediaCommandPayload)) {
+	nativeStateMu.Lock()
+	mediaCommandHandler = fn
+	nativeStateMu.Unlock()
+}
 
-func SetNavigateHandler(fn func(NavigatePayload)) { navigateHandler = fn }
+func SetNavigateHandler(fn func(NavigatePayload)) {
+	nativeStateMu.Lock()
+	navigateHandler = fn
+	nativeStateMu.Unlock()
+}
 
 func SetFeedScrollCapture(enabled bool) {
 	feedScrollCapture.Store(enabled)

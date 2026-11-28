@@ -9,6 +9,13 @@ import (
 	"unicode/utf16"
 )
 
+func TestPreferencesKeepQuarterSpeed(t *testing.T) {
+	p := (Preferences{Rate: 0.25}).Normalized()
+	if p.Rate != 0.25 {
+		t.Fatalf("normalized rate = %v, want 0.25", p.Rate)
+	}
+}
+
 func TestLegacyPreferencesImportDoesNotLoseDisabledAndZeroValues(t *testing.T) {
 	p := ImportLegacyPreferences(map[string]string{"hongguo_danmaku_enabled": "0", "hongguo_danmaku_outline": "0", "hongguo_danmaku_opacity": "0.35", "hongguo_danmaku_font_size": "27", "hongguo_danmaku_font_weight": "900", "hongguo_danmaku_rows": "0"})
 	if p.Danmaku.Enabled || p.Danmaku.Outline || p.Danmaku.Opacity != .35 || p.Danmaku.FontSize != 27 || p.Danmaku.FontWeight != 900 || p.Danmaku.Rows != 0 {

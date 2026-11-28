@@ -96,6 +96,9 @@ func (stream *hlsStream) finish(err error) {
 
 func (ms *MediaServer) HLSMasterURL(episodeID, seriesID string, num int, quality string) string {
 	values := urlValuesForEpisode(seriesID, num)
+	if ms.token != "" {
+		values.Set("token", ms.token)
+	}
 	return fmt.Sprintf(
 		"http://127.0.0.1:%d/hls/%s/%s/master.m3u8?%s",
 		ms.port,
@@ -106,12 +109,16 @@ func (ms *MediaServer) HLSMasterURL(episodeID, seriesID string, num int, quality
 }
 
 func (ms *MediaServer) HLSPlaylistURL(episodeID, seriesID string, num int, quality string) string {
+	values := urlValuesForEpisode(seriesID, num)
+	if ms.token != "" {
+		values.Set("token", ms.token)
+	}
 	return fmt.Sprintf(
 		"http://127.0.0.1:%d/hls/%s/%s/index.m3u8?%s",
 		ms.port,
 		urlPathEscape(episodeID),
 		normalizeVideoQuality(quality),
-		urlValuesForEpisode(seriesID, num).Encode(),
+		values.Encode(),
 	)
 }
 
@@ -630,6 +637,9 @@ func (ms *MediaServer) serveHLSMasterWithH264Preference(w http.ResponseWriter, r
 	lines := []string{"#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"}
 	seen := make(map[string]bool)
 	variantValues := urlValuesForEpisode(seriesID, number)
+	if ms.token != "" {
+		variantValues.Set("token", ms.token)
+	}
 	requestedDefinition := definitionNumber(normalizeVideoQuality(requestedQuality))
 	if resolveErr == nil && pb != nil {
 		streams := append([]model.Stream(nil), preferredVideoStreams(pb.Streams, preferH264)...)
@@ -654,11 +664,11 @@ func (ms *MediaServer) serveHLSMasterWithH264Preference(w http.ResponseWriter, r
 			if transcodeHEVCForCurrentPlatform(stream.Codec) {
 				width, height := hevcCompatibilityDimensions(stream.Width, stream.Height)
 				if width > 0 && height > 0 {
-					resolution = fmt.Sprintf(",RESOLUTION=%d:%d", width, height)
+					resolution = fmt.Sprintf(",RESOLUTION=%dx%d", width, height)
 				}
 				codec = "mpeg4"
 			} else if stream.Width > 0 && stream.Height > 0 {
-				resolution = fmt.Sprintf(",RESOLUTION=%d:%d", stream.Width, stream.Height)
+				resolution = fmt.Sprintf(",RESOLUTION=%dx%d", stream.Width, stream.Height)
 			}
 			codecs := hlsCodecAttribute(codec, pb.AudioURL != "")
 			if codecs != "" {
@@ -800,8 +810,57 @@ admission:
 	// EVENT streams are generated ahead of playback. Start at the episode's
 	// beginning, not at a live-edge offset chosen from the growing playlist.
 	data = []byte(strings.Replace(string(data), "#EXTM3U\n", "#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n", 1))
+	data = appendHLSToken(data, ms.token)
 	writeHLSResponse(w, http.StatusOK, data)
 	return true
+}
+
+func appendHLSToken(data []byte, token string) []byte {
+	if token == "" {
+		return data
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			lines[i] = appendHLSTagURIToken(line, token)
+			continue
+		}
+		lines[i] = appendHLSURLToken(line, token)
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func appendHLSTagURIToken(line, token string) string {
+	const key = `URI="`
+	start := strings.Index(line, key)
+	if start < 0 {
+		return line
+	}
+	valueStart := start + len(key)
+	end := strings.IndexByte(line[valueStart:], '"')
+	if end < 0 {
+		return line
+	}
+	valueEnd := valueStart + end
+	return line[:valueStart] + appendHLSURLToken(line[valueStart:valueEnd], token) + line[valueEnd:]
+}
+
+func appendHLSURLToken(value, token string) string {
+	if token == "" {
+		return value
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return value
+	}
+	query := parsed.Query()
+	query.Set("token", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (ms *MediaServer) serveHLSSegment(w http.ResponseWriter, r *http.Request, episodeID, quality, name string) {

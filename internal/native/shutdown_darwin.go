@@ -2,9 +2,9 @@ package native
 
 import (
 	"sync"
-	"unsafe"
 
 	"github.com/ebitengine/purego"
+	"github.com/ebitengine/purego/objc"
 )
 
 var shutdownRunLoop = sync.OnceValue(func() func() {
@@ -12,14 +12,12 @@ var shutdownRunLoop = sync.OnceValue(func() func() {
 	if err != nil {
 		panic(err)
 	}
-	mode, err := purego.Dlsym(lib, "kCFRunLoopDefaultMode")
-	if err != nil {
-		panic(err)
-	}
 	var run func(uintptr, float64, bool) int32
 	purego.RegisterLibFunc(&run, lib, "CFRunLoopRunInMode")
-	defaultMode := *(*uintptr)(unsafe.Pointer(mode))
-	return func() { run(defaultMode, .01, true) }
+	defaultMode := objc.ID(objc.GetClass("NSString")).Send(
+		objc.RegisterName("stringWithUTF8String:"), "kCFRunLoopDefaultMode\x00",
+	).Send(objc.RegisterName("retain"))
+	return func() { run(uintptr(defaultMode), .01, true) }
 })
 
 func shutdownStep() { shutdownRunLoop()() }

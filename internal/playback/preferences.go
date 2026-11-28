@@ -43,9 +43,6 @@ func (p Preferences) Normalized() Preferences {
 	}
 	p.Version = 1
 	p.Rate = finiteClamp(p.Rate, 0.25, 2, 1)
-	if p.Rate == 0.25 {
-		p.Rate = 1
-	}
 	p.Volume = finiteClamp(p.Volume, 0, 1, 1)
 	if p.Fit != "cover" {
 		p.Fit = "contain"

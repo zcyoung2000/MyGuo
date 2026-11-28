@@ -3,9 +3,13 @@ package media
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net"
@@ -88,9 +92,10 @@ type MediaServer struct {
 	client                   *hgapi.Client
 	cacheDir                 string
 	port                     int
+	token                    string
 	server                   *http.Server
-	lockMap                  sync.Map // episodeID -> *sync.Mutex
-	imgLocks                 sync.Map // hexHash -> *sync.Mutex
+	lockMap                  keyedMutexes
+	imgLocks                 keyedMutexes
 	pbCacheMu                sync.RWMutex
 	pbCache                  map[string]playbackCacheItem
 	pbLoadMu                 sync.Mutex
@@ -138,6 +143,14 @@ type MediaServer struct {
 	prefetchFailed           atomic.Int64
 	prefetchCanceled         atomic.Int64
 	prefetchDropped          atomic.Int64
+}
+
+type keyedMutexes struct{ locks [256]sync.Mutex }
+
+func (m *keyedMutexes) forKey(key string) *sync.Mutex {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(key))
+	return &m.locks[hash.Sum32()%uint32(len(m.locks))]
 }
 
 type playbackCacheItem struct {
@@ -453,8 +466,7 @@ func (ms *MediaServer) PlaybackQualitiesForSession(ctx context.Context, episodeI
 }
 
 func (ms *MediaServer) lockFor(episodeID, quality string) *sync.Mutex {
-	actualLock, _ := ms.lockMap.LoadOrStore(episodeID+"\x00"+normalizeVideoQuality(quality), &sync.Mutex{})
-	return actualLock.(*sync.Mutex)
+	return ms.lockMap.forKey(episodeID + "\x00" + normalizeVideoQuality(quality))
 }
 
 func (ms *MediaServer) observeMediaBytes(size int) {
@@ -553,6 +565,10 @@ func NewMediaServer(client *hgapi.Client) (*MediaServer, error) {
 }
 
 func newMediaServer(client *hgapi.Client, cacheDir string) (*MediaServer, error) {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, fmt.Errorf("generate media server token: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Join(cacheDir, "episodes"), 0755); err != nil {
 		return nil, err
 	}
@@ -574,6 +590,7 @@ func newMediaServer(client *hgapi.Client, cacheDir string) (*MediaServer, error)
 		client:             client,
 		cacheDir:           cacheDir,
 		port:               port,
+		token:              hex.EncodeToString(tokenBytes),
 		pbCache:            make(map[string]playbackCacheItem),
 		pbLoads:            make(map[string]*playbackLoad),
 		multiModel:         NewMultiVideoModelBatcher(client),
@@ -593,11 +610,18 @@ func newMediaServer(client *hgapi.Client, cacheDir string) (*MediaServer, error)
 	mux.HandleFunc("/img", ms.handleImage)
 	mux.HandleFunc("/poster", ms.handlePoster)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Write([]byte("OK"))
 	})
 
 	ms.server = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != fmt.Sprintf("127.0.0.1:%d", ms.port) {
+			http.Error(w, "invalid media host", http.StatusForbidden)
+			return
+		}
+		if r.URL.Path != "/health" && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(ms.token)) != 1 {
+			http.Error(w, "invalid media token", http.StatusForbidden)
+			return
+		}
 		root, done, err := ms.tasks.Acquire()
 		if err != nil {
 			http.Error(w, "media server closed", http.StatusServiceUnavailable)
@@ -718,6 +742,9 @@ func (ms *MediaServer) videoURL(episodeID, seriesID string, num int, quality, mo
 	values.Set("series_id", seriesID)
 	values.Set("num", strconv.Itoa(num))
 	values.Set("quality", normalizeVideoQuality(quality))
+	if ms.token != "" {
+		values.Set("token", ms.token)
+	}
 	if mode != "" {
 		values.Set("mode", mode)
 	}
@@ -725,7 +752,11 @@ func (ms *MediaServer) videoURL(episodeID, seriesID string, num int, quality, mo
 }
 
 func (ms *MediaServer) PosterURL(episodeID string) string {
-	return fmt.Sprintf("http://127.0.0.1:%d/poster?id=%s", ms.port, url.QueryEscape(episodeID))
+	values := url.Values{"id": {episodeID}}
+	if ms.token != "" {
+		values.Set("token", ms.token)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d/poster?%s", ms.port, values.Encode())
 }
 
 func normalizeImageURL(raw string) string {
@@ -738,7 +769,11 @@ func (ms *MediaServer) ImageURL(origURL string) string {
 		return ""
 	}
 	enc := base64.URLEncoding.EncodeToString([]byte(norm))
-	return fmt.Sprintf("http://127.0.0.1:%d/img?u=%s", ms.port, enc)
+	values := url.Values{"u": {enc}}
+	if ms.token != "" {
+		values.Set("token", ms.token)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d/img?%s", ms.port, values.Encode())
 }
 
 func (ms *MediaServer) handleVideo(w http.ResponseWriter, r *http.Request) {
@@ -1397,11 +1432,8 @@ var (
 		Timeout:       15 * time.Second,
 		CheckRedirect: validateImageRedirect,
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 60 * time.Second,
-			}).DialContext,
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           safePublicDialContext,
 			MaxIdleConns:          200,
 			MaxIdleConnsPerHost:   100,
 			IdleConnTimeout:       90 * time.Second,
@@ -1431,6 +1463,98 @@ func validateImageRedirect(req *http.Request, via []*http.Request) error {
 		return errors.New("image redirect target is not allowed")
 	}
 	return nil
+}
+
+func validatePublicURL(ctx context.Context, target *url.URL) error {
+	return validatePublicURLWithProxy(ctx, target, http.ProxyFromEnvironment)
+}
+
+func validatePublicURLWithProxy(ctx context.Context, target *url.URL, proxyFor func(*http.Request) (*url.URL, error)) error {
+	if target == nil || (target.Scheme != "http" && target.Scheme != "https") || target.Hostname() == "" {
+		return errors.New("invalid public URL")
+	}
+	if proxy, err := proxyFor(&http.Request{URL: target}); err != nil {
+		return err
+	} else if proxy != nil {
+		return nil
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, target.Hostname())
+	if err != nil {
+		return err
+	}
+	if len(ips) == 0 {
+		return errors.New("URL host has no addresses")
+	}
+	for _, item := range ips {
+		ip := item.IP
+		if ip == nil {
+			return errors.New("URL host resolved to an invalid address")
+		}
+		if !isPublicIP(ip) {
+			return errors.New("URL host resolved to a non-public IP address")
+		}
+	}
+	return nil
+}
+
+func isPublicIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if mapped := ip.To4(); mapped != nil {
+		ip = mapped
+	}
+	if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return false
+	}
+	return true
+}
+
+func safePublicDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if configuredProxyAddress(address) {
+		return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 60 * time.Second}).DialContext(ctx, network, address)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, item := range ips {
+		ip := item.IP
+		if !isPublicIP(ip) {
+			continue
+		}
+		conn, dialErr := (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 60 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("refusing to connect to a non-public IP address")
+}
+
+func configuredProxyAddress(address string) bool {
+	for _, name := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value == "" {
+			continue
+		}
+		proxyURL, err := url.Parse(value)
+		if err == nil && proxyURL.Host != "" && strings.EqualFold(proxyURL.Host, address) {
+			return true
+		}
+	}
+	return false
 }
 
 func serveFallback(w http.ResponseWriter) {
@@ -1468,7 +1592,6 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 		serveFallback(w)
 		return
 	}
-
 	hexHash := mediautil.ImageCacheKey(targetURL)
 	cacheJpg := mediautil.ImageCachePath(ms.cacheDir, targetURL)
 	releaseCachePin := ms.pinCacheFile(cacheJpg)
@@ -1484,8 +1607,7 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Lock per image to avoid concurrent duplicate downloads & conversion races
-	lockVal, _ := ms.imgLocks.LoadOrStore(hexHash, &sync.Mutex{})
-	mu := lockVal.(*sync.Mutex)
+	mu := ms.imgLocks.forKey(hexHash)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -1686,17 +1808,13 @@ func (ms *MediaServer) ClearCache() (int64, error) {
 		return 0, err
 	}
 	defer done()
-	// Serialize admission, stream creation and new file pins with removal.
-	// Existing writers/readers continue using their pinned files. Never wait
-	// for a conversion while holding these locks.
+	// Snapshot active files under the admission locks, then walk the cache
+	// without holding them. Each removal holds only the cache-pin lock so a new
+	// reader or writer cannot pin a file while it is being removed.
 	ms.feedPreloadMu.Lock()
-	defer ms.feedPreloadMu.Unlock()
 	ms.cachePinMu.Lock()
-	defer ms.cachePinMu.Unlock()
 	ms.progressiveMu.Lock()
-	defer ms.progressiveMu.Unlock()
 	ms.hlsMu.Lock()
-	defer ms.hlsMu.Unlock()
 
 	pinned := make(map[string]bool)
 	for path := range ms.cachePins {
@@ -1723,6 +1841,10 @@ func (ms *MediaServer) ClearCache() (int64, error) {
 			delete(ms.hlsStreams, key)
 		}
 	}
+	ms.hlsMu.Unlock()
+	ms.progressiveMu.Unlock()
+	ms.cachePinMu.Unlock()
+	ms.feedPreloadMu.Unlock()
 	var totalSize int64
 	err = filepath.Walk(ms.cacheDir, func(path string, info os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
@@ -1731,7 +1853,40 @@ func (ms *MediaServer) ClearCache() (int64, error) {
 		if err != nil {
 			return err
 		}
-		if pinned[path] {
+		ms.feedPreloadMu.Lock()
+		ms.cachePinMu.Lock()
+		ms.progressiveMu.Lock()
+		ms.hlsMu.Lock()
+		pathPinned := pinned[path]
+		if _, ok := ms.cachePins[path]; ok {
+			pathPinned = true
+		}
+		for _, stream := range ms.progressiveStreams {
+			if path == stream.tempPath || path == stream.finalPath {
+				pathPinned = true
+				break
+			}
+		}
+		for key, stream := range ms.hlsStreams {
+			if path == stream.dir || strings.HasPrefix(path, stream.dir+string(os.PathSeparator)) {
+				active := false
+				select {
+				case <-stream.done:
+				default:
+					active = true
+				}
+				if active || key == ms.feedPreloadCurrent || stream.hasRecentMediaRequest(time.Now()) || stream.retired != nil {
+					pathPinned = true
+				}
+				break
+			}
+		}
+		ms.hlsMu.Unlock()
+		ms.progressiveMu.Unlock()
+		ms.feedPreloadMu.Unlock()
+		defer ms.cachePinMu.Unlock()
+
+		if pathPinned {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -1900,7 +2055,15 @@ func (ms *MediaServer) evictTotalCache(pinnedFiles, activeHLS map[string]struct{
 		if total <= TotalCacheTargetBytes {
 			break
 		}
-		if err := os.Remove(entry.path); err == nil {
+		ms.cachePinMu.RLock()
+		_, pinnedNow := ms.cachePins[entry.path]
+		if pinnedNow {
+			ms.cachePinMu.RUnlock()
+			continue
+		}
+		err := os.Remove(entry.path)
+		ms.cachePinMu.RUnlock()
+		if err == nil {
 			total -= entry.size
 		}
 	}

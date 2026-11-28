@@ -96,6 +96,8 @@ func NewHostPicker(store StateStore) *HostPicker {
 }
 
 func (p *HostPicker) Configure(successGain, failurePenalty, maxHealth, minHealth, badThreshold int, cooldown, halfOpenInterval, staleAge time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if successGain > 0 {
 		p.successGain = successGain
 	}
@@ -133,6 +135,8 @@ func StaleAgeFromEnvironment() time.Duration {
 
 func (p *HostPicker) SetNow(now func() time.Time) {
 	if now != nil {
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		p.now = now
 	}
 }

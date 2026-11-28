@@ -132,7 +132,7 @@ func TestLikesMustRejectMissingList(t *testing.T) {
 	}
 }
 
-func TestLikesMustRejectMissingEpisodeIDWithoutErasingSnapshot(t *testing.T) {
+func TestLikesMustRetainLocalEntryWhenRemoteEpisodeIDIsMissing(t *testing.T) {
 	const seriesID = "710000000000001"
 	service, db := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"mixed_data_list": []any{
@@ -149,8 +149,8 @@ func TestLikesMustRejectMissingEpisodeIDWithoutErasingSnapshot(t *testing.T) {
 	}
 
 	err := service.syncRemoteLikes(context.Background(), service.currentLikeGeneration())
-	if err == nil {
-		t.Fatal("like response without a video ID was accepted")
+	if err != nil {
+		t.Fatalf("partial like response should sync while retaining incomplete series rows: %v", err)
 	}
 	items, err := db.GetLikes()
 	if err != nil {

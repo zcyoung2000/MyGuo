@@ -162,12 +162,17 @@ func (r nativePlaybackResolver) fetchPrimary(ctx context.Context, episodeID stri
 
 func (r nativePlaybackResolver) fetchFallback(ctx context.Context, fallbackURL string) (*playbackResolveResult, error) {
 	target, err := url.Parse(strings.TrimSpace(fallbackURL))
-	if err != nil || target.Scheme == "" || target.Host == "" {
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.User != nil {
 		return nil, errors.New("invalid fallback_api URL")
+	}
+	if r.http == nil {
+		if err := validatePublicURL(ctx, target); err != nil {
+			return nil, fmt.Errorf("fallback_api URL is not public: %w", err)
+		}
 	}
 	httpClient := r.http
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: playbackRaceTimeout}
+		httpClient = newSafeFallbackHTTPClient()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
@@ -198,6 +203,22 @@ func (r nativePlaybackResolver) fetchFallback(ctx context.Context, fallbackURL s
 		return nil, parseErr
 	}
 	return &playbackResolveResult{Playback: pb}, nil
+}
+
+func newSafeFallbackHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: playbackRaceTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many fallback redirects")
+			}
+			if req.URL == nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") || req.URL.User != nil || req.URL.Port() != "" {
+				return errors.New("invalid fallback redirect target")
+			}
+			return validatePublicURL(req.Context(), req.URL)
+		},
+		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: safePublicDialContext},
+	}
 }
 
 func (r nativePlaybackResolver) ResolvePlayback(ctx context.Context, episodeID string) (*playbackResolveResult, error) {

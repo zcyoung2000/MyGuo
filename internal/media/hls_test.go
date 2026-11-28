@@ -145,6 +145,9 @@ func TestWindowsHLSMasterOnlyOffersH264WhenAvailable(t *testing.T) {
 	if !strings.Contains(body, "1080p/index.m3u8") || !strings.Contains(body, "720p/index.m3u8") {
 		t.Fatalf("H.264 renditions are missing: %s", body)
 	}
+	if !strings.Contains(body, "RESOLUTION=1920x1080") || strings.Contains(body, "RESOLUTION=1920:1080") {
+		t.Fatalf("master resolution does not follow the HLS attribute format: %s", body)
+	}
 }
 
 func TestEstimatedHLSBandwidthIncludesSeparateAudio(t *testing.T) {
@@ -168,6 +171,25 @@ func TestHLSCodecAttributeAvoidsGuesses(t *testing.T) {
 	}
 	if got := hlsCodecAttribute("avc1.640028", true); got != "" {
 		t.Fatalf("video-only codec was emitted for muxed audio: %q", got)
+	}
+}
+
+func TestAppendHLSTokenCoversSegmentAndMapURIs(t *testing.T) {
+	playlist := []byte("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\nseg001.m4s\n")
+	got := string(appendHLSToken(playlist, "secret"))
+	if !strings.Contains(got, `URI="init.mp4?token=secret"`) || !strings.Contains(got, "seg001.m4s?token=secret") {
+		t.Fatalf("tokenized playlist = %q", got)
+	}
+}
+
+func TestAppendHLSURLTokenPreservesQueryAndIsIdempotent(t *testing.T) {
+	first := appendHLSURLToken("segment.m4s?quality=high&token=old", "secret")
+	second := appendHLSURLToken(first, "secret")
+	if first != "segment.m4s?quality=high&token=secret" {
+		t.Fatalf("tokenized URL = %q", first)
+	}
+	if second != first {
+		t.Fatalf("repeated token append = %q, want %q", second, first)
 	}
 }
 

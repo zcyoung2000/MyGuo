@@ -435,6 +435,10 @@ func (c *Controller) selectSlotWithQuality(card ipc.SeriesCard, number int, resu
 		old.engine.Pause()
 		old.warming = false
 		if status.PictureInPicture {
+			if c.floating != nil && c.floating != old.engine {
+				c.floating.Pause()
+				_ = c.floating.Close()
+			}
 			c.floating = old.engine
 			old.engine = nil
 		}

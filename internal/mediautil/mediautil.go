@@ -57,8 +57,17 @@ func NormalizeImageURL(raw string) string {
 	}
 
 	// Strip local proxy prefix if present
-	if idx := strings.Index(raw, "/img?u="); idx != -1 {
-		raw = raw[idx+len("/img?u="):]
+	if parsed, err := url.Parse(raw); err == nil && strings.HasSuffix(parsed.Path, "/img") {
+		if encoded := parsed.Query().Get("u"); encoded != "" {
+			raw = encoded
+		}
+	} else if idx := strings.Index(raw, "/img?u="); idx != -1 {
+		raw = strings.SplitN(raw[idx+len("/img?u="):], "&", 2)[0]
+	}
+	if strings.HasPrefix(raw, "http") {
+		return raw
+	}
+	if raw != "" {
 		if dec, err := base64.URLEncoding.DecodeString(raw); err == nil && len(dec) > 0 && strings.HasPrefix(string(dec), "http") {
 			raw = string(dec)
 		} else if decStd, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decStd) > 0 && strings.HasPrefix(string(decStd), "http") {

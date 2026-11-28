@@ -13,9 +13,13 @@ func (a *App) renderNativePlayerHeading(c *ui.Context, s playback.State, bottom,
 	ui.Column(c.Key("player-heading")).Absolute().Left(24).Right(106).Bottom(bottom).Gap(5).PassThrough().Transition(playerChromeTransition).Children(func() {
 		title := s.Book.Title
 		if title == "" {
-			title = ""
+			title = "剧集"
 		}
-		ui.Link(c.Key("player-title"), title, "").Label("查看《"+title+"》详情").Tooltip("查看剧集详情").
+		label := "查看《" + title + "》详情"
+		if s.Book.Title == "" {
+			label = "查看剧集详情"
+		}
+		ui.Link(c.Key("player-title"), title, "").Label(label).Tooltip("查看剧集详情").
 			FontSize(18).Bold().SingleLine().AlignSelf(ui.Start).MaxWidth(available-130).
 			TextColor(ui.RGB(255, 255, 255)).TextShadow(0, 1, 4, ui.RGBA(0, 0, 0, .8)).Disabled(s.Book.ID == "").
 			OnClick(func() {

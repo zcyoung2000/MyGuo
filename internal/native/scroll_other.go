@@ -3,3 +3,4 @@
 package native
 
 func StartScrollGestureMonitor() {}
+func StopScrollGestureMonitor()  {}

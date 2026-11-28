@@ -3,11 +3,14 @@ package upstream
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"sync"
 )
 
 const DefaultMaxHostAttempts = 3
+const maxReplayBodyBytes = 8 << 20
 
 type fixedHostKey struct{}
 
@@ -18,6 +21,7 @@ func WithFixedHost(ctx context.Context) context.Context {
 }
 
 type Transport struct {
+	mu          sync.RWMutex
 	picker      *HostPicker
 	next        http.RoundTripper
 	enabled     bool
@@ -37,38 +41,51 @@ func NewTransport(picker *HostPicker, next http.RoundTripper) *Transport {
 }
 
 func (t *Transport) SetEnabled(enabled bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.enabled = enabled
 }
 
 func (t *Transport) Enabled() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.enabled
 }
 
 func (t *Transport) SetMaxAttempts(value int) {
 	if value > 0 {
+		t.mu.Lock()
+		defer t.mu.Unlock()
 		t.maxAttempts = value
 	}
 }
 
 func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if !t.enabled || t.picker == nil || request.Context().Value(fixedHostKey{}) == true {
-		return t.next.RoundTrip(request)
+	t.mu.RLock()
+	enabled, picker, next, maxAttempts := t.enabled, t.picker, t.next, t.maxAttempts
+	t.mu.RUnlock()
+	if !enabled || picker == nil || request.Context().Value(fixedHostKey{}) == true {
+		return next.RoundTrip(request)
 	}
 	family := FamilyForPath(request.URL.Path)
-	hosts := t.picker.Order(family)
+	hosts := picker.Order(family)
 	if len(hosts) == 0 || !containsHost(hosts, request.URL.Host) {
-		return t.next.RoundTrip(request)
+		return next.RoundTrip(request)
 	}
 
-	attempts := min(t.maxAttempts, len(hosts))
+	attempts := min(maxAttempts, len(hosts))
 	var lastResponse *http.Response
 	var lastErr error
 	var payload []byte
 	if request.Body != nil {
 		var err error
-		payload, err = io.ReadAll(request.Body)
+		payload, err = io.ReadAll(io.LimitReader(request.Body, maxReplayBodyBytes+1))
+		_ = request.Body.Close()
 		if err != nil {
 			return nil, err
+		}
+		if len(payload) > maxReplayBodyBytes {
+			return nil, errors.New("request body exceeds host retry limit")
 		}
 	}
 	for index := 0; index < attempts; index++ {
@@ -79,7 +96,7 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		response, roundTripErr := t.next.RoundTrip(attempt)
+		response, roundTripErr := next.RoundTrip(attempt)
 		host := attempt.URL.Host
 		if !hostFailure(response, roundTripErr) {
 			if roundTripErr != nil {

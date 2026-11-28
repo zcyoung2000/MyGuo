@@ -1,7 +1,6 @@
 package media
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -20,6 +19,33 @@ import (
 )
 
 const progressiveStreamTimeout = 10 * time.Minute
+const maxMediaStderrTail = 16 << 10
+
+type mediaStderrTail struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (tail *mediaStderrTail) Write(p []byte) (int, error) {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+	if len(p) >= maxMediaStderrTail {
+		tail.data = append(tail.data[:0], p[len(p)-maxMediaStderrTail:]...)
+		return len(p), nil
+	}
+	if excess := len(tail.data) + len(p) - maxMediaStderrTail; excess > 0 {
+		copy(tail.data, tail.data[excess:])
+		tail.data = tail.data[:len(tail.data)-excess]
+	}
+	tail.data = append(tail.data, p...)
+	return len(p), nil
+}
+
+func (tail *mediaStderrTail) String() string {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+	return string(tail.data)
+}
 
 type progressiveStream struct {
 	key       string
@@ -206,7 +232,7 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 	}
 
 	command := mediaCommand(ctx, ffmpegPath, ffmpegProgressiveArgs(source.URL, pb.AudioURL, keyHex, transcodeHEVCForCurrentPlatform(source.Codec))...)
-	var stderrBuf bytes.Buffer
+	var stderrBuf mediaStderrTail
 	command.Stderr = &stderrBuf
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -254,7 +280,7 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 	return stream, nil
 }
 
-func (ms *MediaServer) runProgressiveStream(ctx context.Context, stream *progressiveStream, stdout io.ReadCloser, stderrBuf *bytes.Buffer) {
+func (ms *MediaServer) runProgressiveStream(ctx context.Context, stream *progressiveStream, stdout io.ReadCloser, stderrBuf *mediaStderrTail) {
 	defer stream.cancel()
 	defer func() { <-downloadSem }()
 

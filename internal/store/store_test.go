@@ -446,6 +446,36 @@ func TestClearHistoryFiltersOldRemoteItems(t *testing.T) {
 	}
 }
 
+func TestClearHistoryRemovesPendingUploadsButKeepsDeleteIntents(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	item := HistoryItem{SeriesID: "710000000000007", EpisodeNum: 1, PositionSec: 45, UpdatedAt: time.Now().Unix()}
+	if err := store.SaveHistory(item); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueHistoryUpload(item, "710000000000107"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClearHistory(); err != nil {
+		t.Fatal(err)
+	}
+	uploads, err := store.PendingHistoryUploads(10)
+	if err != nil || len(uploads) != 0 {
+		t.Fatalf("pending uploads after clear = %+v, err=%v", uploads, err)
+	}
+	deletes, err := store.PendingHistoryDeletes(1000)
+	found := false
+	for _, deleted := range deletes {
+		found = found || deleted.SeriesID == item.SeriesID
+	}
+	if err != nil || !found {
+		t.Fatalf("pending deletes after clear = %+v, err=%v", deletes, err)
+	}
+}
+
 func TestClearUserDataKeepsScopedIntents(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

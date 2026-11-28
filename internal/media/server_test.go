@@ -2,8 +2,11 @@ package media
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +35,72 @@ func TestProgressiveVideoURLRequestsStreamingMode(t *testing.T) {
 		!strings.Contains(got, "mode=progressive") ||
 		!strings.Contains(got, "quality=720p") {
 		t.Fatalf("progressive URL = %q", got)
+	}
+}
+
+func TestMediaRoutesRequireLocalHostAndRandomToken(t *testing.T) {
+	ms, err := newMediaServer(nil, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ms.Close()
+	handler := ms.server.Handler
+	serve := func(host, target string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Host = host
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	localHost := fmt.Sprintf("127.0.0.1:%d", ms.port)
+	if got := serve(localHost, "/img"); got.Code != http.StatusForbidden {
+		t.Fatalf("image request without token status = %d", got.Code)
+	}
+	if got := serve("attacker.invalid", "/img?token="+ms.token); got.Code != http.StatusForbidden {
+		t.Fatalf("request with foreign Host status = %d", got.Code)
+	}
+	if got := serve(localHost, "/img?token="+ms.token); got.Code != http.StatusOK || got.Header().Get("X-Image-Fallback") != "1" {
+		t.Fatalf("authorized local request = %d, fallback=%q", got.Code, got.Header().Get("X-Image-Fallback"))
+	}
+	if got := serve(localHost, "/health"); got.Code != http.StatusOK || got.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("health response = %d, ACAO=%q", got.Code, got.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestSafePublicDialRejectsLoopback(t *testing.T) {
+	if conn, err := safePublicDialContext(context.Background(), "tcp", "127.0.0.1:80"); err == nil {
+		_ = conn.Close()
+		t.Fatal("loopback destination was allowed")
+	}
+}
+
+func TestIsPublicIPRejectsNonRoutableRanges(t *testing.T) {
+	for _, value := range []string{"127.0.0.1", "10.0.0.1", "100.64.0.1", "100.127.255.254", "169.254.1.1", "::1", "fc00::1", "::ffff:100.64.0.1"} {
+		if isPublicIP(net.ParseIP(value)) {
+			t.Errorf("isPublicIP(%q) = true, want false", value)
+		}
+	}
+	for _, value := range []string{"8.8.8.8", "2606:4700:4700::1111"} {
+		if !isPublicIP(net.ParseIP(value)) {
+			t.Errorf("isPublicIP(%q) = false, want true", value)
+		}
+	}
+	if isPublicIP(nil) {
+		t.Fatal("isPublicIP(nil) = true, want false")
+	}
+}
+
+func TestValidatePublicURLSkipsLocalDNSWhenUsingProxy(t *testing.T) {
+	target := &url.URL{Scheme: "https", Host: "unresolvable.invalid"}
+	proxyURL := &url.URL{Scheme: "http", Host: "proxy.internal:8080"}
+	err := validatePublicURLWithProxy(context.Background(), target, func(req *http.Request) (*url.URL, error) {
+		if req.URL != target {
+			t.Fatalf("proxy lookup URL = %v, want %v", req.URL, target)
+		}
+		return proxyURL, nil
+	})
+	if err != nil {
+		t.Fatalf("validatePublicURLWithProxy() error = %v", err)
 	}
 }
 

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"log"
 	"sync/atomic"
+	"time"
 
 	"github.com/egoist/mygo"
 	"myguo/internal/native"
@@ -25,7 +27,16 @@ func setupShutdown(win *mygo.Window, tasks shutdownTasks) {
 		}
 		tasks.closeLogin()
 		go func() {
-			tasks.drain()
+			drainDone := make(chan struct{})
+			go func() {
+				tasks.drain()
+				close(drainDone)
+			}()
+			select {
+			case <-drainDone:
+			case <-time.After(5 * time.Second):
+				log.Printf("[shutdown] drain exceeded 5s; continuing shutdown")
+			}
 			stopped.Store(true)
 			close(done)
 			mygo.RunOnMain(func() {

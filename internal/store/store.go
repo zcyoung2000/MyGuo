@@ -1282,13 +1282,16 @@ func (s *Store) ClearHistory(scopes ...string) error {
 	if _, err := tx.Exec(`DELETE FROM episode_progress WHERE scope = ?`, s.syncScopeLocked(scopes)); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM pending_history_uploads WHERE scope = ?`, s.syncScopeLocked(scopes)); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM local_history_retention`); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO history_clear_state (id, cleared_at) VALUES (1, ?)
 		ON CONFLICT(id) DO UPDATE SET cleared_at = excluded.cleared_at
-	`, time.Now().Unix()); err != nil {
+	`, now); err != nil {
 		return err
 	}
 	return tx.Commit()

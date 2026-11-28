@@ -302,6 +302,10 @@ import CoreImage
         let previousPiP = pipActive
         var actionIssued = false
         for _ in 0..<120 {
+            guard player != nil else {
+                controlsStyle = .none
+                throw NSError(domain:"MyguoPlayer",code:2,userInfo:[NSLocalizedDescriptionKey:"播放器已关闭"])
+            }
             try await Task.sleep(nanoseconds: 30_000_000)
             if pipActive != previousPiP { controlsStyle = .none; return }
             layoutSubtreeIfNeeded()

@@ -396,9 +396,9 @@ func (a *App) SetQuery(value string) {
 	a.invalidate()
 }
 func (a *App) OpenView(view string) {
-	log.Printf("[uiapp] OpenView target=%s current=%s", view, a.view)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	log.Printf("[uiapp] OpenView target=%s current=%s", view, a.view)
 	if a.view == view && a.started {
 		if view == "recommend" && a.mediaOn {
 			a.closeMediaLocked()
@@ -813,7 +813,7 @@ func convertFavorites(items []ipc.FavoriteItem, err error) ([]CatalogItem, error
 			EpisodeCount: item.TotalEpisodes, Rank: index,
 		})
 	}
-	return out, nil
+	return out, err
 }
 
 func convertReservations(items []ipc.ReservationItem, err error) ([]CatalogItem, error) {

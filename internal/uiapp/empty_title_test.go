@@ -1,6 +1,9 @@
 package uiapp
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 import "myguo/internal/ipc"
 
@@ -44,5 +47,17 @@ func TestHistoryEpisodeLabelIsShownAsMetadataPending(t *testing.T) {
 	items, err := convertHistory([]ipc.HistoryItem{{SeriesID: id, Title: "第7集", EpisodeNum: 7}}, nil)
 	if err != nil || len(items) != 1 || items[0].Title != "剧名待补全 · "+id {
 		t.Fatalf("history fallback = %+v, %v", items, err)
+	}
+}
+
+func TestFavoriteConversionKeepsPartialItemsAndRefreshError(t *testing.T) {
+	const seriesID = "710000000000001"
+	wantErr := errors.New("partial favorite shelf")
+	items, err := convertFavorites([]ipc.FavoriteItem{{SeriesID: seriesID, Title: "已同步收藏"}}, wantErr)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("convertFavorites() error = %v, want %v", err, wantErr)
+	}
+	if len(items) != 1 || items[0].ID != seriesID || items[0].Title != "已同步收藏" {
+		t.Fatalf("convertFavorites() items = %#v, want partial result retained", items)
 	}
 }

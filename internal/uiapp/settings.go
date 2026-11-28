@@ -242,7 +242,7 @@ func (a *App) settingsButton(c *ui.Context, key, label, variant string, action f
 
 func (a *App) settingsCard(c *ui.Context, key string, children func()) {
 	ui.Column(c.Key(key)).Grow(1).Gap(16).Padding(20, 22).Radius(12).Clip().Transition(sectionTransition).
-		Background(ui.RGBA(20, 21, 28, 255)).
+		Background(ui.RGBA(20, 21, 28, 0.85)).
 		Border(1, ui.RGBA(255, 255, 255, 0.08)).
 		Children(children)
 }

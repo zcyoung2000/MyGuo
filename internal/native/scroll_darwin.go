@@ -70,6 +70,21 @@ func StartScrollGestureMonitor() {
 	})
 }
 
+func StopScrollGestureMonitor() {
+	mygo.RunOnMain(func() {
+		if scrollMonitor == 0 {
+			return
+		}
+		nsevent := objc.ID(objc.GetClass("NSEvent"))
+		objc.Send[objc.ID](nsevent, objc.RegisterName("removeMonitor:"), scrollMonitor)
+		scrollMonitor.Send(objc.RegisterName("release"))
+		scrollMonitor = 0
+		scrollMonitorBlock.Release()
+		scrollMonitorBlock = objc.Block(0)
+		scrollMonitorReady.Store(false)
+	})
+}
+
 func handleNativeScrollEvent(phase, momentumPhase int, rawDeltaY float64, precise bool) {
 	scrollGestureMutex.Lock()
 	defer scrollGestureMutex.Unlock()
