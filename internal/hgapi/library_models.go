@@ -114,10 +114,10 @@ func parseFavoritesResponse(body []byte) (*FavoritesResponse, error) {
 	if err := json.Unmarshal(body, &shelfResp); err != nil {
 		return nil, fmt.Errorf("收藏书架响应解析失败: %w", err)
 	}
-	if shelfResp.Code == nil || *shelfResp.Code != 0 || shelfResp.Data == nil ||
-		shelfResp.Data.VideoShelfInfo == nil || shelfResp.HasMore || shelfResp.Data.HasMore {
+	if shelfResp.Code == nil || *shelfResp.Code != 0 || shelfResp.Data == nil || shelfResp.Data.VideoShelfInfo == nil {
 		return nil, fmt.Errorf("收藏书架返回不完整")
 	}
+	shelfResp.HasMore = shelfResp.HasMore || shelfResp.Data.HasMore
 	return &shelfResp, nil
 }
 

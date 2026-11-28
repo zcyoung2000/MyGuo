@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -90,6 +91,7 @@ type Service struct {
 	cachedFavorites []FavoriteItem
 	favCachedAt     time.Time
 	favSyncing      bool
+	favSyncWake     bool
 	favGeneration   uint64
 	favMutationAt   time.Time
 	favMutationMu   sync.Mutex
@@ -191,6 +193,10 @@ func NewService(deps Dependencies) *Service {
 	return service
 }
 
+func (s *Service) StartFavoriteSync() {
+	s.scheduleFavoriteSync()
+}
+
 func (s *Service) InvalidateUserData() {
 	if s.store != nil {
 		s.store.SetSyncScope(s.currentSyncSession().scope)
@@ -222,6 +228,41 @@ func (s *Service) InvalidateUserData() {
 	s.resGeneration++
 	s.resMu.Unlock()
 	s.schedulePendingHistorySync()
+}
+
+func (s *Service) scheduleFavoriteSync() {
+	if cookies, _ := s.credentials(); cookies == "" {
+		return
+	}
+	s.favMu.Lock()
+	if s.favSyncing {
+		s.favSyncWake = true
+		s.favMu.Unlock()
+		return
+	}
+	s.favSyncing = true
+	s.favMu.Unlock()
+	if !s.background.Go(func(ctx context.Context) {
+		for {
+			generation := s.currentFavoriteGeneration()
+			if err := s.syncFavoriteSnapshotWithRetry(ctx, generation); err != nil {
+				log.Printf("[favorites] account sync failed: %v", err)
+			}
+			s.favMu.Lock()
+			if s.favSyncWake && ctx.Err() == nil {
+				s.favSyncWake = false
+				s.favMu.Unlock()
+				continue
+			}
+			s.favSyncing = false
+			s.favMu.Unlock()
+			return
+		}
+	}) {
+		s.favMu.Lock()
+		s.favSyncing = false
+		s.favMu.Unlock()
+	}
 }
 
 func (s *Service) currentHistoryGeneration() uint64 {

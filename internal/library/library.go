@@ -649,8 +649,13 @@ func (s *Service) GetFavorites(ctx context.Context) ([]FavoriteItem, error) {
 			s.background.Go(func(ctx context.Context) {
 				defer func() {
 					s.favMu.Lock()
+					retry := s.favSyncWake
+					s.favSyncWake = false
 					s.favSyncing = false
 					s.favMu.Unlock()
+					if retry {
+						s.scheduleFavoriteSync()
+					}
 				}()
 				if err := s.syncRemoteFavorites(ctx, generation); err != nil {
 					log.Printf("[favorites] background sync failed: %v", err)
@@ -697,11 +702,15 @@ func (s *Service) RefreshFavorites(ctx context.Context) ([]FavoriteItem, error) 
 		return s.GetFavorites(ctx)
 	}
 	if err := s.syncFavoriteSnapshotWithRetry(ctx, s.currentFavoriteGeneration()); err != nil {
-		if localItems, localErr := s.GetFavorites(ctx); localErr == nil {
-			log.Printf("[favorites] refresh degraded to local snapshot: %v", err)
-			return localItems, nil
+		localItems, localErr := s.store.GetFavorites()
+		if localErr != nil {
+			return nil, errors.Join(err, localErr)
 		}
-		return nil, err
+		for i := range localItems {
+			localItems[i].CoverURL = s.imageURL(localItems[i].CoverURL)
+		}
+		log.Printf("[favorites] refresh degraded to local snapshot: %v", err)
+		return sanitize.Sanitize(localItems), err
 	}
 	return s.GetFavorites(ctx)
 }
@@ -715,14 +724,9 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) er
 	if err != nil {
 		return err
 	}
-	processed, err := s.syncPendingFavoriteOps()
+	_, err = s.syncPendingFavoriteOps()
 	if err != nil {
 		return fmt.Errorf("收藏待同步操作未完成: %w", err)
-	}
-	if processed > 0 {
-		// The shelf list can briefly lag a successful mutation. Avoid replacing
-		// local state with a stale snapshot; the next periodic sync will refresh.
-		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -756,6 +760,10 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) er
 	if len(remoteIDs) == 0 {
 		s.favMutationMu.Lock()
 		defer s.favMutationMu.Unlock()
+		if shelfResp.HasMore {
+			s.refreshFavoriteCache(generation)
+			return fmt.Errorf("收藏书架仅返回部分记录")
+		}
 		if s.currentFavoriteGeneration() == generation && s.syncSessionCurrent(session) && s.favoriteSnapshotSettled() {
 			if err := s.store.ReplaceFavoriteBatch(nil); err != nil {
 				return err
@@ -837,7 +845,15 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) er
 			return err
 		}
 	}
-	if len(resolvedIDs) != len(remoteIDs) || s.currentFavoriteGeneration() != generation || !s.favoriteSnapshotSettled() {
+	if shelfResp.HasMore {
+		s.refreshFavoriteCache(generation)
+		return fmt.Errorf("收藏书架仅返回部分记录")
+	}
+	if len(resolvedIDs) != len(remoteIDs) {
+		s.refreshFavoriteCache(generation)
+		return fmt.Errorf("部分收藏缺少剧集详情，已保留可用记录")
+	}
+	if s.currentFavoriteGeneration() != generation || !s.favoriteSnapshotSettled() {
 		return nil
 	}
 	if err := s.store.ReplaceFavoriteBatch(favBatch); err != nil {

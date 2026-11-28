@@ -263,6 +263,9 @@ type App struct {
 }
 
 func NewApp(service *ipc.HongguoService) *App {
+	if service != nil {
+		service.StartFavoriteSync()
+	}
 	return &App{
 		service:    service,
 		view:       "discover",
@@ -799,9 +802,6 @@ func isHistoryPlaceholderTitle(title string) bool {
 }
 
 func convertFavorites(items []ipc.FavoriteItem, err error) ([]CatalogItem, error) {
-	if err != nil {
-		return nil, err
-	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
 		title := item.Title

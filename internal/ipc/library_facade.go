@@ -10,6 +10,8 @@ import (
 
 func CloseService(s *HongguoService) { s.libraryService().Close() }
 
+func (s *HongguoService) StartFavoriteSync() { s.libraryService().StartFavoriteSync() }
+
 func (s *HongguoService) libraryService() *library.Service {
 	s.libraryOnce.Do(func() {
 		s.library = library.NewService(library.Dependencies{

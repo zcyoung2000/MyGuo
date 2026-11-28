@@ -549,8 +549,8 @@ func TestFavoritePendingOperationFlushesBeforeRemoteShelfSync(t *testing.T) {
 
 	mutationCalls := log.matching("bookshelf/video/update")
 	shelfCalls := log.matching("bookshelf/video/list")
-	if len(mutationCalls) != 1 || len(shelfCalls) != 0 {
-		t.Fatalf("mutation/shelf calls = %d/%d, want 1/0", len(mutationCalls), len(shelfCalls))
+	if len(mutationCalls) != 1 || len(shelfCalls) != 1 {
+		t.Fatalf("mutation/shelf calls = %d/%d, want 1/1", len(mutationCalls), len(shelfCalls))
 	}
 	ops, err := store.PendingFavoriteOps(10)
 	if err != nil || len(ops) != 0 {
@@ -559,6 +559,52 @@ func TestFavoritePendingOperationFlushesBeforeRemoteShelfSync(t *testing.T) {
 	favorites, err := store.GetFavorites()
 	if err != nil || len(favorites) != 1 || favorites[0].SeriesID != seriesID {
 		t.Fatalf("favorites = %#v, err = %v", favorites, err)
+	}
+}
+
+func TestStartFavoriteSyncFetchesAuthenticatedShelf(t *testing.T) {
+	log := &requestLog{}
+	service, _ := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.add(capturedRequest{path: r.URL.Path})
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"video_shelf_info": []map[string]any{}}})
+	}))
+
+	service.StartFavoriteSync()
+	service.WaitForBackgroundSync()
+	if calls := log.matching("bookshelf/video/list"); len(calls) != 1 {
+		t.Fatalf("bookshelf/video/list calls = %d, want one account refresh", len(calls))
+	}
+}
+
+func TestPartialFavoriteShelfMergesWithoutDeletingLocalFavorites(t *testing.T) {
+	const remoteID = "710000000000001"
+	const localOnlyID = "710000000000002"
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"data": map[string]any{
+			"has_more":         true,
+			"video_shelf_info": []map[string]any{{"series_id": remoteID, "modify_time": time.Now().UnixMilli()}},
+		}})
+	}))
+	if err := store.SaveFavoriteBatch([]FavoriteItem{
+		{SeriesID: remoteID, Title: "已缓存收藏", CoverURL: "https://media.invalid/remote.jpg"},
+		{SeriesID: localOnlyID, Title: "仅本地收藏", CoverURL: "https://media.invalid/local.jpg"},
+	}); err != nil {
+		t.Fatalf("SaveFavoriteBatch() error = %v", err)
+	}
+
+	items, err := service.RefreshFavorites(context.Background())
+	if err == nil {
+		t.Fatal("RefreshFavorites() error = nil for an incomplete shelf")
+	}
+	if len(items) != 2 {
+		t.Fatalf("partial favorite snapshot = %#v, want both local and returned rows", items)
+	}
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		seen[item.SeriesID] = true
+	}
+	if !seen[remoteID] || !seen[localOnlyID] {
+		t.Fatalf("partial favorite IDs = %#v, want %s and %s", seen, remoteID, localOnlyID)
 	}
 }
 
@@ -580,8 +626,8 @@ func TestShelfTimeoutDegradesToLocalFavoriteSnapshot(t *testing.T) {
 	}
 
 	items, err := service.RefreshFavorites(context.Background())
-	if err != nil {
-		t.Fatalf("RefreshFavorites() error = %v", err)
+	if err == nil {
+		t.Fatal("RefreshFavorites() error = nil for a failed remote refresh")
 	}
 	if len(items) != 1 || items[0].SeriesID != seriesID || items[0].Title != "本地收藏" {
 		t.Fatalf("degraded favorites = %#v, want the authentic local snapshot", items)

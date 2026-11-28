@@ -14,6 +14,10 @@ type QRLoginState struct {
 	Error string
 }
 
+type favoriteSyncStarter interface {
+	StartFavoriteSync()
+}
+
 func (a *App) cancelSettingsLoginLocked() {
 	a.loginVersion++
 	if a.loginCancel != nil {
@@ -137,6 +141,9 @@ func (a *App) runQRLogin(ctx context.Context, cancel context.CancelFunc, version
 			a.invalidateLibraryReadsLocked()
 			a.invalidate()
 			a.mu.Unlock()
+			if starter, ok := provider.(favoriteSyncStarter); ok {
+				starter.StartFavoriteSync()
+			}
 			return
 		case "waiting", "scanned", "confirming":
 			if result.State == "confirming" && !confirming {
