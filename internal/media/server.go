@@ -1394,7 +1394,8 @@ func (ms *MediaServer) hasProgressiveStream(episodeID, quality string) bool {
 
 var (
 	mediaHTTPClient = &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout:       15 * time.Second,
+		CheckRedirect: validateImageRedirect,
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
@@ -1420,6 +1421,17 @@ var (
 )
 
 const fallbackSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="#181920"/><circle cx="150" cy="160" r="36" fill="#252733"/><polygon points="142,146 166,160 142,174" fill="#666"/><text x="150" y="230" fill="#777" font-size="14" font-family="-apple-system,BlinkMacSystemFont,PingFang SC,sans-serif" text-anchor="middle">myguo</text></svg>`
+
+func validateImageRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many image redirects")
+	}
+	if req.URL == nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") ||
+		req.URL.User != nil || req.URL.Port() != "" || !isAllowedImageHost(req.URL.Hostname()) {
+		return errors.New("image redirect target is not allowed")
+	}
+	return nil
+}
 
 func serveFallback(w http.ResponseWriter) {
 	w.Header().Set("X-Image-Fallback", "1")

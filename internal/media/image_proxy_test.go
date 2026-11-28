@@ -97,6 +97,43 @@ func TestImageProxyReportsCachedFormatFromBytes(t *testing.T) {
 	}
 }
 
+func TestImageProxyRejectsRedirectToUntrustedHost(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/poster.jpg" {
+			http.Redirect(w, r, "http://127.0.0.1/private", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("private response"))
+	}))
+	t.Cleanup(server.Close)
+
+	oldClient := mediaHTTPClient
+	mediaHTTPClient = &http.Client{
+		Timeout:       time.Second,
+		Transport:     &rewriteTransport{serverURL: server.URL},
+		CheckRedirect: validateImageRedirect,
+	}
+	t.Cleanup(func() { mediaHTTPClient = oldClient })
+
+	cacheDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cacheDir, "images"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	ms := &MediaServer{cacheDir: cacheDir}
+	ms.handleImage(response, httptest.NewRequest(http.MethodGet, "/img?u="+url.QueryEscape("http://test.byteimg.com/poster.jpg"), nil))
+
+	if response.Header().Get("X-Image-Fallback") != "1" {
+		t.Fatalf("redirected response was not rejected: status=%d type=%q", response.Code, response.Header().Get("Content-Type"))
+	}
+	if len(paths) != 1 || paths[0] != "/poster.jpg" {
+		t.Fatalf("upstream paths = %v, want only the allowed CDN request", paths)
+	}
+}
+
 func imageProxyTestServer(t *testing.T, payload []byte) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

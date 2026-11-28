@@ -131,6 +131,36 @@ func TestLikesMustRejectMissingList(t *testing.T) {
 		t.Fatalf("missing likes list erased existing rows: rows=%d syncErr=%v", len(items), err)
 	}
 }
+
+func TestLikesMustRejectMissingEpisodeIDWithoutErasingSnapshot(t *testing.T) {
+	const seriesID = "710000000000001"
+	service, db := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"mixed_data_list": []any{
+			map[string]any{
+				"series_id":    seriesID,
+				"series_title": "Incomplete liked series",
+				"video_data":   map[string]any{"title": "Episode without vid"},
+			},
+		}}})
+	}))
+	const episodeID = "710000000000101"
+	if err := db.ReplaceLikeBatch([]LikeItem{{SeriesID: seriesID, EpisodeID: episodeID, Title: "Existing like"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := service.syncRemoteLikes(context.Background(), service.currentLikeGeneration())
+	if err == nil {
+		t.Fatal("like response without a video ID was accepted")
+	}
+	items, err := db.GetLikes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].EpisodeID != episodeID {
+		t.Fatalf("incomplete response replaced local likes: %+v", items)
+	}
+}
+
 func TestReservationsMustRejectMissingList(t *testing.T) {
 	service, db := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{}})

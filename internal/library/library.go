@@ -1063,7 +1063,7 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 		for _, row := range res.Data.MixedDataList {
 			video := row.VideoData
 			seriesID := firstNonEmpty(row.SeriesID, video.SeriesID, row.BookID)
-			episodeID := firstNonEmpty(video.Vid, row.SeriesID, row.BookID)
+			episodeID := strings.TrimSpace(video.Vid)
 			title := firstNonEmpty(row.SeriesTitle, video.Detail.SeriesTitle, video.Title)
 			cover := firstNonEmpty(row.SeriesCoverURL, video.CoverURL, video.Cover, video.ThumbURL)
 			addedAt := video.DiggTime / 1000
@@ -1071,7 +1071,10 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 				addedAt = video.CreateTime / 1000
 			}
 			key := seriesID + "\x1f" + episodeID
-			if seriesID == "" || episodeID == "" || title == "" || seen[key] {
+			if seriesID != "" && episodeID == "" {
+				return nil, fmt.Errorf("点赞接口返回的分集缺少视频 ID")
+			}
+			if seriesID == "" || title == "" || seen[key] {
 				continue
 			}
 			seen[key] = true
